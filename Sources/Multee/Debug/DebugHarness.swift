@@ -66,6 +66,7 @@ enum DebugState {
     static func capture(to path: String, _ model: AppModel) {
         var root: [String: Any] = [:]
         if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count }
+        root["selfMemMB"] = Int(ResourceMonitor.memoryMB())
         root["activeSession"] = model.activeSession?.name ?? NSNull()
         root["activeSessionPath"] = model.activeSession?.url ?? NSNull()
         root["sessions"] = model.sessions.map { s in

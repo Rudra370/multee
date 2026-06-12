@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private var settingsWC: SettingsWindowController?
+    private let resourceMonitor = ResourceMonitor()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Snappier tooltips (default is ~2s). Registered so it doesn't clobber a user override.
@@ -30,6 +31,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         wireStatusRouting()
         installKeyMonitor()
+
+        // Live resource usage of Multee's own process in the title bar (Claude sessions are separate
+        // processes — shown as a count for context).
+        resourceMonitor.onUpdate = { [weak self] memMB, cpu in
+            guard let self else { return }
+            let n = self.model.sessions.count
+            self.windowController.window?.subtitle =
+                String(format: "%.0f MB · %.1f%% CPU · %d session%@", memMB, cpu, n, n == 1 ? "" : "s")
+        }
+        resourceMonitor.start()
 
         // Settings window on demand.
         model.$showSettings
