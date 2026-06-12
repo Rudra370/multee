@@ -45,6 +45,8 @@ final class SidebarViewController: NSViewController {
     private let model: AppModel
     private var cancellables = Set<AnyCancellable>()
     private let sessionsStack = NSStackView()
+    private let filesContainer = NSView()
+    private var treeVC: FileTreeViewController?
 
     init(model: AppModel) {
         self.model = model
@@ -69,33 +71,57 @@ final class SidebarViewController: NSViewController {
         super.viewDidLoad()
         model.objectWillChange
             .receive(on: RunLoop.main)
-            .sink { [weak self] in self?.rebuildSessions() }
+            .sink { [weak self] in self?.refresh() }
             .store(in: &cancellables)
-        rebuildSessions()
+        refresh()
     }
 
-    // FILES placeholder (NSOutlineView arrives in Phase 2)
+    private func refresh() {
+        rebuildSessions()
+        syncFileTree()
+    }
+
+    // FILES pane — hosts the active session's NSOutlineView tree.
     private func makeFilesPane() -> NSView {
         let pane = NSView()
         pane.wantsLayer = true
-        pane.layer?.backgroundColor = NSColor(white: 0.13, alpha: 1).cgColor
+        pane.layer?.backgroundColor = NSColor(white: 0.145, alpha: 1).cgColor
         let header = Self.header("FILES")
-        let placeholder = NSTextField(labelWithString: "File tree — Phase 2")
-        placeholder.font = .systemFont(ofSize: 12)
-        placeholder.textColor = .tertiaryLabelColor
-        let stack = NSStackView(views: [header, placeholder])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        pane.addSubview(stack)
+        header.translatesAutoresizingMaskIntoConstraints = false
+        filesContainer.translatesAutoresizingMaskIntoConstraints = false
+        pane.addSubview(header)
+        pane.addSubview(filesContainer)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: pane.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
+            header.topAnchor.constraint(equalTo: pane.topAnchor, constant: 10),
+            header.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 12),
+            filesContainer.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            filesContainer.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
+            filesContainer.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
+            filesContainer.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
         ])
         return pane
+    }
+
+    /// Swap in the file tree for the active session's repo (or clear it when no session).
+    private func syncFileTree() {
+        guard let session = model.activeSession else {
+            treeVC?.stop(); treeVC?.removeFromParent(); treeVC?.view.removeFromSuperview(); treeVC = nil
+            return
+        }
+        if treeVC?.repo == session.url { return }
+        treeVC?.stop(); treeVC?.removeFromParent(); treeVC?.view.removeFromSuperview()
+        let vc = FileTreeViewController(repo: session.url, settings: model.settings,
+                                       onOpen: { [weak self] path in self?.model.activeSession?.openFile(path) })
+        addChild(vc)
+        vc.view.translatesAutoresizingMaskIntoConstraints = false
+        filesContainer.addSubview(vc.view)
+        NSLayoutConstraint.activate([
+            vc.view.topAnchor.constraint(equalTo: filesContainer.topAnchor),
+            vc.view.bottomAnchor.constraint(equalTo: filesContainer.bottomAnchor),
+            vc.view.leadingAnchor.constraint(equalTo: filesContainer.leadingAnchor),
+            vc.view.trailingAnchor.constraint(equalTo: filesContainer.trailingAnchor),
+        ])
+        treeVC = vc
     }
 
     // SESSIONS list (real, model-driven)

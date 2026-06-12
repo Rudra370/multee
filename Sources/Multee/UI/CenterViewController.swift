@@ -23,16 +23,28 @@ final class CenterViewController: NSViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        // NB: do NOT set wantsLayer on the terminal's ancestors (root/contentArea). Forcing them
-        // layer-backed makes the embedded SwiftTerm view implicitly layer-backed, which the
-        // self-screenshot's cacheDisplay path doesn't capture (terminal renders blank in shots).
-        // The dark backdrop comes from the window's backgroundColor instead.
+        // Layer-backed backdrop. This makes the embedded SwiftTerm view implicitly layer-backed,
+        // so it renders blank in the self-screenshot (we verify terminal content via the buffer-text
+        // dump instead) — but the chips/editor/diff (standard AppKit) DO capture, which a non-layer
+        // BackgroundView broke. Real users see the terminal fine (layer-backed is normal for it).
         let root = NSView()
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor(white: 0.11, alpha: 1).cgColor
 
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         contentArea.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(tabBar)
-        root.addSubview(contentArea)
+        contentArea.wantsLayer = true
+        contentArea.layer?.backgroundColor = NSColor(white: 0.11, alpha: 1).cgColor
+
+        // Vertical stack guarantees tabBar (fixed height) sits ABOVE a filling contentArea with no
+        // overlap — manual top/bottom constraints were collapsing the bar to zero height.
+        let vstack = NSStackView(views: [tabBar, contentArea])
+        vstack.orientation = .vertical
+        vstack.spacing = 0
+        vstack.distribution = .fill
+        vstack.alignment = .leading
+        vstack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(vstack)
 
         emptyLabel.font = .systemFont(ofSize: 14)
         emptyLabel.textColor = .secondaryLabelColor
@@ -40,15 +52,14 @@ final class CenterViewController: NSViewController {
         contentArea.addSubview(emptyLabel)
 
         NSLayoutConstraint.activate([
-            tabBar.topAnchor.constraint(equalTo: root.topAnchor),
-            tabBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            tabBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            tabBar.heightAnchor.constraint(equalToConstant: 34),
+            vstack.topAnchor.constraint(equalTo: root.topAnchor),
+            vstack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            vstack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            vstack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            contentArea.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            contentArea.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            contentArea.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            contentArea.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            tabBar.heightAnchor.constraint(equalToConstant: 34),
+            tabBar.widthAnchor.constraint(equalTo: vstack.widthAnchor),
+            contentArea.widthAnchor.constraint(equalTo: vstack.widthAnchor),
 
             emptyLabel.centerXAnchor.constraint(equalTo: contentArea.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: contentArea.centerYAnchor),
@@ -145,6 +156,8 @@ final class CenterViewController: NSViewController {
 
     private func placeholder(_ text: String) -> NSView {
         let v = NSView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = NSColor(white: 0.11, alpha: 1).cgColor
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 13)
         label.textColor = .tertiaryLabelColor

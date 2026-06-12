@@ -85,10 +85,38 @@ enum DebugState {
                 root["activeTab"] = at
             }
         }
+        // Layout diagnostic: frames of the tab bar + workspace backdrop, in window coords.
+        if let win = NSApp.mainWindow ?? NSApp.windows.first, let cv = win.contentView {
+            var frames: [String: String] = [:]
+            walk(cv, into: &frames)
+            if !frames.isEmpty { root["layout"] = frames }
+        }
+
         if let data = try? JSONSerialization.data(withJSONObject: root,
                                                   options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: URL(fileURLWithPath: path))
         }
+    }
+
+    private static func walk(_ v: NSView, into out: inout [String: String]) {
+        let label: String? = v is TabBarView ? "tabBar"
+            : v is MulteeTerminalView ? "terminal" : nil
+        if let label, out[label] == nil {
+            let r = v.convert(v.bounds, to: nil)
+            var info = "x\(Int(r.minX)) y\(Int(r.minY)) w\(Int(r.width)) h\(Int(r.height)) hidden\(v.isHidden)"
+            if let bar = v as? NSView, label == "tabBar" {
+                let chips = countChips(bar)
+                info += " chips\(chips)"
+            }
+            out[label] = info
+        }
+        v.subviews.forEach { walk($0, into: &out) }
+    }
+
+    private static func countChips(_ v: NSView) -> Int {
+        var n = v is TabChipView ? 1 : 0
+        v.subviews.forEach { n += countChips($0) }
+        return n
     }
 }
 
