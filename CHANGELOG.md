@@ -5,6 +5,19 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.3] - 2026-06-12
+
+### Added
+- **Drag to reorder tabs** — drag a tab left or right to rearrange it within a session.
+
+### Fixed
+- **Session status dots update live** — a session's working/idle dot no longer waits until you switch
+  sessions to refresh.
+- **Sessions resume on reopen** — projects whose path contains `_` or `.` now resume their Claude
+  conversation instead of starting fresh.
+- **New Claude tabs respect your default arguments** — the **+New Claude** button and the **Default**
+  menu item now use the default args from Settings.
+
 ## [0.1.2] - 2026-06-12
 
 ### Fixed
