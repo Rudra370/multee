@@ -25,8 +25,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Multee"
 
-# Copy SwiftPM resource bundles (e.g. Highlightr's highlight.js) so they're found at runtime. The
-# vendored Highlightr's resource lookup checks Contents/Resources first, so this stays sealed/valid.
+# Copy SwiftPM resource bundles (e.g. Multee_Multee.bundle with the TextMate grammars) into
+# Contents/Resources so they stay inside the code signature; GrammarBundle resolves them from there.
 for b in ".build/$CONFIG"/*.bundle; do
   [ -e "$b" ] && cp -R "$b" "$APP/Contents/Resources/"
 done

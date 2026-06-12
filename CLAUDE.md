@@ -9,9 +9,13 @@ SwiftUI↔AppKit seam caused recurring cursor/tooltip/resize glitches and a file
 - AppKit, built with Swift Package Manager (no Xcode; Command Line Tools only). Programmatic UI
   (no storyboards/xibs). Model layer uses **Combine** `@Published` (independent of SwiftUI).
 - **SwiftTerm** — native terminal (ships its own PTY).
-- **Highlightr** — editor highlighting (highlight.js via JavaScriptCore). **Vendored** at
-  `vendor/Highlightr/` (local path dep) so its resource bundle resolves from `Contents/Resources`
-  — see the resource-bundle gotcha below.
+- **Editor highlighting is native** — a small TextMate-grammar engine driven by `NSRegularExpression`
+  (`UI/Editor.swift` + `TextMate/TextMateHighlighter.swift`), no third-party dep. ~30 `.tmLanguage.json`
+  grammars (from VS Code) live in `TextMate/Grammars/` and ship as the `Multee_Multee.bundle` SwiftPM
+  resource. This replaced **Highlightr** (highlight.js via JavaScriptCore), which cost ~150 MB RAM per
+  process for a ~5 MB on-disk JS bundle; the native engine is ~70% lighter on RAM at roughly the same
+  app size. Grammars load lazily per language; "good, not tree-sitter-perfect" (regex, external-grammar
+  includes skipped). See the resource-bundle gotcha below for how the bundle is resolved.
 
 ## Build & run
 - `./dev.sh` — build (debug) → install to **`/Applications/Multee Dev.app`** → relaunch. Debug
@@ -56,8 +60,10 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   accessor only checks the `.app` *root* and the build-machine path — neither exists for a user, and
   a code-signed `.app` must keep resources in `Contents/Resources/` (nothing at the root, or the
   signature is invalid → Gatekeeper "damaged"). So `Bundle.module` `fatalError`s on file-open. Fix:
-  vendor the package and make its lookup check `Bundle.main.resourceURL` first
-  (`vendor/Highlightr/src/classes/BundleResolve.swift`). Any new resource-bearing dep needs the same.
+  resolve the bundle from `Bundle.main.resourceURL` first (where `build.sh` copies it), only falling
+  back to `Bundle.module` outside a packaged `.app`. Our grammar bundle does this in `GrammarBundle`
+  (`TextMate/TextMateHighlighter.swift`). Any new resource-bearing target/dep needs the same shim.
+  (Dev builds *hide* this bug — their baked build path exists locally — so always test a release `.app`.)
 - **Self-screenshot needs layer-backed standard views** to capture; the terminal is the exception
   (see harness note above).
 
@@ -68,7 +74,11 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - `Backend/` — `Shell`/`Env`, `Git` (status + actions).
 - `Terminal/` — `TerminalStore` (PTY per tab + scroll), `HookServer` (status listener), `Hooks`.
 - `UI/` — `WorkspaceViewController` (split + sidebar), `CenterViewController` (tab bar + content),
-  `TabBarView`, `FileTree`, `Editor`, `Changes`, `Diff`, `SettingsWindow`, `Updates`.
+  `TabBarView`, `FileTree`, `Editor` (plain NSTextStorage + native highlighter; line-based tokenizing
+  run off-main on a serial queue, debounced re-highlight on edit), `Changes`, `Diff`, `SettingsWindow`,
+  `Updates`.
+- `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
+  and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).
 
 ## UI conventions

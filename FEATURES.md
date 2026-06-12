@@ -25,9 +25,23 @@ the cursor. Claude `--resume <cid>` only when its transcript still exists on dis
 `NSOutlineView` with git-status colors, collapsed gitignored dirs (expand toggle), 1.5s poll that
 reloads only on change and preserves expansion by path. Click a leaf to open it.
 
-## Editor — `UI/Editor`
-`NSTextView` + Highlightr `CodeAttributedString` (language by extension, atom-one-dark). Cmd+S saves;
-edits flag the tab dirty (chip dot). Shared font size live-applies with in-place run resize.
+## Editor — `UI/Editor`, `TextMate/`
+`NSTextView` over a plain `NSTextStorage`, syntax-coloured by a **native TextMate-grammar highlighter**
+(`TextMate/TextMateHighlighter`) — a small engine that runs `.tmLanguage.json` grammars via
+`NSRegularExpression`, the regex engine built into macOS. No JavaScript engine: this replaced
+Highlightr (highlight.js in JavaScriptCore), cutting editor RAM ~70% (a JS VM cost ~150 MB/process)
+at roughly the same app size. ~30 grammars (from VS Code) ship in `TextMate/Grammars/` and load lazily
+per language; theme is atom-one-dark. Tokenizing is **line-based** (begin/end state carried on a stack
+across lines, so multi-line strings/comments stay correct) and runs **off the main thread** on a shared
+serial queue — so even a large file never blocks typing or scrolling. A grammar's regexes are
+precompiled on load, making `spans(for:)` a pure read safe to run on any thread; small files highlight
+synchronously on open (no flash), large files and edits colour asynchronously. Edits coalesce via a
+**150 ms debounce** and recolour only (text/selection/undo untouched), with a sequence guard dropping
+any pass a newer edit superseded. Cmd+S saves; edits flag the tab dirty (chip dot). Shared font size
+live-applies with in-place run resize. Coverage is "good, not tree-sitter-perfect": regex-based, and
+external-grammar includes (e.g. CSS embedded in HTML) and Oniguruma-only regex are skipped. The
+tokenizer is ~linear but call-bound (~0.3 ms/line); huge files colour off-main without freezing rather
+than instantly — a combined-regex scanner would be the next step if instant huge-file colour is needed.
 
 ## Changes & diff — `UI/Changes`, `UI/Diff`
 `ChangesModel` polls staged/unstaged; the view has a commit bar (Commit / Commit & Push), section +

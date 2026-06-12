@@ -1,17 +1,5 @@
 import AppKit
-import Highlightr
 import Combine
-
-/// One Highlightr (= one JavaScriptCore engine with highlight.js) shared by every editor. Creating
-/// one per file was the dominant RAM cost (~50 MB each). Highlighting is stateless per call and runs
-/// on the main thread, and all editors use the same theme + shared font, so sharing is safe.
-enum SharedHighlightr {
-    static let instance: Highlightr = {
-        let h = Highlightr()!
-        _ = h.setTheme(to: "atom-one-dark")
-        return h
-    }()
-}
 
 /// DEV harness hook: the editor for the currently-active file tab (set by CenterViewController).
 enum ActiveEditor { static weak var current: EditorViewController? }
@@ -29,53 +17,33 @@ final class CodeTextView: NSTextView {
     }
 }
 
-/// Map a file extension to a highlight.js language id.
-private func hlLanguage(for path: String) -> String? {
-    switch (path as NSString).pathExtension.lowercased() {
-    case "py": return "python"
-    case "js", "mjs", "cjs", "jsx": return "javascript"
-    case "ts", "tsx": return "typescript"
-    case "swift": return "swift"
-    case "json": return "json"
-    case "md", "markdown": return "markdown"
-    case "rs": return "rust"
-    case "go": return "go"
-    case "rb": return "ruby"
-    case "java": return "java"
-    case "kt": return "kotlin"
-    case "c", "h": return "c"
-    case "cpp", "cc", "cxx", "hpp": return "cpp"
-    case "cs": return "csharp"
-    case "php": return "php"
-    case "sh", "bash", "zsh": return "bash"
-    case "yml", "yaml": return "yaml"
-    case "html", "htm": return "xml"
-    case "css", "scss", "less": return "css"
-    case "toml", "ini": return "ini"
-    case "sql": return "sql"
-    case "xml": return "xml"
-    default: return nil
-    }
-}
-
-/// A syntax-highlighted file editor (NSTextView + Highlightr's CodeAttributedString). Cmd+S saves;
-/// edits flag the tab dirty. Font size tracks Settings live, resizing runs in place (no re-tokenize).
+/// A syntax-highlighted file editor: a plain `NSTextView`/`NSTextStorage` coloured by our native
+/// TextMate highlighter (no JavaScript engine). Cmd+S saves; edits flag the tab dirty and trigger a
+/// debounced re-highlight that only repaints colours (text, cursor and undo are untouched). Font size
+/// tracks Settings live; resizing swaps each run's font in place (no re-tokenize).
 final class EditorViewController: NSViewController, NSTextViewDelegate {
     let path: String          // absolute file path
     private let settings: Settings
     private let onDirty: (Bool) -> Void
 
     private var textView: CodeTextView!
-    private var textStorage: CodeAttributedString!
+    private var textStorage: NSTextStorage!
+    private let highlighter: TextMateHighlighter?
     private var saved = ""
     private var lastFontSize: Double
     private var cancellables = Set<AnyCancellable>()
+    private var rehighlightWork: DispatchWorkItem?
+    private var highlightSeq = 0
+    /// All tokenizing runs on one shared serial queue: it keeps the UI responsive on large files and
+    /// serialises access to the shared (per-language) highlighter, whose regexes compile lazily.
+    private static let highlightQueue = DispatchQueue(label: "com.multee.highlight", qos: .userInitiated)
 
     init(path: String, settings: Settings, onDirty: @escaping (Bool) -> Void) {
         self.path = path
         self.settings = settings
         self.onDirty = onDirty
         self.lastFontSize = settings.fontSize
+        self.highlighter = TextMateHighlighter.forPath(path)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -84,16 +52,11 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
 
     override func loadView() {
         let fontSize = settings.fontSize
-
-        let ts = CodeAttributedString(highlightr: SharedHighlightr.instance)   // one shared JS engine
-        ts.language = hlLanguage(for: path)
-        let highlightr = ts.highlightr
-        highlightr.theme.setCodeFont(mono(fontSize))
-        let themeBg = highlightr.theme.themeBackgroundColor ?? NSColor(calibratedWhite: 0.118, alpha: 1)
-        self.textStorage = ts
+        let storage = NSTextStorage()
+        self.textStorage = storage
 
         let layoutManager = NSLayoutManager()
-        ts.addLayoutManager(layoutManager)
+        storage.addLayoutManager(layoutManager)
         let container = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = true
         layoutManager.addTextContainer(container)
@@ -101,8 +64,8 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
         let tv = CodeTextView(frame: .zero, textContainer: container)
         tv.isRichText = false
         tv.allowsUndo = true
-        tv.backgroundColor = themeBg
-        tv.insertionPointColor = NSColor.white
+        tv.backgroundColor = TMTheme.background
+        tv.insertionPointColor = .white
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isAutomaticSpellingCorrectionEnabled = false
@@ -113,19 +76,27 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
         tv.autoresizingMask = NSView.AutoresizingMask.width
         tv.textContainerInset = NSSize(width: 6, height: 8)
         tv.font = mono(fontSize)
+        tv.typingAttributes = [.font: mono(fontSize), .foregroundColor: TMTheme.base]
         tv.delegate = self
+        self.textView = tv
 
         let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        tv.string = content
+        textStorage.setAttributedString(NSAttributedString(
+            string: content, attributes: [.font: mono(fontSize), .foregroundColor: TMTheme.base]))
         saved = content
         tv.onSave = { [weak self] in self?.save() }
-        self.textView = tv
+        requestHighlight(debounced: false)   // colours apply off-main; first paint shows plain text instantly
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
+        // Legacy (always-visible) scroller, not the overlay one: the bar stays put instead of
+        // appearing only mid-scroll, and it gets its own gutter so the text view's I-beam no longer
+        // bleeds under it (the scroller area shows the normal arrow cursor).
+        scroll.scrollerStyle = .legacy
+        scroll.autohidesScrollers = false
         scroll.borderType = .noBorder
         scroll.drawsBackground = true
-        scroll.backgroundColor = themeBg
+        scroll.backgroundColor = TMTheme.background
         scroll.documentView = tv
         self.view = scroll
     }
@@ -137,6 +108,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
 
     func textDidChange(_ notification: Notification) {
         onDirty(textView.string != saved)
+        requestHighlight(debounced: true)
     }
 
     func save() {
@@ -146,13 +118,52 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
         onDirty(false)
     }
 
-    /// DEV harness: current editor text (for asserting load/edit/save without pixels).
-    var debugText: String { textView?.string ?? "" }
-    var isDirty: Bool { (textView?.string ?? "") != saved }
-    /// DEV harness: append text (programmatic .string set doesn't fire the delegate, so flag dirty).
-    func debugAppend(_ s: String) {
-        textView.string += s
-        onDirty(textView.string != saved)
+    // MARK: - Highlighting
+
+    /// Tokenize off the main thread and apply the resulting colours back on main. A full-document
+    /// re-highlight keeps multi-line regions (strings/comments spanning the edit) correct; running it
+    /// off-main means even a large file never blocks typing or scrolling. Edits coalesce via a 150 ms
+    /// debounce, and a sequence number drops any pass that a newer edit has superseded.
+    private func requestHighlight(debounced: Bool) {
+        guard let highlighter else { return }
+        highlightSeq += 1
+        let seq = highlightSeq
+        rehighlightWork?.cancel()
+        // Initial open of a small file: tokenize synchronously so it appears already-coloured (no
+        // plain-text flash). Safe on main because the grammar's regexes are precompiled. Large files
+        // and all edits go off-main below.
+        if !debounced, (textView.string as NSString).length <= 20_000 {
+            let content = textView.string
+            applySpans(highlighter.spans(for: content), expecting: content)
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let content = self.textView.string
+            EditorViewController.highlightQueue.async {
+                let spans = highlighter.spans(for: content)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.highlightSeq == seq else { return }   // a newer edit won
+                    self.applySpans(spans, expecting: content)
+                }
+            }
+        }
+        rehighlightWork = work
+        if debounced { DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work) }
+        else { work.perform() }
+    }
+
+    /// Recolour the storage from computed spans (text/selection/undo untouched). Skipped if the text
+    /// changed since these spans were computed — a newer pass is already queued to cover it.
+    private func applySpans(_ spans: [(NSRange, NSColor)], expecting content: String) {
+        let length = textStorage.length
+        guard (content as NSString).length == length else { return }
+        textStorage.beginEditing()
+        textStorage.addAttribute(.foregroundColor, value: TMTheme.base, range: NSRange(location: 0, length: length))
+        for (range, color) in spans where NSMaxRange(range) <= length {
+            textStorage.addAttribute(.foregroundColor, value: color, range: range)
+        }
+        textStorage.endEditing()
     }
 
     private func applyFont(_ size: Double) {
@@ -160,9 +171,9 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
         lastFontSize = size
         let f = mono(size)
         textView.font = f
-        // Resize runs in place — DON'T re-run highlight.js (re-tokenizing is slow). Only swap each
-        // run's font to the new size, preserving bold/italic via the font manager.
-        textStorage.highlightr.theme.setCodeFont(f)
+        textView.typingAttributes[.font] = f
+        // Resize runs in place — DON'T re-tokenize. Only swap each run's font to the new size,
+        // preserving bold/italic via the font manager.
         textStorage.beginEditing()
         let full = NSRange(location: 0, length: textStorage.length)
         textStorage.enumerateAttribute(.font, in: full) { value, range, _ in
@@ -173,4 +184,16 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
     }
 
     private func mono(_ s: Double) -> NSFont { .monospacedSystemFont(ofSize: s, weight: .regular) }
+
+    // MARK: - DEV harness hooks
+
+    /// Current editor text (for asserting load/edit/save without pixels).
+    var debugText: String { textView?.string ?? "" }
+    var isDirty: Bool { (textView?.string ?? "") != saved }
+    /// Append text (programmatic `.string` set doesn't fire the delegate, so flag dirty + re-highlight).
+    func debugAppend(_ s: String) {
+        textView.string += s
+        onDirty(textView.string != saved)
+        requestHighlight(debounced: true)
+    }
 }

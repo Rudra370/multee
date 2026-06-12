@@ -89,7 +89,7 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     private let settings: Settings
     private let onOpen: (String) -> Void
 
-    private let outline = NSOutlineView()
+    private let outline = PointerOutlineView()   // pointing-hand cursor over rows
     private let scroll = NSScrollView()
     private var roots: [TreeNode] = []
     private var expandedPaths = Set<String>()

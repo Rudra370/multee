@@ -5,7 +5,8 @@ VS Code-style file tree, in-app editing, a changes/diff view, a status board, an
 
 Built with **AppKit + Swift Package Manager** (no Xcode required; Command Line Tools only).
 Terminal rendering is [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm); editor highlighting is
-a vendored [Highlightr](https://github.com/raspu/Highlightr).
+native — a small TextMate-grammar engine over `NSRegularExpression` (no JavaScript engine), with ~30
+bundled languages.
 
 ## Install (Homebrew)
 

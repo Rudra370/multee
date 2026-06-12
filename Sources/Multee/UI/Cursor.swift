@@ -32,3 +32,13 @@ class PointerSegmentedControl: NSSegmentedControl {
     override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }
+
+/// NSOutlineView (the file tree) that shows the pointing-hand cursor over its rows and the plain
+/// arrow over empty space below them — matching every other clickable element in the app.
+class PointerOutlineView: NSOutlineView {
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); installPointerTracking(self) }
+    override func cursorUpdate(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        (row(at: point) >= 0 ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+}
