@@ -114,7 +114,8 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         outline.addTableColumn(col)
         outline.outlineTableColumn = col
         outline.headerView = nil
-        outline.rowSizeStyle = .small
+        outline.rowSizeStyle = .custom
+        outline.rowHeight = settings.fontSize + 9
         outline.indentationPerLevel = 12
         outline.backgroundColor = NSColor(white: 0.145, alpha: 1)
         outline.dataSource = self
@@ -135,6 +136,15 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         settings.$expandIgnored
             .dropFirst()
             .sink { [weak self] _ in self?.refresh() }
+            .store(in: &cancellables)
+        settings.$fontSize
+            .dropFirst()
+            .sink { [weak self] size in
+                guard let self else { return }
+                self.outline.rowHeight = size + 9
+                self.outline.reloadData()
+                self.restoreExpansion(self.roots)
+            }
             .store(in: &cancellables)
         startPolling()
     }
@@ -218,6 +228,7 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
             ])
             return c
         }()
+        cell.textField?.font = .systemFont(ofSize: settings.fontSize)
         let title = node.name + (node.isDir ? "/" : "")
         let color = nsStatusColor(node.status)
         if node.status == .deleted {

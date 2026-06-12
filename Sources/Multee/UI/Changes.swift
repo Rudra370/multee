@@ -283,7 +283,7 @@ final class ChangesViewController: NSViewController {
 
 // MARK: - One change row (hover reveals stage/discard/open actions)
 
-private final class ChangeRowView: NSView {
+private final class ChangeRowView: PointerView {
     private let file: FileEntry
     private let staged: Bool
     private let onOpenDiff: () -> Void
@@ -374,8 +374,8 @@ private final class ChangeRowView: NSView {
     override func mouseDown(with event: NSEvent) { onOpenDiff() }
 }
 
-/// Small SF-symbol icon button backed by a closure.
-final class ClosureButton: NSButton {
+/// Small SF-symbol icon button backed by a closure (pointing-hand cursor via PointerButton).
+final class ClosureButton: PointerButton {
     private let handler: () -> Void
     init(symbol: String, action: @escaping () -> Void) {
         self.handler = action

@@ -1,38 +1,63 @@
 import AppKit
 import Combine
 
-/// Root layout: a horizontal split with the workspace (center) on the left and the sidebar
-/// (files / sessions) on the right. NSSplitViewController gives live, persistent, correctly-cursored
-/// resizing for free — the thing SwiftUI's HSplitView couldn't do cleanly.
-final class WorkspaceViewController: NSSplitViewController {
+/// Root layout: a horizontal split with the workspace (center) on the left and the sidebar (files /
+/// sessions) on the right. A *plain* NSSplitView (not NSSplitViewController) so the divider drags
+/// reliably — the same kind the inner sessions split uses.
+final class WorkspaceViewController: NSViewController, NSSplitViewDelegate {
     private let model: AppModel
+    private let centerVC: CenterViewController
+    private let sidebarVC: SidebarViewController
+    private var didSizeOnce = false
 
     init(model: AppModel) {
         self.model = model
+        self.centerVC = CenterViewController(model: model)
+        self.sidebarVC = SidebarViewController(model: model)
         super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        splitView.isVertical = true                 // vertical divider → side-by-side
-        splitView.dividerStyle = .thin
-        splitView.autosaveName = "MulteeMainSplit"
+    override func loadView() {
+        let split = NSSplitView()
+        split.isVertical = true                 // vertical divider → side-by-side
+        split.dividerStyle = .thin
+        split.autosaveName = "MulteeMainSplit"
+        split.delegate = self
+        addChild(centerVC)
+        addChild(sidebarVC)
+        split.addArrangedSubview(centerVC.view)
+        split.addArrangedSubview(sidebarVC.view)
+        split.setHoldingPriority(.defaultLow, forSubviewAt: 0)   // center flexes
+        split.setHoldingPriority(.defaultHigh, forSubviewAt: 1)  // sidebar keeps its width
+        self.view = split
+    }
 
-        let center = NSSplitViewItem(viewController: CenterViewController(model: model))
-        center.minimumThickness = 480
-        center.holdingPriority = .defaultLow        // center flexes when the window resizes
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard let split = view as? NSSplitView, split.bounds.width > 100,
+              split.arrangedSubviews.count > 1 else { return }
+        let total = split.bounds.width
+        let sidebarW = split.arrangedSubviews[1].frame.width
+        // First layout: set the default sidebar width if nothing valid was restored.
+        if !didSizeOnce {
+            didSizeOnce = true
+            if sidebarW < 120 || sidebarW > total - 200 {
+                split.setPosition(total - 320, ofDividerAt: 0)
+            }
+        } else if sidebarW < 120 {
+            // Self-heal: the inner split has no intrinsic width, so never let it collapse to nothing.
+            split.setPosition(total - 320, ofDividerAt: 0)
+        }
+    }
 
-        let sidebar = NSSplitViewItem(viewController: SidebarViewController(model: model))
-        sidebar.minimumThickness = 240
-        sidebar.maximumThickness = 560
-        sidebar.canCollapse = false
-        sidebar.holdingPriority = .defaultHigh       // sidebar keeps its width
-
-        addSplitViewItem(center)
-        addSplitViewItem(sidebar)
+    // Keep both panes usable while dragging.
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMin: CGFloat, ofDividerAt dividerIndex: Int) -> CGFloat { 360 }
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMax: CGFloat, ofDividerAt dividerIndex: Int) -> CGFloat { splitView.bounds.width - 220 }
+    func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
+        view !== sidebarVC.view   // on window resize, grow/shrink the center, keep the sidebar
     }
 }
 
@@ -84,10 +109,21 @@ final class SidebarViewController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        // Apply the persisted collapsed state once we have a real height to compute against.
-        if !didApplyInitialCollapse, (sidebarSplit?.bounds.height ?? 0) > 0 {
+        guard let split = sidebarSplit, split.bounds.height > 100, split.arrangedSubviews.count > 1 else { return }
+        let total = split.bounds.height
+        let sessionsH = split.arrangedSubviews[1].frame.height
+
+        if !didApplyInitialCollapse {
             didApplyInitialCollapse = true
-            if sessionsCollapsed { applyCollapse(animated: false) }
+            if sessionsCollapsed {
+                applyCollapse(animated: false)
+            } else if sessionsH < 70 || sessionsH > total - 100 {
+                // Default SESSIONS to the bottom 25% when nothing valid was restored.
+                split.setPosition(total * 0.75, ofDividerAt: 0)
+            }
+        } else if !sessionsCollapsed, sessionsH < 50 {
+            // Self-heal: the SESSIONS pane has no intrinsic height; never let it vanish.
+            split.setPosition(total * 0.75, ofDividerAt: 0)
         }
     }
 
@@ -307,7 +343,7 @@ final class SidebarViewController: NSViewController {
 }
 
 /// One row in the SESSIONS list: status dot, name (click to activate), close button.
-final class SessionRowView: NSView {
+final class SessionRowView: PointerView {
     private let onSelect: () -> Void
     private let onClose: () -> Void
 

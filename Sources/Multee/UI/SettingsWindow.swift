@@ -1,16 +1,20 @@
 import AppKit
 import Combine
 
-/// Settings window: native checkboxes / stepper / text field bound to `Settings` (UserDefaults).
+/// Settings window: native checkboxes / stepper / text field bound to `Settings` (UserDefaults),
+/// plus toggleable preset chips for the default Claude args. ESC closes it.
 final class SettingsWindowController: NSWindowController {
     private let settings: Settings
     private var fontLabel: NSTextField!
     private var stepper: NSStepper!
     private var argsField: NSTextField!
+    private var chipButtons: [(flag: String, button: NSButton)] = []
+
+    private let suggestions = ["--continue", "--resume", "--dangerously-skip-permissions", "--verbose"]
 
     init(settings: Settings) {
         self.settings = settings
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 320),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.isReleasedWhenClosed = false
@@ -22,6 +26,9 @@ final class SettingsWindowController: NSWindowController {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    /// ESC closes the window (reaches the window controller via the responder chain).
+    override func cancelOperation(_ sender: Any?) { close() }
 
     private func buildContent() -> NSView {
         let autoLaunch = checkbox("Auto-launch Claude when opening a project", \.autoLaunchClaude)
@@ -38,20 +45,44 @@ final class SettingsWindowController: NSWindowController {
         let fontRow = NSStackView(views: [fontLabel, stepper])
         fontRow.orientation = .horizontal; fontRow.spacing = 8
 
-        let argsLabel = NSTextField(labelWithString: "Default Claude args:")
+        let argsLabel = NSTextField(labelWithString: "Default Claude args")
         argsLabel.font = .systemFont(ofSize: 13)
         argsField = NSTextField(string: settings.defaultClaudeArgs)
         argsField.placeholderString = "e.g. --dangerously-skip-permissions"
+        argsField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         argsField.target = self; argsField.action = #selector(argsChanged)
-        argsField.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        let argsRow = NSStackView(views: [argsLabel, argsField])
-        argsRow.orientation = .horizontal; argsRow.spacing = 8
+        argsField.widthAnchor.constraint(equalToConstant: 392).isActive = true
 
-        let stack = NSStackView(views: [autoLaunch, expand, sound, restore, fontRow, argsRow])
+        // Toggleable preset chips.
+        let chipRow = NSStackView()
+        chipRow.orientation = .horizontal
+        chipRow.spacing = 6
+        for flag in suggestions {
+            let b = PointerButton()
+            b.title = flag
+            b.isBordered = false
+            b.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            b.wantsLayer = true
+            b.layer?.cornerRadius = 9
+            b.target = self
+            b.action = #selector(chipTapped(_:))
+            b.tag = suggestions.firstIndex(of: flag)!
+            chipButtons.append((flag, b))
+            chipRow.addArrangedSubview(b)
+        }
+        refreshChips()
+
+        let argsStack = NSStackView(views: [argsLabel, argsField, chipRow])
+        argsStack.orientation = .vertical
+        argsStack.alignment = .leading
+        argsStack.spacing = 8
+
+        let stack = NSStackView(views: [autoLaunch, expand, sound, restore, fontRow, argsStack])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
+
         let host = NSView()
         host.wantsLayer = true
         host.layer?.backgroundColor = NSColor(white: 0.16, alpha: 1).cgColor
@@ -65,7 +96,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func checkbox(_ title: String, _ keyPath: ReferenceWritableKeyPath<Settings, Bool>) -> NSButton {
-        let b = NSButton(checkboxWithTitle: title, target: self, action: #selector(toggle(_:)))
+        let b = PointerButton(checkboxWithTitle: title, target: self, action: #selector(toggle(_:)))
         b.state = settings[keyPath: keyPath] ? .on : .off
         keyPaths[ObjectIdentifier(b)] = keyPath
         return b
@@ -80,5 +111,24 @@ final class SettingsWindowController: NSWindowController {
         settings.fontSize = Double(stepper.integerValue)
         fontLabel.stringValue = "Font size: \(stepper.integerValue) pt"
     }
-    @objc private func argsChanged() { settings.defaultClaudeArgs = argsField.stringValue }
+    @objc private func argsChanged() { settings.defaultClaudeArgs = argsField.stringValue; refreshChips() }
+
+    @objc private func chipTapped(_ sender: NSButton) {
+        let flag = suggestions[sender.tag]
+        var parts = settings.defaultClaudeArgs.split(separator: " ").map(String.init)
+        if let i = parts.firstIndex(of: flag) { parts.remove(at: i) } else { parts.append(flag) }
+        settings.defaultClaudeArgs = parts.joined(separator: " ")
+        argsField.stringValue = settings.defaultClaudeArgs
+        refreshChips()
+    }
+
+    private func refreshChips() {
+        let active = Set(settings.defaultClaudeArgs.split(separator: " ").map(String.init))
+        for (flag, b) in chipButtons {
+            let on = active.contains(flag)
+            b.layer?.backgroundColor = (on ? NSColor(red: 0.04, green: 0.28, blue: 0.44, alpha: 1)
+                                           : NSColor(white: 0.22, alpha: 1)).cgColor
+            b.contentTintColor = on ? .white : NSColor(white: 0.75, alpha: 1)
+        }
+    }
 }
