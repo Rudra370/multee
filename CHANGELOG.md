@@ -1,0 +1,31 @@
+# Changelog
+
+Notable changes to Multee. **A version's section here becomes that release's GitHub description and
+the in-app "What's new."** Writing one is *optional*: if you add a `## [version]` block before
+tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
+commits/PRs since the last tag. Newest first.
+
+## [0.1.0] - 2026-06-12
+
+First release of the **native AppKit** Multee — a full rewrite of the SwiftUI build for stability.
+The cursor/tooltip/resize glitches are gone (AppKit owns those natively), and the file-open crash is
+fixed. Feature parity with the previous build:
+
+### Added
+- **Multi-session workspace** — open multiple repos, each with its own tabs; switch and close freely.
+- **Tabs** — Claude sessions (with arg presets: continue / resume / skip-permissions), plain shells,
+  open files, and diffs. Tabs stay live across switches; restored tabs spawn lazily.
+- **Native terminal** (SwiftTerm) — real `claude` and shells in a PTY with correct colors/glyphs,
+  login-shell PATH, trackpad + wheel scrolling.
+- **File tree** (NSOutlineView) — git-status colors, collapsed gitignored folders (toggle to expand),
+  live refresh, click to open.
+- **Editor** — syntax-highlighted (Highlightr), Cmd+S save, unsaved indicator, shared font size
+  (Cmd +/−).
+- **Changes & diff** — staged/unstaged lists with badges, commit (+ Commit & Push), stage/unstage,
+  discard, stash/unstash; unified or split diff vs HEAD.
+- **Status board** — per-tab and per-session dots (working / needs-you / idle) driven by Claude
+  hooks, with an attention/completion sound.
+- **Settings** — auto-launch Claude, show-gitignored, sound, restore-on-launch, font size, default
+  Claude args.
+- **Session restore** — reopens your sessions, tabs, and **resumes Claude conversations** on launch.
+- **In-app updates** — banner when a new release ships, with one-click Homebrew self-update.

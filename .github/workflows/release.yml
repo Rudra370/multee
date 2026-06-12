@@ -1,0 +1,85 @@
+name: Release
+
+# Cut a release by pushing a version tag, e.g.:  git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # create releases + push the updated cask back to main
+
+jobs:
+  build:
+    runs-on: macos-14
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      asset: ${{ steps.package.outputs.asset }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve version from tag
+        id: meta
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release app (unsigned)
+        env:
+          MULTEE_VERSION: ${{ steps.meta.outputs.version }}
+        run: ./build.sh release
+
+      - name: Package (zip the .app, preserving the bundle)
+        id: package
+        run: |
+          ASSET="Multee-${{ steps.meta.outputs.version }}.zip"
+          ditto -c -k --keepParent "Multee.app" "$ASSET"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "$ASSET" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      # Hybrid release notes: use the hand-written CHANGELOG section if this version has one,
+      # otherwise fall back to GitHub's auto-generated notes (commits/PRs since the last tag).
+      - name: Release notes from CHANGELOG (if any)
+        id: notes
+        run: |
+          awk -v v="${{ steps.meta.outputs.version }}" '
+            $0 ~ ("^## \\[" v "\\]") {f=1; next}
+            f && /^## \[/ {exit}
+            f {print}
+          ' CHANGELOG.md | awk 'NF{p=1} p' > RELEASE_NOTES.md
+          if [ -s RELEASE_NOTES.md ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+            echo "----- using CHANGELOG notes -----"; cat RELEASE_NOTES.md
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "no CHANGELOG section for ${{ steps.meta.outputs.version }} -> auto-generating from commits"
+          fi
+
+      - name: Create GitHub Release (curated notes)
+        if: steps.notes.outputs.have == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: ${{ steps.package.outputs.asset }}
+          body_path: RELEASE_NOTES.md
+
+      - name: Create GitHub Release (auto-generated notes)
+        if: steps.notes.outputs.have != 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: ${{ steps.package.outputs.asset }}
+          generate_release_notes: true
+
+  # Publish/refresh the Homebrew cask via the tap's reusable workflow (race-safe).
+  cask:
+    needs: build
+    uses: Rudra370/homebrew-tap/.github/workflows/update-cask.yml@main
+    with:
+      cask: multee
+      version: ${{ needs.build.outputs.version }}
+      sha256: ${{ needs.build.outputs.sha256 }}
+      url: "https://github.com/${{ github.repository }}/releases/download/v${{ needs.build.outputs.version }}/Multee-${{ needs.build.outputs.version }}.zip"
+      name: Multee
+      desc: Native macOS app to manage multiple Claude Code sessions
+      homepage: "https://github.com/${{ github.repository }}"
+      app: Multee.app
+    secrets:
+      deploy_key: ${{ secrets.TAP_DEPLOY_KEY }}

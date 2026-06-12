@@ -1,0 +1,76 @@
+# Multee (native macOS app — AppKit)
+
+Native macOS app to manage multiple Claude Code sessions. **Pure AppKit** (no SwiftUI) +
+Swift Package Manager. This is a rewrite of an earlier SwiftUI build; AppKit was chosen because the
+SwiftUI↔AppKit seam caused recurring cursor/tooltip/resize glitches and a file-open crash. See
+**FEATURES.md** for the per-feature log.
+
+## Stack
+- AppKit, built with Swift Package Manager (no Xcode; Command Line Tools only). Programmatic UI
+  (no storyboards/xibs). Model layer uses **Combine** `@Published` (independent of SwiftUI).
+- **SwiftTerm** — native terminal (ships its own PTY).
+- **Highlightr** — editor highlighting (highlight.js via JavaScriptCore). **Vendored** at
+  `vendor/Highlightr/` (local path dep) so its resource bundle resolves from `Contents/Resources`
+  — see the resource-bundle gotcha below.
+
+## Build & run
+- `./dev.sh` — build (debug) → install to **`/Applications/Multee Dev.app`** → relaunch. Debug
+  builds are a **separate app** ("Multee Dev", bundle id `com.multee.native.dev`, amber icon) so
+  they never clash with a real/brew-installed Multee. Its defaults domain is `com.multee.native.dev`.
+- `./build.sh release` — optimized **`Multee.app`** (`com.multee.native`). Copies the binary, icon,
+  and SwiftPM resource bundles into `Contents/`, then ad-hoc signs.
+- Type-check only: `swift build`.
+
+## Releasing
+- **The version is the git tag** — no version constant. `build.sh` reads `MULTEE_VERSION` (CI passes
+  it from the tag, `v0.1.0` → `0.1.0`) into Info.plist.
+- **Push a `v*` tag** → `.github/workflows/release.yml` builds the app, publishes the GitHub Release,
+  and refreshes the Homebrew cask via the tap (`Rudra370/homebrew-tap`, needs `TAP_DEPLOY_KEY`).
+- **Release notes are hybrid:** a `## [x.y.z]` section in `CHANGELOG.md` becomes the Release body and
+  the in-app "What's new"; if absent, CI auto-generates from commits. Prefer writing the section.
+
+## Debugging without a human (dev build only)
+The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
+```json
+{ "shot": "/tmp/multee-shot.png", "state": "/tmp/multee-state.json",
+  "actions": ["openRepo:/path", "openFile:rel", "openDiff:rel", "newClaude", "newTerminal",
+              "closeActiveTab", "closeSession", "openSettings", "sendText:hi", "sendEnter",
+              "scroll:up:10", "setStatus:needs", "editorType:x", "editorSave", "setFont:16"] }
+```
+- `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
+  standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
+  CoreText in a way `cacheDisplay` can't grab. **Verify terminal content via `terminalText` in the
+  state dump, not the screenshot.** (Corollary: don't make the terminal's ancestor views non-layer
+  to "fix" terminal capture — it breaks chip/editor capture instead. Terminal stays buffer-verified.)
+- `state` → UI + active-terminal state each 1s (active session/tab, tab list, terminal rows/cols/
+  scroll/repaints/**terminalText**, editorDirty, a `layout` frame diagnostic). Assert on values.
+- `actions` → scripted with delays; `wait:N` inserts N extra seconds.
+- `DebugHarness.swift` holds it all; `TerminalStore.debugText/debugState` inspect terminals.
+- Clear stale dev state between runs: `defaults delete com.multee.native.dev multee.state`.
+
+## Gotchas learned
+- **Never spawn a subprocess from a view layout path** — do PATH bootstrap (`Env.bootstrap`) once at
+  startup in `AppDelegate`.
+- **Trim `Shell.run` output** — an untrimmed `"true\n"` from git made `isRepo` false.
+- **SwiftPM resource bundles don't resolve in a distributed `.app`.** The generated `Bundle.module`
+  accessor only checks the `.app` *root* and the build-machine path — neither exists for a user, and
+  a code-signed `.app` must keep resources in `Contents/Resources/` (nothing at the root, or the
+  signature is invalid → Gatekeeper "damaged"). So `Bundle.module` `fatalError`s on file-open. Fix:
+  vendor the package and make its lookup check `Bundle.main.resourceURL` first
+  (`vendor/Highlightr/src/classes/BundleResolve.swift`). Any new resource-bearing dep needs the same.
+- **Self-screenshot needs layer-backed standard views** to capture; the terminal is the exception
+  (see harness note above).
+
+## File map (Sources/Multee/)
+- `App/` — `main.swift`, `AppDelegate.swift` (menu, key monitors, status routing, settings/update
+  wiring), `MainWindowController.swift` (window + banner + workspace).
+- `Model/` — `AppModel`, `Session`, `Tab`, `Settings` (Combine), `Persistence` (JSON snapshot).
+- `Backend/` — `Shell`/`Env`, `Git` (status + actions).
+- `Terminal/` — `TerminalStore` (PTY per tab + scroll), `HookServer` (status listener), `Hooks`.
+- `UI/` — `WorkspaceViewController` (split + sidebar), `CenterViewController` (tab bar + content),
+  `TabBarView`, `FileTree`, `Editor`, `Changes`, `Diff`, `SettingsWindow`, `Updates`.
+- `Debug/` — `DebugHarness` (dev-only shot/state/actions).
+
+## UI conventions
+- Icon/icon-buttons get a native **`.toolTip`** (reliable in AppKit, unlike SwiftUI). 
+- Deferred to a follow-up: per-button hand cursor, collapsible SESSIONS panel, drag-reorder tabs.
