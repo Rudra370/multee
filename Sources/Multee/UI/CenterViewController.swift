@@ -118,19 +118,30 @@ final class CenterViewController: NSViewController {
     private func render() {
         pruneOrphanContent()
 
-        guard let session = model.activeSession, let tab = session.activeTab else {
+        // No session at all → the open-a-folder empty state (no tab bar).
+        guard let session = model.activeSession else {
             tabBar.isHidden = true
             emptyStack?.isHidden = false
-            let noSession = model.activeSession == nil
-            emptyLabel.stringValue = noSession ? "Open a folder to start  (⌘O)" : "No tabs open"
-            openButton.isHidden = !noSession   // only offer "Open Folder" when nothing is open
+            emptyLabel.stringValue = "Open a folder to start  (⌘O)"
+            openButton.isHidden = false
             contentViews.values.forEach { $0.isHidden = true }
             return
         }
 
+        // A session is open → the tab bar stays visible (so you can always start a new tab), even
+        // when every tab is closed.
         tabBar.isHidden = false
-        emptyStack?.isHidden = true
         tabBar.render(session: session, activeTabID: session.activeTabID)
+
+        guard let tab = session.activeTab else {
+            emptyStack?.isHidden = false
+            emptyLabel.stringValue = "No tabs open"
+            openButton.isHidden = true
+            contentViews.values.forEach { $0.isHidden = true }
+            return
+        }
+
+        emptyStack?.isHidden = true
 
         // Lazily create the active tab's content view.
         if contentViews[tab.id] == nil {
