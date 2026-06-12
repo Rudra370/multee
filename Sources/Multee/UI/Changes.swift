@@ -244,6 +244,8 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
     private func iconButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> NSButton {
         let b = ClosureButton(symbol: symbol, action: action)
         b.toolTip = help
+        b.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        b.heightAnchor.constraint(equalToConstant: 20).isActive = true
         return b
     }
 
@@ -337,11 +339,18 @@ private final class ChangeRowView: PointerView {
         actions.orientation = .horizontal
         actions.spacing = 2
         actions.isHidden = true
-        actions.addArrangedSubview(ClosureButton(symbol: "arrow.uturn.backward", action: onDiscard))
-        if file.status != .deleted {
-            actions.addArrangedSubview(ClosureButton(symbol: "square.and.pencil", action: onOpenFile))
+        func actionButton(_ symbol: String, _ tip: String, _ run: @escaping () -> Void) -> ClosureButton {
+            let b = ClosureButton(symbol: symbol, action: run)
+            b.toolTip = tip
+            b.widthAnchor.constraint(equalToConstant: 22).isActive = true   // larger hit area than the bare glyph
+            b.heightAnchor.constraint(equalToConstant: 20).isActive = true
+            return b
         }
-        actions.addArrangedSubview(ClosureButton(symbol: staged ? "minus" : "plus", action: onStageToggle))
+        actions.addArrangedSubview(actionButton("arrow.uturn.backward", "Discard changes", onDiscard))
+        if file.status != .deleted {
+            actions.addArrangedSubview(actionButton("square.and.pencil", "Open file to edit", onOpenFile))
+        }
+        actions.addArrangedSubview(actionButton(staged ? "minus" : "plus", staged ? "Unstage" : "Stage", onStageToggle))
 
         let stack = NSStackView(views: [name, dirLabel, NSView(), actions, badge])
         stack.orientation = .horizontal
