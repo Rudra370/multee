@@ -5,6 +5,17 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.2] - 2026-06-12
+
+### Fixed
+- **No more freeze on large changesets** — opening a project with thousands of changed/untracked
+  files (e.g. a build or dependency folder that isn't gitignored) no longer hangs the app. The
+  Changes panel now renders rows lazily instead of building every one up front.
+
+### Changed
+- The file tree and Changes panel now share **one git poller per project** (a single file watcher
+  and one source of truth) — lower overhead and no duplicate polling.
+
 ## [0.1.1] - 2026-06-12
 
 ### Changed
