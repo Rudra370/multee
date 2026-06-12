@@ -7,6 +7,7 @@ final class MainWindowController: NSWindowController {
         let workspace = WorkspaceViewController(model: model)
         let window = NSWindow(contentViewController: workspace)
         window.title = "Multee"
+        window.backgroundColor = NSColor(white: 0.11, alpha: 1)   // workspace backdrop (no layer on terminal ancestors)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = false
         window.minSize = NSSize(width: 900, height: 600)

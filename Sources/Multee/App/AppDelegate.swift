@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 extension Bundle {
     /// Dev build = bundle id ends in `.dev` (set by build.sh for the debug "Multee Dev" app). Used
@@ -10,9 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var windowController: MainWindowController!
     private var keyMonitor: Any?
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Env.bootstrap()                 // compute login PATH once, before anything spawns
+        HookServer.shared.start()       // status listener for Claude hooks
+        TerminalStore.shared.fontSize = model.settings.fontSize
         NSApp.appearance = NSAppearance(named: .darkAqua)
         buildMenu()
 
@@ -20,8 +24,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
 
+        wireStatusRouting()
         installKeyMonitor()
         DebugHarness.start(model: model)   // dev-only (inert in release)
+    }
+
+    /// Route Claude status pings to the owning session's tab + play the attention/completion sound;
+    /// remember the conversation id for `--resume`; keep terminals in sync with the shared font size.
+    private func wireStatusRouting() {
+        HookServer.shared.onStatus = { [weak self] tabID, state in
+            guard let self else { return }
+            for session in self.model.sessions where session.tabs.contains(where: { $0.id == tabID }) {
+                let old = session.tabStatus[tabID] ?? .idle
+                session.tabStatus[tabID] = state
+                if self.model.settings.soundEnabled, old != state,
+                   state == .needs || (state == .idle && old == .working) {
+                    NSSound(named: state == .needs ? "Funk" : "Glass")?.play()
+                }
+            }
+        }
+        HookServer.shared.onClaudeId = { [weak self] tabID, cid in
+            guard let self else { return }
+            for session in self.model.sessions {
+                if let i = session.tabs.firstIndex(where: { $0.id == tabID }),
+                   session.tabs[i].claudeSessionId != cid {
+                    session.tabs[i].claudeSessionId = cid   // triggers debounced auto-save
+                }
+            }
+        }
+        model.settings.$fontSize
+            .sink { TerminalStore.shared.applyFont(size: $0) }
+            .store(in: &cancellables)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

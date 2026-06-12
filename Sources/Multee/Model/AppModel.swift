@@ -52,6 +52,7 @@ final class AppModel: ObservableObject {
 
     func closeSession(_ id: String) {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        sessions[idx].killTerminals()
         sessionObservers[id] = nil
         sessions.remove(at: idx)
         if activeSessionID == id {

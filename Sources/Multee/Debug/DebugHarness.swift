@@ -41,6 +41,17 @@ enum DebugAction {
         case "closeActiveTab": if let s = model.activeSession { s.closeTab(s.activeTabID) }
         case "closeSession":   if let s = model.activeSession { model.closeSession(s.id) }
         case "openSettings":   model.showSettings = true
+        case "sendText":  if let s = model.activeSession { TerminalStore.shared.send(s.activeTabID, arg) }
+        case "sendEnter": if let s = model.activeSession { TerminalStore.shared.send(s.activeTabID, "\r") }
+        case "scroll":
+            let p = arg.split(separator: ":").map(String.init)
+            let up = (p.first ?? "down") == "up"
+            let lines = p.count > 1 ? (Int(p[1]) ?? 3) : 3
+            if let s = model.activeSession { TerminalStore.shared.debugScroll(s.activeTabID, up: up, lines: lines) }
+        case "setStatus":
+            if let s = model.activeSession {
+                s.tabStatus[s.activeTabID] = arg == "working" ? .working : arg == "needs" ? .needs : .idle
+            }
         default: break
         }
     }
@@ -62,8 +73,16 @@ enum DebugState {
                  "status": (s.tabStatus[t.id] ?? .idle).rawValue]
             }
             if let t = s.activeTab {
-                root["activeTab"] = ["kind": t.kind.rawValue, "title": t.title,
-                                     "status": (s.tabStatus[t.id] ?? .idle).rawValue]
+                var at: [String: Any] = ["kind": t.kind.rawValue, "title": t.title,
+                                         "status": (s.tabStatus[t.id] ?? .idle).rawValue]
+                if t.kind == .claude || t.kind == .terminal,
+                   let ts = TerminalStore.shared.debugState(t.id) {
+                    at["terminal"] = ts
+                    if let text = TerminalStore.shared.debugText(t.id) {
+                        at["terminalText"] = String(text.suffix(2000))   // last visible output
+                    }
+                }
+                root["activeTab"] = at
             }
         }
         if let data = try? JSONSerialization.data(withJSONObject: root,

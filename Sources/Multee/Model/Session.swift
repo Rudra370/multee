@@ -41,12 +41,18 @@ final class Session: ObservableObject, Identifiable {
 
     func closeTab(_ id: String) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        TerminalStore.shared.close(id)   // kill the PTY if this tab had one
         tabs.remove(at: idx)
         tabStatus[id] = nil
         if activeTabID == id {
             // activate the neighbour that slid into this slot, else the last tab, else nothing
             activeTabID = tabs.indices.contains(idx) ? tabs[idx].id : (tabs.last?.id ?? "")
         }
+    }
+
+    /// Kill every PTY this session owns (called when the session itself closes).
+    func killTerminals() {
+        for tab in tabs { TerminalStore.shared.close(tab.id) }
     }
 
     func activate(_ id: String) {
