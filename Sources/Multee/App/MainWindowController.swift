@@ -29,8 +29,9 @@ final class MainWindowController: NSWindowController {
         let window = NSWindow(contentViewController: container)
         window.title = "Multee"
         window.backgroundColor = NSColor(white: 0.11, alpha: 1)   // workspace backdrop (no layer on terminal ancestors)
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.titlebarAppearsTransparent = false
+        // NB: NOT .fullSizeContentView — that draws content under the title bar, hiding the tab bar
+        // and the Files/Changes toggle behind it.
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.minSize = NSSize(width: 900, height: 600)
         window.setContentSize(NSSize(width: 1100, height: 720))
         window.setFrameAutosaveName("MulteeMainWindow")
