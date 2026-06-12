@@ -9,6 +9,7 @@ final class SettingsWindowController: NSWindowController {
     private var stepper: NSStepper!
     private var argsField: NSTextField!
     private var chipButtons: [(flag: String, button: NSButton)] = []
+    private var escMonitor: Any?
 
     private let suggestions = ["--continue", "--resume", "--dangerously-skip-permissions", "--verbose"]
 
@@ -22,13 +23,19 @@ final class SettingsWindowController: NSWindowController {
         super.init(window: window)
         window.contentView = buildContent()
         window.center()
+
+        // ESC closes the settings window (a local monitor catches it even when a field is focused).
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.window?.isKeyWindow == true, event.keyCode == 53 else { return event }
+            self.close()
+            return nil
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    /// ESC closes the window (reaches the window controller via the responder chain).
-    override func cancelOperation(_ sender: Any?) { close() }
+    deinit { if let escMonitor { NSEvent.removeMonitor(escMonitor) } }
 
     private func buildContent() -> NSView {
         let autoLaunch = checkbox("Auto-launch Claude when opening a project", \.autoLaunchClaude)

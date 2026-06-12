@@ -74,8 +74,14 @@ final class SidebarViewController: NSViewController {
     private var treeVC: FileTreeViewController?
     private var changesVC: ChangesViewController?
     private var currentRepo: String?
-    private let filesModeSeg = NSSegmentedControl(labels: ["Files", "Changes"],
-                                                  trackingMode: .selectOne, target: nil, action: nil)
+    private let filesModeSeg: PointerSegmentedControl = {
+        let s = PointerSegmentedControl()
+        s.segmentCount = 2
+        s.setLabel("Files", forSegment: 0)
+        s.setLabel("Changes", forSegment: 1)
+        s.trackingMode = .selectOne
+        return s
+    }()
     private var changesMode: Bool { filesModeSeg.selectedSegment == 1 }
 
     // SESSIONS header + collapse
@@ -152,6 +158,7 @@ final class SidebarViewController: NSViewController {
         filesModeSeg.action = #selector(filesModeChanged)
         filesModeSeg.controlSize = .small
         filesModeSeg.segmentStyle = .rounded
+        filesModeSeg.toolTip = "Files tree / Changes (git)"
         filesModeSeg.translatesAutoresizingMaskIntoConstraints = false
         filesContainer.translatesAutoresizingMaskIntoConstraints = false
         pane.addSubview(filesModeSeg)
@@ -359,15 +366,19 @@ final class SessionRowView: PointerView {
 
         let dot = StatusDot(state: status)
 
-        let nameButton = NSButton(title: name, target: self, action: #selector(select))
+        let nameButton = PointerButton()
+        nameButton.title = name
+        nameButton.target = self
+        nameButton.action = #selector(select)
         nameButton.isBordered = false
         nameButton.bezelStyle = .inline
         nameButton.alignment = .left
         nameButton.contentTintColor = isActive ? .labelColor : .secondaryLabelColor
         nameButton.font = .systemFont(ofSize: 13, weight: isActive ? .medium : .regular)
         nameButton.setButtonType(.momentaryChange)
+        nameButton.toolTip = "Switch to this session"
 
-        let close = NSButton(title: "✕", target: self, action: #selector(closeTapped))
+        let close = PointerButton(); close.title = "✕"; close.target = self; close.action = #selector(closeTapped)
         close.isBordered = false
         close.bezelStyle = .inline
         close.font = .systemFont(ofSize: 11)

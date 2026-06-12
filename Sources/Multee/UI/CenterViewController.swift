@@ -12,7 +12,7 @@ final class CenterViewController: NSViewController {
     private let tabBar = TabBarView()
     private let contentArea = NSView()
     private let emptyLabel = NSTextField(labelWithString: "Open a folder to start  (⌘O)")
-    private let openButton = NSButton()
+    private let openButton = PointerButton()
     private var emptyStack: NSView?
     private var contentViews: [String: NSView] = [:]
     private var contentVCs: [String: NSViewController] = [:]   // VC-backed content (editor, diff)
@@ -56,6 +56,7 @@ final class CenterViewController: NSViewController {
         openButton.bezelStyle = .rounded
         openButton.target = self
         openButton.action = #selector(openFolderTapped)
+        openButton.toolTip = "Open a folder (⌘O)"
         let emptyStack = NSStackView(views: [emptyLabel, openButton])
         emptyStack.orientation = .vertical
         emptyStack.alignment = .centerX

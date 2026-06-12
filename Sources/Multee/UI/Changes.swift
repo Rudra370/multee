@@ -63,8 +63,8 @@ final class ChangesViewController: NSViewController {
     private var cancellables = Set<AnyCancellable>()
 
     private let commitField = NSTextField()
-    private let commitButton = NSButton()
-    private let menuButton = NSButton()
+    private let commitButton = PointerButton()
+    private let menuButton = PointerButton()
     private let listStack = NSStackView()
     private let emptyLabel = NSTextField(labelWithString: "No changes")
 
@@ -98,12 +98,14 @@ final class ChangesViewController: NSViewController {
         commitButton.controlSize = .regular
         commitButton.target = self
         commitButton.action = #selector(commitTapped)
+        commitButton.toolTip = "Commit (auto-stages everything if nothing is staged)"
 
         menuButton.title = "▾"
         menuButton.bezelStyle = .rounded
         menuButton.controlSize = .regular
         menuButton.target = self
         menuButton.action = #selector(commitMenuTapped)
+        menuButton.toolTip = "Commit / Commit & Push"
         menuButton.setContentHuggingPriority(.required, for: .horizontal)
 
         let buttonRow = NSStackView(views: [commitButton, menuButton])

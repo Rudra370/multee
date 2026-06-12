@@ -72,7 +72,14 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let emptyLabel = NSTextField(labelWithString: "No changes vs HEAD")
-    private let seg = NSSegmentedControl(labels: ["Unified", "Split"], trackingMode: .selectOne, target: nil, action: nil)
+    private let seg: PointerSegmentedControl = {
+        let s = PointerSegmentedControl()
+        s.segmentCount = 2
+        s.setLabel("Unified", forSegment: 0)
+        s.setLabel("Split", forSegment: 1)
+        s.trackingMode = .selectOne
+        return s
+    }()
 
     init(repo: String, path: String, onOpenFile: @escaping () -> Void) {
         self.repo = repo
@@ -101,8 +108,12 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
         seg.action = #selector(toggleSplit)
         seg.segmentStyle = .rounded
         seg.controlSize = .small
+        seg.toolTip = "Unified / Split view"
 
-        let openBtn = NSButton(title: "Edit", target: self, action: #selector(openTapped))
+        let openBtn = PointerButton()
+        openBtn.title = "Edit"
+        openBtn.target = self
+        openBtn.action = #selector(openTapped)
         openBtn.bezelStyle = .inline
         openBtn.controlSize = .small
         openBtn.toolTip = "Open file to edit"

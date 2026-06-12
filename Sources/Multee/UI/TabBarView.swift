@@ -123,6 +123,7 @@ final class TabChipView: PointerView {
         wantsLayer = true
         layer?.cornerRadius = 5
         layer?.backgroundColor = (isActive ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 1, alpha: 0.03)).cgColor
+        toolTip = title
 
         let indicator: NSView
         if kind == .claude {
