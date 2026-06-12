@@ -102,6 +102,21 @@ wanted.
 **Why:** Measuring is for when you're investigating; normal users shouldn't pay any cost for a meter
 they don't want. (Measurement uses Mach `task_info` `phys_footprint` = Activity Monitor's "Memory".)
 
+### D19 — Virtualize any list that grows with repo size (generalizes D6)
+**Decision:** The git Changes panel renders its rows with a virtualized `NSTableView` (only ~visible
+rows are built), with a high per-section cap (~2,000) + a "…and N more" footer.
+**Why:** The old panel built one view + Auto-Layout constraint *per changed file* in an `NSStackView`.
+A repo with a large changeset (thousands of modified/untracked files — e.g. a build/deps dir not
+gitignored) meant thousands of stacked views, so Auto Layout went ~O(n²) and **hung the main thread
+for tens of seconds at launch**. Reproduced: an 8,000-file repo froze the app ~30 s at 100% CPU.
+Virtualization makes layout cost O(visible) regardless of total count.
+**This is D6 generalized:** the file tree already virtualizes via `NSOutlineView`; the rule now applies
+to *any* list that can grow with the repo. **When adding a list UI, virtualize it** unless its length
+is provably bounded and small.
+**Status: open follow-up (Phase 2)** — the file tree and Changes panel still poll git *independently*
+(two watchers + two `git status` runs per session). Consolidate to one shared, debounced poll feeding
+both — the "share heavy resources" principle.
+
 ---
 
 ## Resource bundling

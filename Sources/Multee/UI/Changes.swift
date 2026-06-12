@@ -46,7 +46,7 @@ final class ChangesModel: ObservableObject {
 
 // MARK: - Changes view controller
 
-final class ChangesViewController: NSViewController, NSTextFieldDelegate {
+final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     let repo: String
     private let onOpenDiff: (String) -> Void
     private let onOpenFile: (String) -> Void
@@ -58,8 +58,20 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
     private let commitField = NSTextField()
     private let commitButton = PointerButton()
     private let menuButton = PointerButton()
-    private let listStack = NSStackView()
+    private let tableView = NSTableView()
     private let emptyLabel = NSTextField(labelWithString: "No changes")
+
+    /// A virtualized list row: a section header, a file row, or a "…and N more" footer.
+    private enum Item {
+        case header(title: String, count: Int, actions: [(String, String, () -> Void)])
+        case file(FileEntry, staged: Bool)
+        case more(Int)
+    }
+    private var items: [Item] = []
+    /// Max file rows rendered per section. The list is virtualized so this is a high safety net, not a
+    /// normal limit — it only bites on pathological repos (thousands of changes) where drawing every
+    /// row is pointless anyway. The section header still shows the true total count.
+    private static let rowCap = 2000
 
     init(repo: String, onOpenDiff: @escaping (String) -> Void, onOpenFile: @escaping (String) -> Void) {
         self.repo = repo
@@ -117,20 +129,28 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
         commitBar.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         commitBar.translatesAutoresizingMaskIntoConstraints = false
 
-        // List
-        listStack.orientation = .vertical
-        listStack.alignment = .leading
-        listStack.spacing = 0
-        listStack.translatesAutoresizingMaskIntoConstraints = false
+        // List — a virtualized NSTableView. Only the ~visible rows are ever instantiated, so a repo
+        // with thousands of changes can't hang the UI by laying out every row (the old NSStackView
+        // built one view + constraint per file, which froze the app on large changesets).
+        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("change"))
+        col.resizingMask = .autoresizingMask
+        tableView.addTableColumn(col)
+        tableView.headerView = nil
+        tableView.style = .plain
+        tableView.backgroundColor = .clear
+        tableView.gridStyleMask = []
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
+        tableView.selectionHighlightStyle = .none
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.target = self
+        tableView.action = #selector(rowClicked)   // single-click a file row → open its diff
 
         let scroll = NSScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        let clip = FlippedClipView()
-        clip.drawsBackground = false
-        scroll.contentView = clip
-        scroll.documentView = listStack
+        scroll.documentView = tableView
 
         emptyLabel.font = .systemFont(ofSize: 12)
         emptyLabel.textColor = NSColor(white: 0.4, alpha: 1)
@@ -151,9 +171,6 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            listStack.topAnchor.constraint(equalTo: clip.topAnchor),
-            listStack.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
-            listStack.widthAnchor.constraint(equalTo: clip.widthAnchor),
 
             emptyLabel.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
@@ -196,38 +213,34 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
         commitButton.isEnabled = canCommit
         menuButton.isEnabled = canCommit
 
-        listStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let hasChanges = !model.staged.isEmpty || !model.unstaged.isEmpty
-        emptyLabel.isHidden = hasChanges
-        guard hasChanges else { return }
-
+        var rows: [Item] = []
         if !model.staged.isEmpty {
-            listStack.addArrangedSubview(sectionHeader("STAGED CHANGES", model.staged.count, actions: [
+            rows.append(.header(title: "STAGED CHANGES", count: model.staged.count, actions: [
                 ("minus", "Unstage all", { [weak self] in self?.model.unstageAll() }),
             ]))
-            for f in model.staged { addRow(f, staged: true) }
+            appendFiles(model.staged, staged: true, into: &rows)
         }
-        var changeActions: [(String, String, () -> Void)] = [
-            ("tray.and.arrow.down", "Stash all changes", { [weak self] in self?.model.stash() }),
-        ]
-        if model.stashCount > 0 {
-            changeActions.append(("tray.and.arrow.up", "Unstash (pop latest)", { [weak self] in self?.model.unstash() }))
+        if !model.unstaged.isEmpty {
+            var changeActions: [(String, String, () -> Void)] = [
+                ("tray.and.arrow.down", "Stash all changes", { [weak self] in self?.model.stash() }),
+            ]
+            if model.stashCount > 0 {
+                changeActions.append(("tray.and.arrow.up", "Unstash (pop latest)", { [weak self] in self?.model.unstash() }))
+            }
+            changeActions.append(("arrow.uturn.backward", "Discard all changes", { [weak self] in self?.confirmDiscardAll() }))
+            changeActions.append(("plus", "Stage all", { [weak self] in self?.model.stageAll() }))
+            rows.append(.header(title: "CHANGES", count: model.unstaged.count, actions: changeActions))
+            appendFiles(model.unstaged, staged: false, into: &rows)
         }
-        changeActions.append(("arrow.uturn.backward", "Discard all changes", { [weak self] in self?.confirmDiscardAll() }))
-        changeActions.append(("plus", "Stage all", { [weak self] in self?.model.stageAll() }))
-        listStack.addArrangedSubview(sectionHeader("CHANGES", model.unstaged.count, actions: changeActions))
-        for f in model.unstaged { addRow(f, staged: false) }
+
+        items = rows
+        emptyLabel.isHidden = !rows.isEmpty
+        tableView.reloadData()   // cheap — builds only visible cells
     }
 
-    private func addRow(_ f: FileEntry, staged: Bool) {
-        let row = ChangeRowView(
-            file: f, staged: staged,
-            onOpenDiff: { [weak self] in self?.onOpenDiff(f.path) },
-            onOpenFile: { [weak self] in self?.onOpenFile(f.path) },
-            onStageToggle: { [weak self] in staged ? self?.model.unstage(f.path) : self?.model.stage(f.path) },
-            onDiscard: { [weak self] in self?.confirmDiscard(f) })
-        listStack.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
+    private func appendFiles(_ files: [FileEntry], staged: Bool, into rows: inout [Item]) {
+        for f in files.prefix(Self.rowCap) { rows.append(.file(f, staged: staged)) }
+        if files.count > Self.rowCap { rows.append(.more(files.count - Self.rowCap)) }
     }
 
     private func sectionHeader(_ title: String, _ count: Int, actions: [(String, String, () -> Void)]) -> NSView {
@@ -294,6 +307,40 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn { model.discard(f) }
     }
+
+    // MARK: Virtualized list (NSTableView) — builds only the visible rows
+
+    func numberOfRows(in tableView: NSTableView) -> Int { items.count }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = items[row] { return 28 }
+        return 24
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        switch items[row] {
+        case let .header(title, count, actions):
+            return sectionHeader(title, count, actions: actions)
+        case let .file(f, staged):
+            return ChangeRowView(
+                file: f, staged: staged,
+                onOpenFile: { [weak self] in self?.onOpenFile(f.path) },
+                onStageToggle: { [weak self] in staged ? self?.model.unstage(f.path) : self?.model.stage(f.path) },
+                onDiscard: { [weak self] in self?.confirmDiscard(f) })
+        case let .more(n):
+            let label = NSTextField(labelWithString: "   …and \(n) more")
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.textColor = NSColor(white: 0.5, alpha: 1)
+            return label
+        }
+    }
+
+    /// Single-click on a file row opens its diff (header / "more" rows are inert).
+    @objc private func rowClicked() {
+        let row = tableView.clickedRow
+        guard row >= 0, row < items.count, case let .file(f, _) = items[row] else { return }
+        onOpenDiff(f.path)
+    }
 }
 
 // MARK: - One change row (hover reveals stage/discard/open actions)
@@ -301,15 +348,13 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
 private final class ChangeRowView: PointerView {
     private let file: FileEntry
     private let staged: Bool
-    private let onOpenDiff: () -> Void
     private let actions: NSStackView
     private var tracking: NSTrackingArea?
 
-    init(file: FileEntry, staged: Bool, onOpenDiff: @escaping () -> Void, onOpenFile: @escaping () -> Void,
+    init(file: FileEntry, staged: Bool, onOpenFile: @escaping () -> Void,
          onStageToggle: @escaping () -> Void, onDiscard: @escaping () -> Void) {
         self.file = file
         self.staged = staged
-        self.onOpenDiff = onOpenDiff
         self.actions = NSStackView()
         super.init(frame: .zero)
         wantsLayer = true
@@ -393,7 +438,6 @@ private final class ChangeRowView: PointerView {
         layer?.backgroundColor = NSColor.clear.cgColor
         actions.isHidden = true
     }
-    override func mouseDown(with event: NSEvent) { onOpenDiff() }
 }
 
 /// Small SF-symbol icon button backed by a closure (pointing-hand cursor via PointerButton).
