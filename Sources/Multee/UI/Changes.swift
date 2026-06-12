@@ -55,7 +55,7 @@ final class ChangesModel: ObservableObject {
 
 // MARK: - Changes view controller
 
-final class ChangesViewController: NSViewController {
+final class ChangesViewController: NSViewController, NSTextFieldDelegate {
     let repo: String
     private let onOpenDiff: (String) -> Void
     private let onOpenFile: (String) -> Void
@@ -92,6 +92,7 @@ final class ChangesViewController: NSViewController {
         commitField.focusRingType = .none
         commitField.target = self
         commitField.action = #selector(commitFromField)
+        commitField.delegate = self   // re-enable the Commit button as soon as a message is typed
 
         commitButton.title = "✓ Commit"
         commitButton.bezelStyle = .rounded
@@ -111,7 +112,10 @@ final class ChangesViewController: NSViewController {
         let buttonRow = NSStackView(views: [commitButton, menuButton])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 4
+        buttonRow.distribution = .fill
         commitButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        commitButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        menuButton.widthAnchor.constraint(equalToConstant: 34).isActive = true   // small ▾, Commit fills the rest
 
         let commitBar = NSStackView(views: [commitField, buttonRow])
         commitBar.orientation = .vertical
@@ -179,6 +183,12 @@ final class ChangesViewController: NSViewController {
     private var canCommit: Bool {
         !commitField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (!model.staged.isEmpty || !model.unstaged.isEmpty)
+    }
+
+    /// Live-update the Commit button as the user types (model polls don't fire on keystrokes).
+    func controlTextDidChange(_ obj: Notification) {
+        commitButton.isEnabled = canCommit
+        menuButton.isEnabled = canCommit
     }
 
     private func rebuild() {

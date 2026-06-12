@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWC: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Snappier tooltips (default is ~2s). Registered so it doesn't clobber a user override.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 350])
+
         Env.bootstrap()                 // compute login PATH once, before anything spawns
         HookServer.shared.start()       // status listener for Claude hooks
         TerminalStore.shared.fontSize = model.settings.fontSize

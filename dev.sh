@@ -24,3 +24,5 @@ for i in $(seq 1 25); do [ -f /tmp/multee-shot.png ] && break; sleep 1; done
 sleep 3
 pgrep -f "/Applications/$APP/Contents/MacOS/Multee" >/dev/null && echo "OK running ($APP)" || {
   echo "CRASHED"; ls -t ~/Library/Logs/DiagnosticReports/Multee-*.ips 2>/dev/null | head -1; }
+
+
