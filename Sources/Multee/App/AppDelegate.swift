@@ -40,7 +40,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.windowController.window?.subtitle =
                 String(format: "%.0f MB · %.1f%% CPU · %d session%@", memMB, cpu, n, n == 1 ? "" : "s")
         }
-        resourceMonitor.start()
+        // Off by default; toggling the setting starts/stops it live.
+        model.settings.$showResourceMonitor
+            .sink { [weak self] on in
+                guard let self else { return }
+                if on { self.resourceMonitor.start() }
+                else { self.resourceMonitor.stop(); self.windowController.window?.subtitle = "" }
+            }
+            .store(in: &cancellables)
 
         // Settings window on demand.
         model.$showSettings

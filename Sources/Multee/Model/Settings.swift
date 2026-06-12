@@ -12,6 +12,7 @@ final class Settings: ObservableObject {
     @Published var restoreOnLaunch: Bool  { didSet { d.set(restoreOnLaunch, forKey: K.restore) } }
     @Published var fontSize: Double       { didSet { d.set(fontSize, forKey: K.fontSize) } }
     @Published var defaultClaudeArgs: String { didSet { d.set(defaultClaudeArgs, forKey: K.defaultArgs) } }
+    @Published var showResourceMonitor: Bool { didSet { d.set(showResourceMonitor, forKey: K.resourceMonitor) } }
 
     /// Alias used at call sites that read the default Claude args.
     var defaultArgs: String { defaultClaudeArgs }
@@ -24,6 +25,7 @@ final class Settings: ObservableObject {
             K.restore: true,
             K.fontSize: 13.0,
             K.defaultArgs: "",
+            K.resourceMonitor: false,
         ])
         // didSet does not fire for these initial assignments inside init.
         autoLaunchClaude  = d.bool(forKey: K.autoLaunch)
@@ -32,6 +34,7 @@ final class Settings: ObservableObject {
         restoreOnLaunch   = d.bool(forKey: K.restore)
         fontSize          = d.double(forKey: K.fontSize)
         defaultClaudeArgs = d.string(forKey: K.defaultArgs) ?? ""
+        showResourceMonitor = d.bool(forKey: K.resourceMonitor)
     }
 
     /// Shared font size for terminal + editor, clamped to a readable range.
@@ -44,5 +47,6 @@ final class Settings: ObservableObject {
         static let restore       = "restoreOnLaunch"
         static let fontSize      = "fontSize"
         static let defaultArgs   = "defaultClaudeArgs"
+        static let resourceMonitor = "showResourceMonitor"
     }
 }

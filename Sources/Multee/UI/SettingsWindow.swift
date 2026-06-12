@@ -42,6 +42,7 @@ final class SettingsWindowController: NSWindowController {
         let expand = checkbox("Show contents of gitignored folders", \.expandIgnored)
         let sound = checkbox("Play a sound on attention / completion", \.soundEnabled)
         let restore = checkbox("Restore sessions & tabs on launch", \.restoreOnLaunch)
+        let monitor = checkbox("Show resource usage (memory / CPU) in the title bar", \.showResourceMonitor)
 
         stepper = NSStepper()
         stepper.minValue = 9; stepper.maxValue = 24; stepper.increment = 1
@@ -84,7 +85,7 @@ final class SettingsWindowController: NSWindowController {
         argsStack.alignment = .leading
         argsStack.spacing = 8
 
-        let stack = NSStackView(views: [autoLaunch, expand, sound, restore, fontRow, argsStack])
+        let stack = NSStackView(views: [autoLaunch, expand, sound, restore, monitor, fontRow, argsStack])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
