@@ -3,7 +3,8 @@
 Native macOS app to manage multiple Claude Code sessions. **Pure AppKit** (no SwiftUI) +
 Swift Package Manager. This is a rewrite of an earlier SwiftUI build; AppKit was chosen because the
 SwiftUI↔AppKit seam caused recurring cursor/tooltip/resize glitches and a file-open crash. See
-**FEATURES.md** for the per-feature log.
+**FEATURES.md** for the per-feature log and **DECISIONS.md** for *why* each major choice was made
+(read it before reworking an area; add an entry when you make a non-obvious design decision).
 
 ## Stack
 - AppKit, built with Swift Package Manager (no Xcode; Command Line Tools only). Programmatic UI
