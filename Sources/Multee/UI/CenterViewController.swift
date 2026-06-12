@@ -13,6 +13,7 @@ final class CenterViewController: NSViewController {
     private let contentArea = NSView()
     private let emptyLabel = NSTextField(labelWithString: "Open a folder to start  (⌘O)")
     private var contentViews: [String: NSView] = [:]
+    private var contentVCs: [String: NSViewController] = [:]   // VC-backed content (editor, diff)
 
     init(model: AppModel) {
         self.model = model
@@ -117,6 +118,8 @@ final class CenterViewController: NSViewController {
         }
         for (id, v) in contentViews { v.isHidden = (id != tab.id) }
 
+        ActiveEditor.current = (tab.kind == .file) ? (contentVCs[tab.id] as? EditorViewController) : nil
+
         if tab.kind == .claude || tab.kind == .terminal {
             DispatchQueue.main.async { TerminalStore.shared.focus(tab.id) }
         }
@@ -127,7 +130,11 @@ final class CenterViewController: NSViewController {
         case .claude, .terminal:
             return TerminalStore.shared.view(for: tab, cwd: session.url)
         case .file:
-            return placeholder("Editor — Phase 3")
+            let vc = EditorViewController(path: tab.path ?? "", settings: model.settings,
+                                          onDirty: { [weak session] dirty in session?.setDirty(tab.id, dirty) })
+            addChild(vc)
+            contentVCs[tab.id] = vc
+            return vc.view
         case .diff:
             return placeholder("Diff — Phase 4")
         }
@@ -151,6 +158,8 @@ final class CenterViewController: NSViewController {
         for id in contentViews.keys where !live.contains(id) {
             contentViews[id]?.removeFromSuperview()
             contentViews[id] = nil
+            contentVCs[id]?.removeFromParent()
+            contentVCs[id] = nil
         }
     }
 

@@ -52,6 +52,9 @@ enum DebugAction {
             if let s = model.activeSession {
                 s.tabStatus[s.activeTabID] = arg == "working" ? .working : arg == "needs" ? .needs : .idle
             }
+        case "editorType": ActiveEditor.current?.debugAppend(arg)
+        case "editorSave":  ActiveEditor.current?.save()
+        case "setFont":     model.settings.fontSize = Double(arg) ?? 13
         default: break
         }
     }
@@ -61,6 +64,7 @@ enum DebugAction {
 enum DebugState {
     static func capture(to path: String, _ model: AppModel) {
         var root: [String: Any] = [:]
+        if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
         root["activeSessionPath"] = model.activeSession?.url ?? NSNull()
         root["sessions"] = model.sessions.map { s in
