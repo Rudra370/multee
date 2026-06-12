@@ -5,6 +5,22 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.1] - 2026-06-12
+
+### Changed
+- **Native syntax highlighting** — replaced the JavaScript-based highlighter with a built-in
+  TextMate-grammar engine. The editor uses **~70% less memory** (no embedded JavaScript engine) at
+  about the same app size, with ~30 bundled languages. Highlighting also runs off the main thread, so
+  large files never block typing or scrolling.
+
+### Added
+- **Resource monitor** — an optional CPU / memory readout in the title bar (Settings; off by default).
+
+### Fixed
+- Lower idle CPU and faster opening of large repositories (event-driven file watching).
+- The editor scroll bar is now always visible instead of appearing only while scrolling.
+- File-tree rows show the pointing-hand cursor on hover.
+
 ## [0.1.0] - 2026-06-12
 
 First release of the **native AppKit** Multee — a full rewrite of the SwiftUI build for stability.
