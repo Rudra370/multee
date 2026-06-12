@@ -53,6 +53,15 @@ final class SidebarViewController: NSViewController {
                                                   trackingMode: .selectOne, target: nil, action: nil)
     private var changesMode: Bool { filesModeSeg.selectedSegment == 1 }
 
+    // SESSIONS header + collapse
+    private let sessionsHeaderLabel = NSTextField(labelWithString: "SESSIONS")
+    private var sessionsScroll: NSScrollView?
+    private var collapseChevron: ClosureButton?
+    private weak var sidebarSplit: NSSplitView?
+    private var sessionsCollapsed = UserDefaults.standard.bool(forKey: "sessionsCollapsed")
+    private var expandedDividerPos: CGFloat = 0
+    private var didApplyInitialCollapse = false
+
     init(model: AppModel) {
         self.model = model
         super.init(nibName: nil, bundle: nil)
@@ -69,7 +78,17 @@ final class SidebarViewController: NSViewController {
 
         split.addArrangedSubview(makeFilesPane())
         split.addArrangedSubview(makeSessionsPane())
+        sidebarSplit = split
         self.view = split
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // Apply the persisted collapsed state once we have a real height to compute against.
+        if !didApplyInitialCollapse, (sidebarSplit?.bounds.height ?? 0) > 0 {
+            didApplyInitialCollapse = true
+            if sessionsCollapsed { applyCollapse(animated: false) }
+        }
     }
 
     override func viewDidLoad() {
@@ -156,13 +175,29 @@ final class SidebarViewController: NSViewController {
         changesVC?.stop(); changesVC?.view.removeFromSuperview(); changesVC?.removeFromParent(); changesVC = nil
     }
 
-    // SESSIONS list (real, model-driven)
+    // SESSIONS pane: header (label + settings / open-repo / collapse) over the session list.
     private func makeSessionsPane() -> NSView {
         let pane = NSView()
         pane.wantsLayer = true
         pane.layer?.backgroundColor = NSColor(white: 0.12, alpha: 1).cgColor
 
-        let header = Self.header("SESSIONS")
+        sessionsHeaderLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        sessionsHeaderLabel.textColor = .secondaryLabelColor
+        sessionsHeaderLabel.lineBreakMode = .byTruncatingMiddle
+
+        let gear = ClosureButton(symbol: "gearshape") { [weak self] in self?.model.showSettings = true }
+        gear.toolTip = "Settings"
+        let add = ClosureButton(symbol: "plus") { [weak self] in self?.openRepo() }
+        add.toolTip = "Open a repo"
+        let chevron = ClosureButton(symbol: sessionsCollapsed ? "chevron.up" : "chevron.down") { [weak self] in
+            self?.toggleSessionsCollapsed()
+        }
+        chevron.toolTip = "Collapse / expand"
+        collapseChevron = chevron
+
+        let header = NSStackView(views: [sessionsHeaderLabel, NSView(), gear, add, chevron])
+        header.orientation = .horizontal
+        header.spacing = 6
 
         sessionsStack.orientation = .vertical
         sessionsStack.alignment = .leading
@@ -177,6 +212,7 @@ final class SidebarViewController: NSViewController {
         clip.drawsBackground = false
         scroll.contentView = clip
         scroll.documentView = sessionsStack
+        sessionsScroll = scroll
         NSLayoutConstraint.activate([
             sessionsStack.leadingAnchor.constraint(equalTo: clip.leadingAnchor, constant: 8),
             sessionsStack.trailingAnchor.constraint(equalTo: clip.trailingAnchor, constant: -8),
@@ -187,7 +223,7 @@ final class SidebarViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 8, right: 4)
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 8, right: 8)
         stack.translatesAutoresizingMaskIntoConstraints = false
         pane.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -195,12 +231,51 @@ final class SidebarViewController: NSViewController {
             stack.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -12),
+            header.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -20),
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -20),
         ])
         return pane
     }
 
+    /// Toggle the collapsed SESSIONS panel: shrink to just its header (showing session names) and back.
+    private func toggleSessionsCollapsed() {
+        sessionsCollapsed.toggle()
+        UserDefaults.standard.set(sessionsCollapsed, forKey: "sessionsCollapsed")
+        collapseChevron?.image = NSImage(systemSymbolName: sessionsCollapsed ? "chevron.up" : "chevron.down",
+                                         accessibilityDescription: nil)
+        applyCollapse(animated: true)
+        rebuildSessions()
+    }
+
+    private func applyCollapse(animated: Bool) {
+        guard let split = sidebarSplit else { return }
+        sessionsScroll?.isHidden = sessionsCollapsed
+        let total = split.bounds.height
+        guard total > 0 else { return }
+        let headerH: CGFloat = 38
+        if sessionsCollapsed {
+            expandedDividerPos = split.subviews.first?.frame.height ?? total * 0.62
+            split.setPosition(total - headerH, ofDividerAt: 0)
+        } else {
+            let pos = expandedDividerPos > 0 ? expandedDividerPos : total * 0.62
+            split.setPosition(pos, ofDividerAt: 0)
+        }
+    }
+
+    private func openRepo() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        if panel.runModal() == .OK, let url = panel.url { model.openRepo(url.path) }
+    }
+
     private func rebuildSessions() {
+        // Collapsed header shows the open session names instead of "SESSIONS".
+        sessionsHeaderLabel.stringValue = (sessionsCollapsed && !model.sessions.isEmpty)
+            ? model.sessions.map(\.name).joined(separator: ", ") : "SESSIONS"
+
         sessionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if model.sessions.isEmpty {
             let empty = NSTextField(labelWithString: "No sessions open")

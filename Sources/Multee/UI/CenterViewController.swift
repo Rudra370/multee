@@ -12,6 +12,8 @@ final class CenterViewController: NSViewController {
     private let tabBar = TabBarView()
     private let contentArea = NSView()
     private let emptyLabel = NSTextField(labelWithString: "Open a folder to start  (⌘O)")
+    private let openButton = NSButton()
+    private var emptyStack: NSView?
     private var contentViews: [String: NSView] = [:]
     private var contentVCs: [String: NSViewController] = [:]   // VC-backed content (editor, diff)
 
@@ -49,8 +51,18 @@ final class CenterViewController: NSViewController {
 
         emptyLabel.font = .systemFont(ofSize: 14)
         emptyLabel.textColor = .secondaryLabelColor
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentArea.addSubview(emptyLabel)
+        emptyLabel.alignment = .center
+        openButton.title = "Open Folder…"
+        openButton.bezelStyle = .rounded
+        openButton.target = self
+        openButton.action = #selector(openFolderTapped)
+        let emptyStack = NSStackView(views: [emptyLabel, openButton])
+        emptyStack.orientation = .vertical
+        emptyStack.alignment = .centerX
+        emptyStack.spacing = 12
+        emptyStack.translatesAutoresizingMaskIntoConstraints = false
+        contentArea.addSubview(emptyStack)
+        self.emptyStack = emptyStack
 
         NSLayoutConstraint.activate([
             vstack.topAnchor.constraint(equalTo: root.topAnchor),
@@ -62,8 +74,8 @@ final class CenterViewController: NSViewController {
             tabBar.widthAnchor.constraint(equalTo: vstack.widthAnchor),
             contentArea.widthAnchor.constraint(equalTo: vstack.widthAnchor),
 
-            emptyLabel.centerXAnchor.constraint(equalTo: contentArea.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: contentArea.centerYAnchor),
+            emptyStack.centerXAnchor.constraint(equalTo: contentArea.centerXAnchor),
+            emptyStack.centerYAnchor.constraint(equalTo: contentArea.centerYAnchor),
         ])
         self.view = root
 
@@ -75,6 +87,15 @@ final class CenterViewController: NSViewController {
         tabBar.onNewTerminal = { [weak self] in
             self?.model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         }
+    }
+
+    @objc private func openFolderTapped() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        if panel.runModal() == .OK, let url = panel.url { model.openRepo(url.path) }
     }
 
     override func viewDidLoad() {
@@ -98,15 +119,16 @@ final class CenterViewController: NSViewController {
 
         guard let session = model.activeSession, let tab = session.activeTab else {
             tabBar.isHidden = true
-            emptyLabel.isHidden = false
-            emptyLabel.stringValue = model.activeSession == nil
-                ? "Open a folder to start  (⌘O)" : "No tabs open"
+            emptyStack?.isHidden = false
+            let noSession = model.activeSession == nil
+            emptyLabel.stringValue = noSession ? "Open a folder to start  (⌘O)" : "No tabs open"
+            openButton.isHidden = !noSession   // only offer "Open Folder" when nothing is open
             contentViews.values.forEach { $0.isHidden = true }
             return
         }
 
         tabBar.isHidden = false
-        emptyLabel.isHidden = true
+        emptyStack?.isHidden = true
         tabBar.render(session: session, activeTabID: session.activeTabID)
 
         // Lazily create the active tab's content view.
