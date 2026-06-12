@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: MainWindowController!
     private var keyMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
+    private var settingsWC: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Env.bootstrap()                 // compute login PATH once, before anything spawns
@@ -26,7 +27,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         wireStatusRouting()
         installKeyMonitor()
+
+        // Settings window on demand.
+        model.$showSettings
+            .filter { $0 }
+            .sink { [weak self] _ in self?.showSettingsWindow() }
+            .store(in: &cancellables)
+
+        // Update check (release builds only — the dev build is always "behind" latest).
+        if !Bundle.main.isDev {
+            Updates.shared.detectBrew()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Updates.shared.check() }
+        }
+
         DebugHarness.start(model: model)   // dev-only (inert in release)
+    }
+
+    private func showSettingsWindow() {
+        if settingsWC == nil { settingsWC = SettingsWindowController(settings: model.settings) }
+        settingsWC?.showWindow(nil)
+        settingsWC?.window?.makeKeyAndOrderFront(nil)
+        model.showSettings = false
     }
 
     /// Route Claude status pings to the owning session's tab + play the attention/completion sound;
@@ -89,6 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appItem.submenu = appMenu
         appMenu.addItem(withTitle: "About Multee",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let check = appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        check.target = self
         appMenu.addItem(.separator())
         let settings = appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
@@ -131,6 +154,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() { model.showSettings = true }
+
+    @objc private func checkForUpdates() { Updates.shared.check(force: true) }
 
     @objc private func closeActiveTab() {
         if let s = model.activeSession, !s.tabs.isEmpty { s.closeTab(s.activeTabID) }
