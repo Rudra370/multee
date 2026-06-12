@@ -93,7 +93,8 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     private let scroll = NSScrollView()
     private var roots: [TreeNode] = []
     private var expandedPaths = Set<String>()
-    private var timer: Timer?
+    private var watcher: RepoWatcher?
+    private var fallbackTimer: Timer?
     private var lastSig = ""
     private var restoring = false
     private var cancellables = Set<AnyCancellable>()
@@ -151,12 +152,14 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
 
     func startPolling() {
         refresh()
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.refresh() }
+        if watcher == nil { watcher = RepoWatcher(path: repo) { [weak self] in self?.refresh() } }
+        watcher?.start()
+        fallbackTimer?.invalidate()
+        fallbackTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
-    func stop() { timer?.invalidate(); timer = nil }
-    deinit { timer?.invalidate() }
+    func stop() { watcher?.stop(); fallbackTimer?.invalidate(); fallbackTimer = nil }
+    deinit { watcher?.stop(); fallbackTimer?.invalidate() }
 
     private func refresh() {
         let repo = self.repo

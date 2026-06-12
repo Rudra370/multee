@@ -34,9 +34,17 @@ enum Git {
         return .none
     }
 
-    /// True if `repo` is inside a git work tree.
+    /// True if `repo` is inside a git work tree. Cached — a repo's git-ness doesn't change during a
+    /// session, and this ran on every refresh before.
+    private static var isRepoCache: [String: Bool] = [:]
+    private static let isRepoLock = NSLock()
     static func isRepo(_ repo: String) -> Bool {
-        Shell.run(git, ["-C", repo, "rev-parse", "--is-inside-work-tree"]) == "true"
+        isRepoLock.lock()
+        if let cached = isRepoCache[repo] { isRepoLock.unlock(); return cached }
+        isRepoLock.unlock()
+        let result = Shell.run(git, ["-C", repo, "rev-parse", "--is-inside-work-tree"]) == "true"
+        isRepoLock.lock(); isRepoCache[repo] = result; isRepoLock.unlock()
+        return result
     }
 
     static func repoFiles(_ repo: String, expandIgnored: Bool) -> [FileEntry] {

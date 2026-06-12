@@ -2,6 +2,17 @@ import AppKit
 import Highlightr
 import Combine
 
+/// One Highlightr (= one JavaScriptCore engine with highlight.js) shared by every editor. Creating
+/// one per file was the dominant RAM cost (~50 MB each). Highlighting is stateless per call and runs
+/// on the main thread, and all editors use the same theme + shared font, so sharing is safe.
+enum SharedHighlightr {
+    static let instance: Highlightr = {
+        let h = Highlightr()!
+        _ = h.setTheme(to: "atom-one-dark")
+        return h
+    }()
+}
+
 /// DEV harness hook: the editor for the currently-active file tab (set by CenterViewController).
 enum ActiveEditor { static weak var current: EditorViewController? }
 
@@ -74,10 +85,9 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
     override func loadView() {
         let fontSize = settings.fontSize
 
-        let ts = CodeAttributedString()
+        let ts = CodeAttributedString(highlightr: SharedHighlightr.instance)   // one shared JS engine
         ts.language = hlLanguage(for: path)
         let highlightr = ts.highlightr
-        _ = highlightr.setTheme(to: "atom-one-dark")
         highlightr.theme.setCodeFont(mono(fontSize))
         let themeBg = highlightr.theme.themeBackgroundColor ?? NSColor(calibratedWhite: 0.118, alpha: 1)
         self.textStorage = ts

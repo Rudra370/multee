@@ -8,7 +8,6 @@ final class ChangesModel: ObservableObject {
     @Published var unstaged: [FileEntry] = []
     @Published var stashCount = 0
     let repo: String
-    private var timer: Timer?
     private var lastSig = ""
 
     init(repo: String) { self.repo = repo }
@@ -29,14 +28,6 @@ final class ChangesModel: ObservableObject {
             }
         }
     }
-
-    func start() {
-        refresh()
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.refresh() }
-    }
-    func stop() { timer?.invalidate(); timer = nil }
-    deinit { timer?.invalidate() }
 
     private func act(_ body: @escaping () -> Void) {
         DispatchQueue.global().async { body(); DispatchQueue.main.async { self.lastSig = ""; self.refresh() } }
@@ -61,6 +52,8 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
     private let onOpenFile: (String) -> Void
     private let model: ChangesModel
     private var cancellables = Set<AnyCancellable>()
+    private var watcher: RepoWatcher?
+    private var fallbackTimer: Timer?
 
     private let commitField = NSTextField()
     private let commitButton = PointerButton()
@@ -174,12 +167,19 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.rebuild() }
             .store(in: &cancellables)
-        model.start()
+        start()
         rebuild()
     }
 
-    func stop() { model.stop() }
-    func start() { model.start() }
+    func start() {
+        model.refresh()
+        if watcher == nil { watcher = RepoWatcher(path: repo) { [weak self] in self?.model.refresh() } }
+        watcher?.start()
+        fallbackTimer?.invalidate()
+        fallbackTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.model.refresh() }
+    }
+    func stop() { watcher?.stop(); fallbackTimer?.invalidate(); fallbackTimer = nil }
+    deinit { watcher?.stop(); fallbackTimer?.invalidate() }
 
     private var canCommit: Bool {
         !commitField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
