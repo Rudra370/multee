@@ -79,12 +79,12 @@ final class Session: ObservableObject, Identifiable {
         addTab(Tab(kind: .file, title: (abs as NSString).lastPathComponent, path: abs))
     }
 
+    /// `path` is repo-relative here (the diff needs it relative for `git show HEAD:<path>`).
     func openDiff(_ path: String) {
-        let abs = absolute(path)
-        if let existing = tabs.first(where: { $0.kind == .diff && $0.path == abs }) {
+        if let existing = tabs.first(where: { $0.kind == .diff && $0.path == path }) {
             activate(existing.id); return
         }
-        addTab(Tab(kind: .diff, title: (abs as NSString).lastPathComponent, path: abs))
+        addTab(Tab(kind: .diff, title: (path as NSString).lastPathComponent, path: path))
     }
 
     // MARK: - Reorder (drag)

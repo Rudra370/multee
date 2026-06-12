@@ -47,6 +47,11 @@ final class SidebarViewController: NSViewController {
     private let sessionsStack = NSStackView()
     private let filesContainer = NSView()
     private var treeVC: FileTreeViewController?
+    private var changesVC: ChangesViewController?
+    private var currentRepo: String?
+    private let filesModeSeg = NSSegmentedControl(labels: ["Files", "Changes"],
+                                                  trackingMode: .selectOne, target: nil, action: nil)
+    private var changesMode: Bool { filesModeSeg.selectedSegment == 1 }
 
     init(model: AppModel) {
         self.model = model
@@ -81,20 +86,25 @@ final class SidebarViewController: NSViewController {
         syncFileTree()
     }
 
-    // FILES pane — hosts the active session's NSOutlineView tree.
+    // FILES pane — a Files/Changes toggle over a container that holds the tree or the changes view.
     private func makeFilesPane() -> NSView {
         let pane = NSView()
         pane.wantsLayer = true
         pane.layer?.backgroundColor = NSColor(white: 0.145, alpha: 1).cgColor
-        let header = Self.header("FILES")
-        header.translatesAutoresizingMaskIntoConstraints = false
+
+        filesModeSeg.selectedSegment = max(0, min(1, UserDefaults.standard.integer(forKey: "rightMode")))
+        filesModeSeg.target = self
+        filesModeSeg.action = #selector(filesModeChanged)
+        filesModeSeg.controlSize = .small
+        filesModeSeg.segmentStyle = .rounded
+        filesModeSeg.translatesAutoresizingMaskIntoConstraints = false
         filesContainer.translatesAutoresizingMaskIntoConstraints = false
-        pane.addSubview(header)
+        pane.addSubview(filesModeSeg)
         pane.addSubview(filesContainer)
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: pane.topAnchor, constant: 10),
-            header.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 12),
-            filesContainer.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            filesModeSeg.topAnchor.constraint(equalTo: pane.topAnchor, constant: 8),
+            filesModeSeg.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 10),
+            filesContainer.topAnchor.constraint(equalTo: filesModeSeg.bottomAnchor, constant: 6),
             filesContainer.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
             filesContainer.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
             filesContainer.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
@@ -102,26 +112,48 @@ final class SidebarViewController: NSViewController {
         return pane
     }
 
-    /// Swap in the file tree for the active session's repo (or clear it when no session).
+    @objc private func filesModeChanged() {
+        UserDefaults.standard.set(filesModeSeg.selectedSegment, forKey: "rightMode")
+        showSidebarContent()
+    }
+
+    /// Rebuild the tree + changes VCs when the active session changes, then show the one for the mode.
     private func syncFileTree() {
-        guard let session = model.activeSession else {
-            treeVC?.stop(); treeVC?.removeFromParent(); treeVC?.view.removeFromSuperview(); treeVC = nil
-            return
+        guard let session = model.activeSession else { teardownSidebarVCs(); currentRepo = nil; return }
+        if currentRepo != session.url {
+            teardownSidebarVCs()
+            currentRepo = session.url
+            let tree = FileTreeViewController(repo: session.url, settings: model.settings,
+                onOpen: { [weak self] path in self?.model.activeSession?.openFile(path) })
+            let changes = ChangesViewController(repo: session.url,
+                onOpenDiff: { [weak self] path in self?.model.activeSession?.openDiff(path) },
+                onOpenFile: { [weak self] path in self?.model.activeSession?.openFile(path) })
+            addChild(tree); addChild(changes)
+            treeVC = tree; changesVC = changes
         }
-        if treeVC?.repo == session.url { return }
-        treeVC?.stop(); treeVC?.removeFromParent(); treeVC?.view.removeFromSuperview()
-        let vc = FileTreeViewController(repo: session.url, settings: model.settings,
-                                       onOpen: { [weak self] path in self?.model.activeSession?.openFile(path) })
-        addChild(vc)
-        vc.view.translatesAutoresizingMaskIntoConstraints = false
-        filesContainer.addSubview(vc.view)
-        NSLayoutConstraint.activate([
-            vc.view.topAnchor.constraint(equalTo: filesContainer.topAnchor),
-            vc.view.bottomAnchor.constraint(equalTo: filesContainer.bottomAnchor),
-            vc.view.leadingAnchor.constraint(equalTo: filesContainer.leadingAnchor),
-            vc.view.trailingAnchor.constraint(equalTo: filesContainer.trailingAnchor),
-        ])
-        treeVC = vc
+        showSidebarContent()
+    }
+
+    private func showSidebarContent() {
+        guard let treeVC, let changesVC else { return }
+        let show: NSViewController = changesMode ? changesVC : treeVC
+        let hide: NSViewController = changesMode ? treeVC : changesVC
+        hide.view.removeFromSuperview()
+        if show.view.superview == nil {
+            show.view.translatesAutoresizingMaskIntoConstraints = false
+            filesContainer.addSubview(show.view)
+            NSLayoutConstraint.activate([
+                show.view.topAnchor.constraint(equalTo: filesContainer.topAnchor),
+                show.view.bottomAnchor.constraint(equalTo: filesContainer.bottomAnchor),
+                show.view.leadingAnchor.constraint(equalTo: filesContainer.leadingAnchor),
+                show.view.trailingAnchor.constraint(equalTo: filesContainer.trailingAnchor),
+            ])
+        }
+    }
+
+    private func teardownSidebarVCs() {
+        treeVC?.stop(); treeVC?.view.removeFromSuperview(); treeVC?.removeFromParent(); treeVC = nil
+        changesVC?.stop(); changesVC?.view.removeFromSuperview(); changesVC?.removeFromParent(); changesVC = nil
     }
 
     // SESSIONS list (real, model-driven)

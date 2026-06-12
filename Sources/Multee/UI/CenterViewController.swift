@@ -136,7 +136,11 @@ final class CenterViewController: NSViewController {
             contentVCs[tab.id] = vc
             return vc.view
         case .diff:
-            return placeholder("Diff — Phase 4")
+            let vc = DiffViewController(repo: session.url, path: tab.path ?? "",
+                                       onOpenFile: { [weak session] in session?.openFile(tab.path ?? "") })
+            addChild(vc)
+            contentVCs[tab.id] = vc
+            return vc.view
         }
     }
 

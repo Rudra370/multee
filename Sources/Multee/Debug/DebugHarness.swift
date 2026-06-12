@@ -36,6 +36,7 @@ enum DebugAction {
         switch cmd {
         case "openRepo":       model.openRepo(arg)
         case "openFile":       model.activeSession?.openFile(arg)
+        case "openDiff":       model.activeSession?.openDiff(arg)
         case "newClaude":      model.activeSession?.addTab(Tab(kind: .claude, title: "Claude", args: model.settings.defaultArgs))
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         case "closeActiveTab": if let s = model.activeSession { s.closeTab(s.activeTabID) }
