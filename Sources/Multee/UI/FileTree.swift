@@ -85,7 +85,7 @@ func nsStatusColor(_ s: GitStatus) -> NSColor {
 /// cursors. Polls git every 1.5s; only reloads when the visible set actually changes (signature),
 /// preserving expansion across reloads by path.
 final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
-    let repo: String
+    private let store: RepoStore
     private let settings: Settings
     private let onOpen: (String) -> Void
 
@@ -93,14 +93,11 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     private let scroll = NSScrollView()
     private var roots: [TreeNode] = []
     private var expandedPaths = Set<String>()
-    private var watcher: RepoWatcher?
-    private var fallbackTimer: Timer?
-    private var lastSig = ""
     private var restoring = false
     private var cancellables = Set<AnyCancellable>()
 
-    init(repo: String, settings: Settings, onOpen: @escaping (String) -> Void) {
-        self.repo = repo
+    init(store: RepoStore, settings: Settings, onOpen: @escaping (String) -> Void) {
+        self.store = store
         self.settings = settings
         self.onOpen = onOpen
         super.init(nibName: nil, bundle: nil)
@@ -134,9 +131,10 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        settings.$expandIgnored
-            .dropFirst()
-            .sink { [weak self] _ in self?.refresh() }
+        // The shared RepoStore owns the watcher + git poll; we just rebuild the tree when it publishes
+        // a new file set (it only publishes on a real change). Expand-ignored re-polls happen there too.
+        store.$files
+            .sink { [weak self] files in self?.applyFiles(files) }
             .store(in: &cancellables)
         settings.$fontSize
             .dropFirst()
@@ -147,32 +145,15 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
                 self.restoreExpansion(self.roots)
             }
             .store(in: &cancellables)
-        startPolling()
     }
 
-    func startPolling() {
-        refresh()
-        if watcher == nil { watcher = RepoWatcher(path: repo) { [weak self] in self?.refresh() } }
-        watcher?.start()
-        fallbackTimer?.invalidate()
-        fallbackTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
-    }
-
-    func stop() { watcher?.stop(); fallbackTimer?.invalidate(); fallbackTimer = nil }
-    deinit { watcher?.stop(); fallbackTimer?.invalidate() }
-
-    private func refresh() {
-        let repo = self.repo
-        let expand = settings.expandIgnored
-        let prev = self.lastSig
+    /// Build the tree off-main (the store already gated the publish to real changes), then reload and
+    /// re-expand on main.
+    private func applyFiles(_ files: [FileEntry]) {
         DispatchQueue.global().async { [weak self] in
-            let entries = Git.repoFiles(repo, expandIgnored: expand)
-            let sig = entries.map { "\($0.path)|\($0.status.rawValue)|\($0.isDir)" }.joined(separator: "\n")
-            guard sig != prev else { return }   // nothing changed → skip buildTree + the UI reload entirely
-            let tree = buildTree(entries)
+            let tree = buildTree(files)
             DispatchQueue.main.async {
-                guard let self, sig != self.lastSig else { return }
-                self.lastSig = sig
+                guard let self else { return }
                 self.roots = tree
                 self.restoring = true
                 self.outline.reloadData()

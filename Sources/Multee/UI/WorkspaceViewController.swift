@@ -73,6 +73,7 @@ final class SidebarViewController: NSViewController {
     private let filesContainer = NSView()
     private var treeVC: FileTreeViewController?
     private var changesVC: ChangesViewController?
+    private var store: RepoStore?            // one shared git poller for the tree + Changes
     private var currentRepo: String?
     private let filesModeSeg: PointerSegmentedControl = {
         let s = PointerSegmentedControl()
@@ -146,7 +147,7 @@ final class SidebarViewController: NSViewController {
         refresh()
     }
 
-    @objc private func appResignedActive() { treeVC?.stop(); changesVC?.stop() }
+    @objc private func appResignedActive() { store?.stop() }
     @objc private func appBecameActive() { if model.activeSession != nil { showSidebarContent() } }
 
     private func refresh() {
@@ -192,22 +193,20 @@ final class SidebarViewController: NSViewController {
         if currentRepo != session.url {
             teardownSidebarVCs()
             currentRepo = session.url
-            let tree = FileTreeViewController(repo: session.url, settings: model.settings,
+            let store = RepoStore(repo: session.url, settings: model.settings)
+            let tree = FileTreeViewController(store: store, settings: model.settings,
                 onOpen: { [weak self] path in self?.model.activeSession?.openFile(path) })
-            let changes = ChangesViewController(repo: session.url,
+            let changes = ChangesViewController(store: store,
                 onOpenDiff: { [weak self] path in self?.model.activeSession?.openDiff(path) },
                 onOpenFile: { [weak self] path in self?.model.activeSession?.openFile(path) })
             addChild(tree); addChild(changes)
-            treeVC = tree; changesVC = changes
+            treeVC = tree; changesVC = changes; self.store = store
         }
         showSidebarContent()
     }
 
     private func showSidebarContent() {
-        guard let treeVC, let changesVC else { return }
-        // Only the visible mode polls git (1.5s) — pause the hidden one to halve the churn.
-        if changesMode { treeVC.stop(); changesVC.start() }
-        else { changesVC.stop(); treeVC.startPolling() }
+        guard let treeVC, let changesVC, let store else { return }
         let show: NSViewController = changesMode ? changesVC : treeVC
         let hide: NSViewController = changesMode ? treeVC : changesVC
         hide.view.removeFromSuperview()
@@ -221,11 +220,14 @@ final class SidebarViewController: NSViewController {
                 show.view.trailingAnchor.constraint(equalTo: filesContainer.trailingAnchor),
             ])
         }
+        // One shared watcher + git poll; only the visible mode's data is fetched.
+        store.start(tree: !changesMode, changes: changesMode)
     }
 
     private func teardownSidebarVCs() {
-        treeVC?.stop(); treeVC?.view.removeFromSuperview(); treeVC?.removeFromParent(); treeVC = nil
-        changesVC?.stop(); changesVC?.view.removeFromSuperview(); changesVC?.removeFromParent(); changesVC = nil
+        store?.stop(); store = nil
+        treeVC?.view.removeFromSuperview(); treeVC?.removeFromParent(); treeVC = nil
+        changesVC?.view.removeFromSuperview(); changesVC?.removeFromParent(); changesVC = nil
     }
 
     // SESSIONS pane: header (label + settings / open-repo / collapse) over the session list.

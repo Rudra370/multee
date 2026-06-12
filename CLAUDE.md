@@ -75,9 +75,10 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - `Backend/` — `Shell`/`Env`, `Git` (status + actions).
 - `Terminal/` — `TerminalStore` (PTY per tab + scroll), `HookServer` (status listener), `Hooks`.
 - `UI/` — `WorkspaceViewController` (split + sidebar), `CenterViewController` (tab bar + content),
-  `TabBarView`, `FileTree`, `Editor` (plain NSTextStorage + native highlighter; line-based tokenizing
-  run off-main on a serial queue, debounced re-highlight on edit), `Changes`, `Diff`, `SettingsWindow`,
-  `Updates`.
+  `TabBarView`, `FileTree` (virtualized tree), `RepoStore` (one per-session git poller — single
+  FSEvents watcher + poll + actions, feeds the tree *and* Changes), `Editor` (plain NSTextStorage +
+  native highlighter; line-based tokenizing run off-main on a serial queue, debounced re-highlight on
+  edit), `Changes` (virtualized list), `Diff`, `SettingsWindow`, `Updates`.
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
   and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).

@@ -1,59 +1,13 @@
 import AppKit
 import Combine
 
-// MARK: - Changes model (polls staged + unstaged; runs git actions) — ported as-is.
-
-final class ChangesModel: ObservableObject {
-    @Published var staged: [FileEntry] = []
-    @Published var unstaged: [FileEntry] = []
-    @Published var stashCount = 0
-    let repo: String
-    private var lastSig = ""
-
-    init(repo: String) { self.repo = repo }
-
-    func refresh() {
-        let repo = self.repo
-        DispatchQueue.global().async { [weak self] in
-            let g = Git.statusGroups(repo)
-            let stashes = Git.stashCount(repo)
-            let sig = (g.staged + g.unstaged).map { "\($0.path)|\($0.status.rawValue)" }.joined(separator: "\n")
-                + "#staged:\(g.staged.count)#stash:\(stashes)"
-            DispatchQueue.main.async {
-                guard let self, sig != self.lastSig else { return }
-                self.lastSig = sig
-                self.staged = g.staged
-                self.unstaged = g.unstaged
-                self.stashCount = stashes
-            }
-        }
-    }
-
-    private func act(_ body: @escaping () -> Void) {
-        DispatchQueue.global().async { body(); DispatchQueue.main.async { self.lastSig = ""; self.refresh() } }
-    }
-    func stage(_ p: String) { act { Git.stage(self.repo, p) } }
-    func unstage(_ p: String) { act { Git.unstage(self.repo, p) } }
-    func stageAll() { act { Git.stageAll(self.repo) } }
-    func unstageAll() { act { Git.unstageAll(self.repo) } }
-    func discard(_ f: FileEntry) { act { Git.discard(self.repo, f.path, f.status) } }
-    func discardAll() { act { Git.discardAll(self.repo) } }
-    func stash() { act { Git.stash(self.repo) } }
-    func unstash() { act { Git.unstash(self.repo) } }
-    func commit(_ msg: String, all: Bool) { act { if all { Git.stageAll(self.repo) }; Git.commit(self.repo, msg) } }
-    func commitPush(_ msg: String, all: Bool) { act { if all { Git.stageAll(self.repo) }; Git.commit(self.repo, msg); Git.push(self.repo) } }
-}
-
 // MARK: - Changes view controller
 
 final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
-    let repo: String
+    private let store: RepoStore
     private let onOpenDiff: (String) -> Void
     private let onOpenFile: (String) -> Void
-    private let model: ChangesModel
     private var cancellables = Set<AnyCancellable>()
-    private var watcher: RepoWatcher?
-    private var fallbackTimer: Timer?
 
     private let commitField = NSTextField()
     private let commitButton = PointerButton()
@@ -73,11 +27,10 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTabl
     /// row is pointless anyway. The section header still shows the true total count.
     private static let rowCap = 2000
 
-    init(repo: String, onOpenDiff: @escaping (String) -> Void, onOpenFile: @escaping (String) -> Void) {
-        self.repo = repo
+    init(store: RepoStore, onOpenDiff: @escaping (String) -> Void, onOpenFile: @escaping (String) -> Void) {
+        self.store = store
         self.onOpenDiff = onOpenDiff
         self.onOpenFile = onOpenFile
-        self.model = ChangesModel(repo: repo)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -180,27 +133,16 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTabl
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        model.objectWillChange
+        // Rebuild whenever the shared store's change data updates (the store owns the watcher + poll).
+        store.$staged.combineLatest(store.$unstaged, store.$stashCount)
             .receive(on: RunLoop.main)
-            .sink { [weak self] in self?.rebuild() }
+            .sink { [weak self] _ in self?.rebuild() }
             .store(in: &cancellables)
-        start()
-        rebuild()
     }
-
-    func start() {
-        model.refresh()
-        if watcher == nil { watcher = RepoWatcher(path: repo) { [weak self] in self?.model.refresh() } }
-        watcher?.start()
-        fallbackTimer?.invalidate()
-        fallbackTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.model.refresh() }
-    }
-    func stop() { watcher?.stop(); fallbackTimer?.invalidate(); fallbackTimer = nil }
-    deinit { watcher?.stop(); fallbackTimer?.invalidate() }
 
     private var canCommit: Bool {
         !commitField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (!model.staged.isEmpty || !model.unstaged.isEmpty)
+            && (!store.staged.isEmpty || !store.unstaged.isEmpty)
     }
 
     /// Live-update the Commit button as the user types (model polls don't fire on keystrokes).
@@ -214,23 +156,23 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTabl
         menuButton.isEnabled = canCommit
 
         var rows: [Item] = []
-        if !model.staged.isEmpty {
-            rows.append(.header(title: "STAGED CHANGES", count: model.staged.count, actions: [
-                ("minus", "Unstage all", { [weak self] in self?.model.unstageAll() }),
+        if !store.staged.isEmpty {
+            rows.append(.header(title: "STAGED CHANGES", count: store.staged.count, actions: [
+                ("minus", "Unstage all", { [weak self] in self?.store.unstageAll() }),
             ]))
-            appendFiles(model.staged, staged: true, into: &rows)
+            appendFiles(store.staged, staged: true, into: &rows)
         }
-        if !model.unstaged.isEmpty {
+        if !store.unstaged.isEmpty {
             var changeActions: [(String, String, () -> Void)] = [
-                ("tray.and.arrow.down", "Stash all changes", { [weak self] in self?.model.stash() }),
+                ("tray.and.arrow.down", "Stash all changes", { [weak self] in self?.store.stash() }),
             ]
-            if model.stashCount > 0 {
-                changeActions.append(("tray.and.arrow.up", "Unstash (pop latest)", { [weak self] in self?.model.unstash() }))
+            if store.stashCount > 0 {
+                changeActions.append(("tray.and.arrow.up", "Unstash (pop latest)", { [weak self] in self?.store.unstash() }))
             }
             changeActions.append(("arrow.uturn.backward", "Discard all changes", { [weak self] in self?.confirmDiscardAll() }))
-            changeActions.append(("plus", "Stage all", { [weak self] in self?.model.stageAll() }))
-            rows.append(.header(title: "CHANGES", count: model.unstaged.count, actions: changeActions))
-            appendFiles(model.unstaged, staged: false, into: &rows)
+            changeActions.append(("plus", "Stage all", { [weak self] in self?.store.stageAll() }))
+            rows.append(.header(title: "CHANGES", count: store.unstaged.count, actions: changeActions))
+            appendFiles(store.unstaged, staged: false, into: &rows)
         }
 
         items = rows
@@ -280,8 +222,8 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTabl
 
     private func doCommit(push: Bool) {
         let msg = commitField.stringValue
-        let all = model.staged.isEmpty   // nothing staged ⇒ commit everything
-        if push { model.commitPush(msg, all: all) } else { model.commit(msg, all: all) }
+        let all = store.staged.isEmpty   // nothing staged ⇒ commit everything
+        if push { store.commitPush(msg, all: all) } else { store.commit(msg, all: all) }
         commitField.stringValue = ""
         rebuild()
     }
@@ -295,7 +237,7 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTabl
         alert.alertStyle = .critical
         alert.addButton(withTitle: "Discard All")
         alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn { model.discardAll() }
+        if alert.runModal() == .alertFirstButtonReturn { store.discardAll() }
     }
 
     private func confirmDiscard(_ f: FileEntry) {
@@ -305,7 +247,7 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTabl
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Discard")
         alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn { model.discard(f) }
+        if alert.runModal() == .alertFirstButtonReturn { store.discard(f) }
     }
 
     // MARK: Virtualized list (NSTableView) — builds only the visible rows
@@ -325,7 +267,7 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate, NSTabl
             return ChangeRowView(
                 file: f, staged: staged,
                 onOpenFile: { [weak self] in self?.onOpenFile(f.path) },
-                onStageToggle: { [weak self] in staged ? self?.model.unstage(f.path) : self?.model.stage(f.path) },
+                onStageToggle: { [weak self] in staged ? self?.store.unstage(f.path) : self?.store.stage(f.path) },
                 onDiscard: { [weak self] in self?.confirmDiscard(f) })
         case let .more(n):
             let label = NSTextField(labelWithString: "   …and \(n) more")

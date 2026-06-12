@@ -21,9 +21,13 @@ Login-shell PATH via `Env.bootstrap`. Claude launches with `--settings <hooks>` 
 scroll monitor routes wheel/trackpad events (incl. alt-buffer SGR forwarding) to the terminal under
 the cursor. Claude `--resume <cid>` only when its transcript still exists on disk.
 
-## File tree — `UI/FileTree`, `Backend/Git`
-`NSOutlineView` with git-status colors, collapsed gitignored dirs (expand toggle), 1.5s poll that
-reloads only on change and preserves expansion by path. Click a leaf to open it.
+## File tree & Changes — `UI/FileTree`, `UI/Changes`, `UI/RepoStore`, `Backend/Git`
+`NSOutlineView` tree with git-status colors, collapsed gitignored dirs (expand toggle), reloads only
+on change and preserves expansion by path; click a leaf to open it. The Changes panel is a virtualized
+`NSTableView` (staged/unstaged sections, hover row-actions, commit bar) — see D19 for why it's
+virtualized. Both are fed by **one per-session `RepoStore`** (`UI/RepoStore`): a single FSEvents
+watcher + git poll + the git mutation actions, of which only the *visible* sidebar mode's data is
+fetched. One source of truth, one watcher.
 
 ## Editor — `UI/Editor`, `TextMate/`
 `NSTextView` over a plain `NSTextStorage`, syntax-coloured by a **native TextMate-grammar highlighter**

@@ -113,9 +113,11 @@ Virtualization makes layout cost O(visible) regardless of total count.
 **This is D6 generalized:** the file tree already virtualizes via `NSOutlineView`; the rule now applies
 to *any* list that can grow with the repo. **When adding a list UI, virtualize it** unless its length
 is provably bounded and small.
-**Status: open follow-up (Phase 2)** — the file tree and Changes panel still poll git *independently*
-(two watchers + two `git status` runs per session). Consolidate to one shared, debounced poll feeding
-both — the "share heavy resources" principle.
+**Resolved — the shared-poll follow-up (Phase 2):** a per-session `RepoStore` (`UI/RepoStore.swift`)
+now owns the single FSEvents watcher + git poll + git actions; the file tree and Changes panel are
+pure subscribers, and only the *visible* mode's data is fetched. This removed the two duplicate
+watchers and the on-open quirk where the Changes pane polled git even while the Files tab was showing
+— one source of truth, the "share heavy resources" principle.
 
 ---
 
