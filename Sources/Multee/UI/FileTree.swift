@@ -161,9 +161,11 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     private func refresh() {
         let repo = self.repo
         let expand = settings.expandIgnored
+        let prev = self.lastSig
         DispatchQueue.global().async { [weak self] in
             let entries = Git.repoFiles(repo, expandIgnored: expand)
             let sig = entries.map { "\($0.path)|\($0.status.rawValue)|\($0.isDir)" }.joined(separator: "\n")
+            guard sig != prev else { return }   // nothing changed → skip buildTree + the UI reload entirely
             let tree = buildTree(entries)
             DispatchQueue.main.async {
                 guard let self, sig != self.lastSig else { return }
@@ -177,9 +179,11 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         }
     }
 
+    /// Re-expand only branches that are actually expanded — don't walk the whole (possibly huge)
+    /// tree on the main thread, which froze opening large repos.
     private func restoreExpansion(_ nodes: [TreeNode]) {
-        for n in nodes where n.isFolder {
-            if expandedPaths.contains(n.id) { outline.expandItem(n) }
+        for n in nodes where n.isFolder && expandedPaths.contains(n.id) {
+            outline.expandItem(n)
             restoreExpansion(n.children ?? [])
         }
     }

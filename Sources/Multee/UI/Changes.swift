@@ -179,6 +179,7 @@ final class ChangesViewController: NSViewController, NSTextFieldDelegate {
     }
 
     func stop() { model.stop() }
+    func start() { model.start() }
 
     private var canCommit: Bool {
         !commitField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

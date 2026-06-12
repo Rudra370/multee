@@ -139,8 +139,15 @@ final class SidebarViewController: NSViewController {
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.refresh() }
             .store(in: &cancellables)
+        // Pause git polling while the app is in the background (Claude status still arrives via hooks).
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(appResignedActive), name: NSApplication.didResignActiveNotification, object: nil)
+        nc.addObserver(self, selector: #selector(appBecameActive), name: NSApplication.didBecomeActiveNotification, object: nil)
         refresh()
     }
+
+    @objc private func appResignedActive() { treeVC?.stop(); changesVC?.stop() }
+    @objc private func appBecameActive() { if model.activeSession != nil { showSidebarContent() } }
 
     private func refresh() {
         rebuildSessions()
@@ -198,6 +205,9 @@ final class SidebarViewController: NSViewController {
 
     private func showSidebarContent() {
         guard let treeVC, let changesVC else { return }
+        // Only the visible mode polls git (1.5s) — pause the hidden one to halve the churn.
+        if changesMode { treeVC.stop(); changesVC.start() }
+        else { changesVC.stop(); treeVC.startPolling() }
         let show: NSViewController = changesMode ? changesVC : treeVC
         let hide: NSViewController = changesMode ? treeVC : changesVC
         hide.view.removeFromSuperview()
