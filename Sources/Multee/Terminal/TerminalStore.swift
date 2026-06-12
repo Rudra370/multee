@@ -40,11 +40,18 @@ final class TerminalStore {
     }
 
     /// Does Claude still have a saved transcript for this conversation?
-    /// Path: ~/.claude/projects/<cwd with "/" → "-">/<sessionId>.jsonl
-    private static func conversationExists(cwd: String, sessionId: String) -> Bool {
-        let encoded = cwd.replacingOccurrences(of: "/", with: "-")
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return FileManager.default.fileExists(atPath: "\(home)/.claude/projects/\(encoded)/\(sessionId).jsonl")
+    /// Claude stores transcripts at `~/.claude/projects/<encoded cwd>/<sessionId>.jsonl`, where it
+    /// encodes the path by replacing `/`, `_`, `.` (and other non-alphanumerics) with `-`. Rather than
+    /// mirror that exactly (we got it wrong before — only `/` was replaced, so any repo path with `_`
+    /// or `.` failed to resume), we just look up the transcript by its unique id under *any* project
+    /// dir. The id is a UUID, so the directory name doesn't matter — encoding-proof.
+    private static func conversationExists(sessionId: String) -> Bool {
+        let projects = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+        guard let dirs = try? FileManager.default.contentsOfDirectory(atPath: projects.path) else { return false }
+        let file = "\(sessionId).jsonl"
+        return dirs.contains {
+            FileManager.default.fileExists(atPath: projects.appendingPathComponent($0).appendingPathComponent(file).path)
+        }
     }
 
     /// Get (or lazily spawn) the terminal view for a tab. `cwd` is the session's repo root.
@@ -67,7 +74,7 @@ final class TerminalStore {
             // start fresh (a wrong guess just means "fresh", never a dead tab).
             let userArgs = tab.args.split(separator: " ").map(String.init)
             let base: [String]
-            if let cid = tab.claudeSessionId, Self.conversationExists(cwd: cwd, sessionId: cid) {
+            if let cid = tab.claudeSessionId, Self.conversationExists(sessionId: cid) {
                 base = userArgs.filter { $0 != "--continue" && $0 != "--resume" } + ["--resume", cid]
             } else {
                 base = userArgs

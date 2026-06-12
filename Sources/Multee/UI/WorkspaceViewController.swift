@@ -69,6 +69,7 @@ final class WorkspaceViewController: NSViewController, NSSplitViewDelegate {
 final class SidebarViewController: NSViewController {
     private let model: AppModel
     private var cancellables = Set<AnyCancellable>()
+    private var sessionStatusObservers: [String: AnyCancellable] = [:]   // per-session dot refresh
     private let sessionsStack = NSStackView()
     private let filesContainer = NSView()
     private var treeVC: FileTreeViewController?
@@ -153,6 +154,20 @@ final class SidebarViewController: NSViewController {
     private func refresh() {
         rebuildSessions()
         syncFileTree()
+        observeSessionStatus()
+    }
+
+    /// Refresh the SESSIONS dots when *any* session's status changes. The hook routing mutates a
+    /// session's `tabStatus`, which fires that Session's `objectWillChange` — but this view only
+    /// observes `model.objectWillChange`, so without this the dots were stale until the model
+    /// republished (e.g. on a session switch). Re-established whenever the session set changes;
+    /// rebuilds only the (cheap) sessions list, never the file-tree/git poll.
+    private func observeSessionStatus() {
+        sessionStatusObservers = Dictionary(uniqueKeysWithValues: model.sessions.map { session in
+            (session.id, session.objectWillChange
+                .receive(on: RunLoop.main)
+                .sink { [weak self] in self?.rebuildSessions() })
+        })
     }
 
     // FILES pane — a Files/Changes toggle over a container that holds the tree or the changes view.

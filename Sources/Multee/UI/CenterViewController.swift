@@ -83,10 +83,18 @@ final class CenterViewController: NSViewController {
         tabBar.onSelect      = { [weak self] id in self?.model.activeSession?.activate(id) }
         tabBar.onClose       = { [weak self] id in self?.model.activeSession?.closeTab(id) }
         tabBar.onNewClaude   = { [weak self] args in
-            self?.model.activeSession?.addTab(Tab(kind: .claude, title: "Claude", args: args))
+            guard let self else { return }
+            // Empty args (the ✦ button and the "Default" menu item) → use the Settings default args,
+            // matching the auto-launched Claude when a repo is first opened.
+            let resolved = args.isEmpty ? self.model.settings.defaultArgs : args
+            self.model.activeSession?.addTab(Tab(kind: .claude, title: "Claude", args: resolved))
         }
         tabBar.onNewTerminal = { [weak self] in
             self?.model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
+        }
+        tabBar.onReorder     = { [weak self] dragged, beforeID in
+            guard let session = self?.model.activeSession else { return }
+            if let beforeID { session.moveTab(dragged, before: beforeID) } else { session.moveTabToEnd(dragged) }
         }
     }
 
