@@ -385,10 +385,14 @@ private final class ChangeRowView: PointerView {
 /// Small SF-symbol icon button backed by a closure (pointing-hand cursor via PointerButton).
 final class ClosureButton: PointerButton {
     private let handler: () -> Void
-    init(symbol: String, action: @escaping () -> Void) {
+    init(symbol: String, pointSize: CGFloat? = nil, action: @escaping () -> Void) {
         self.handler = action
         super.init(frame: .zero)
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        var img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        if let pointSize {
+            img = img?.withSymbolConfiguration(.init(pointSize: pointSize, weight: .regular))
+        }
+        image = img
         imageScaling = .scaleProportionallyDown
         isBordered = false
         bezelStyle = .inline

@@ -85,6 +85,7 @@ final class SidebarViewController: NSViewController {
         return s
     }()
     private var changesMode: Bool { filesModeSeg.selectedSegment == 1 }
+    private var fileActionsBar: NSStackView?   // new file / new folder / collapse-all (Files mode only)
 
     // SESSIONS header + collapse
     private let sessionsHeaderLabel = NSTextField(labelWithString: "SESSIONS")
@@ -184,11 +185,31 @@ final class SidebarViewController: NSViewController {
         filesModeSeg.toolTip = "Files tree / Changes (git)"
         filesModeSeg.translatesAutoresizingMaskIntoConstraints = false
         filesContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        // Tree toolbar: new file / new folder / collapse-all (VS Code's Explorer actions). Files mode only.
+        let iconSize: CGFloat = 13
+        let newFile = ClosureButton(symbol: "doc.badge.plus", pointSize: iconSize) { [weak self] in self?.treeVC?.beginNewFile() }
+        newFile.toolTip = "New file"
+        let newFolder = ClosureButton(symbol: "folder.badge.plus", pointSize: iconSize) { [weak self] in self?.treeVC?.beginNewFolder() }
+        newFolder.toolTip = "New folder"
+        let collapse = ClosureButton(symbol: "arrow.down.right.and.arrow.up.left", pointSize: iconSize) { [weak self] in self?.treeVC?.collapseAll() }
+        collapse.toolTip = "Collapse all folders"
+        let actions = NSStackView(views: [newFile, newFolder, collapse])
+        actions.orientation = .horizontal
+        actions.spacing = 8
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        actions.isHidden = changesMode
+        fileActionsBar = actions
+
         pane.addSubview(filesModeSeg)
+        pane.addSubview(actions)
         pane.addSubview(filesContainer)
         NSLayoutConstraint.activate([
             filesModeSeg.topAnchor.constraint(equalTo: pane.topAnchor, constant: 8),
             filesModeSeg.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 10),
+            actions.centerYAnchor.constraint(equalTo: filesModeSeg.centerYAnchor),
+            actions.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -8),
+            actions.leadingAnchor.constraint(greaterThanOrEqualTo: filesModeSeg.trailingAnchor, constant: 8),
             filesContainer.topAnchor.constraint(equalTo: filesModeSeg.bottomAnchor, constant: 6),
             filesContainer.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
             filesContainer.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
@@ -221,6 +242,7 @@ final class SidebarViewController: NSViewController {
     }
 
     private func showSidebarContent() {
+        fileActionsBar?.isHidden = changesMode   // tree actions only apply to the Files tree
         guard let treeVC, let changesVC, let store else { return }
         let show: NSViewController = changesMode ? changesVC : treeVC
         let hide: NSViewController = changesMode ? treeVC : changesVC

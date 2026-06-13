@@ -40,7 +40,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 { "shot": "/tmp/multee-shot.png", "state": "/tmp/multee-state.json",
   "actions": ["openRepo:/path", "openFile:rel", "openDiff:rel", "newClaude", "newTerminal",
               "closeActiveTab", "closeSession", "openSettings", "sendText:hi", "sendEnter",
-              "scroll:up:10", "setStatus:needs", "editorType:x", "editorSave", "setFont:16"] }
+              "scroll:up:10", "setStatus:needs", "editorType:x", "editorSave", "setFont:16",
+              "treeNewFile:a.txt", "treeNewFolder:dir", "treeBeginFile", "treeExpandAll",
+              "treeCollapseAll"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -57,6 +59,11 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - **Never spawn a subprocess from a view layout path** — do PATH bootstrap (`Env.bootstrap`) once at
   startup in `AppDelegate`.
 - **Trim `Shell.run` output** — an untrimmed `"true\n"` from git made `isRepo` false.
+- **git omits empty dirs**, so the git-derived file tree can't show a freshly-created empty folder
+  (`ls-files` lists no path under it). `FileTreeViewController` tracks user-made empty folders in
+  `pendingEmptyDirs` (persisted per-repo in UserDefaults, filtered on load to ones still on disk &
+  empty), injects them as `isDir` entries, and post-processes the built tree (`markEmptyFolder`) to
+  give them `children = []` so they render as real expandable folders, not dead `name/` leaves.
 - **SwiftPM resource bundles don't resolve in a distributed `.app`.** The generated `Bundle.module`
   accessor only checks the `.app` *root* and the build-machine path — neither exists for a user, and
   a code-signed `.app` must keep resources in `Contents/Resources/` (nothing at the root, or the
@@ -70,6 +77,19 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   a real initial frame width (a `.zero` frame collapses block layout). See `MarkdownRenderer`/`MarkdownViewController`.
 - **Self-screenshot needs layer-backed standard views** to capture; the terminal is the exception
   (see harness note above).
+- **Two cursor mechanisms that don't compose (custom cursors).** AppKit resolves a view's cursor via
+  either cursor **rects** (`resetCursorRects`/`addCursorRect`, window-owned) or a **tracking-area
+  `cursorUpdate`** callback. Once you interact with *any* cursor-rect view (every `NSButton` registers
+  cursor rects), the window runs in cursor-rect mode and **stops delivering `cursorUpdate` to
+  tracking-area-only views** — their custom cursor freezes until a relayout or focus change re-arms it.
+  This was the file-tree bug: the pointing hand reverted to arrow after a toolbar-button click and only
+  recovered on expanding a folder *with rows* (relayout) or opening a file (focus change); an empty
+  folder or re-clicking an open file did nothing. **Rule: any view with a custom cursor must implement
+  `resetCursorRects` (cursor rects are load-bearing). Dynamic views (changing rows) also keep a
+  `cursorUpdate` for live hit-testing and must `invalidateCursorRects` on content change.** All
+  `Pointer*` views in `UI/Cursor.swift` now do both; `ScrollerCursorOverlay` (terminal) already used
+  cursor rects to match SwiftTerm. Cursor *shape* can't be checked by the screenshot harness, and the
+  sandbox blocks synthetic mouse events (CGEvent/NSEvent) — so this class of bug needs a human to verify.
 
 ## File map (Sources/Multee/)
 - `App/` — `main.swift`, `AppDelegate.swift` (menu, key monitors, status routing, settings/update
@@ -78,7 +98,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - `Backend/` — `Shell`/`Env`, `Git` (status + actions).
 - `Terminal/` — `TerminalStore` (PTY per tab + scroll), `HookServer` (status listener), `Hooks`.
 - `UI/` — `WorkspaceViewController` (split + sidebar), `CenterViewController` (tab bar + content),
-  `TabBarView`, `FileTree` (virtualized tree), `RepoStore` (one per-session git poller — single
+  `TabBarView`, `FileTree` (virtualized tree + a toolbar row: new file / new folder / collapse-all,
+  with **inline in-tree naming** like VS Code), `RepoStore` (one per-session git poller — single
   FSEvents watcher + poll + actions, feeds the tree *and* Changes), `Editor` (plain NSTextStorage +
   native highlighter; line-based tokenizing run off-main on a serial queue, debounced re-highlight on
   edit), `Changes` (virtualized list), `Diff`, `SettingsWindow`, `Updates`. A `.file` tab routes by

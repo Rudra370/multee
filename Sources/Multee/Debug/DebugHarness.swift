@@ -56,6 +56,11 @@ enum DebugAction {
         case "editorType": ActiveEditor.current?.debugAppend(arg)
         case "editorSave":  ActiveEditor.current?.save()
         case "setFont":     model.settings.fontSize = Double(arg) ?? 13
+        case "treeNewFile":   FileTreeViewController.current?.debugCreate(name: arg, folder: false)
+        case "treeNewFolder": FileTreeViewController.current?.debugCreate(name: arg, folder: true)
+        case "treeBeginFile": FileTreeViewController.current?.beginNewFile()
+        case "treeExpandAll": FileTreeViewController.current?.debugExpandAll()
+        case "treeCollapseAll": FileTreeViewController.current?.collapseAll()
         default: break
         }
     }
@@ -106,13 +111,18 @@ enum DebugState {
 
     private static func walk(_ v: NSView, into out: inout [String: String]) {
         let label: String? = v is TabBarView ? "tabBar"
-            : v is MulteeTerminalView ? "terminal" : nil
+            : v is MulteeTerminalView ? "terminal"
+            : v is PointerOutlineView ? "tree" : nil
         if let label, out[label] == nil {
             let r = v.convert(v.bounds, to: nil)
             var info = "x\(Int(r.minX)) y\(Int(r.minY)) w\(Int(r.width)) h\(Int(r.height)) hidden\(v.isHidden)"
             if let bar = v as? NSView, label == "tabBar" {
                 let chips = countChips(bar)
                 info += " chips\(chips)"
+            }
+            if let ov = v as? NSOutlineView {
+                let clipW = ov.enclosingScrollView?.contentView.bounds.width ?? -1
+                info += " rows\(ov.numberOfRows) clipW\(Int(clipW)) frameW\(Int(ov.frame.width))"
             }
             out[label] = info
         }

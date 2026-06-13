@@ -23,7 +23,11 @@ the cursor. Claude `--resume <cid>` only when its transcript still exists on dis
 
 ## File tree & Changes — `UI/FileTree`, `UI/Changes`, `UI/RepoStore`, `Backend/Git`
 `NSOutlineView` tree with git-status colors, collapsed gitignored dirs (expand toggle), reloads only
-on change and preserves expansion by path; click a leaf to open it. The Changes panel is a virtualized
+on change and preserves expansion by path; click a leaf to open it. A header toolbar (Files mode only)
+gives **new file / new folder / collapse-all** (VS Code's Explorer actions); new file/folder are named
+**inline in the tree** (a draft row with a focused text field — Return commits, Esc cancels). Because
+git omits empty dirs, freshly-made empty folders are tracked in `pendingEmptyDirs` (persisted per-repo)
+and injected as expandable folders until they hold a file. The Changes panel is a virtualized
 `NSTableView` (staged/unstaged sections, hover row-actions, commit bar) — see D19 for why it's
 virtualized. Both are fed by **one per-session `RepoStore`** (`UI/RepoStore`): a single FSEvents
 watcher + git poll + the git mutation actions, of which only the *visible* sidebar mode's data is

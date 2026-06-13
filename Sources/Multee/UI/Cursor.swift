@@ -1,8 +1,16 @@
 import AppKit
 
-// Reliable pointing-hand cursor via a `.cursorUpdate` tracking area + `cursorUpdate(with:)` (the
-// documented approach — more dependable than cursor rects, which AppKit doesn't always re-establish).
-// `.inVisibleRect` keeps the area sized to the view automatically.
+// Custom cursors (the pointing hand over clickable things). AppKit has TWO cursor mechanisms and they
+// don't compose: cursor **rects** (`resetCursorRects`/`addCursorRect`, owned by the window) and the
+// **tracking-area `cursorUpdate`** callback. A window effectively runs in cursor-rect mode once you
+// interact with a cursor-rect view (every NSButton — incl. ours — registers cursor rects). In that
+// mode it STOPS delivering `cursorUpdate` to tracking-area-only views, so their cursor goes stale
+// (e.g. the file tree's pointing hand reverted to arrow after a toolbar button click, recovering only
+// on a relayout or focus change). **Rule: every custom-cursor view must register cursor rects
+// (`resetCursorRects`).** Views with changing content (the outline's rows) ALSO keep a `cursorUpdate`
+// for live hit-testing and must `invalidateCursorRects` when content changes (reload/collapse) so the
+// rects stay current. We use `.cursorUpdate` + `.inVisibleRect` tracking here, but cursor rects are
+// the load-bearing half — don't drop them. See the "Two cursor mechanisms" gotcha in CLAUDE.md.
 
 private func installPointerTracking(_ view: NSView) {
     guard view.window != nil else { return }
@@ -41,4 +49,16 @@ class PointerOutlineView: NSOutlineView {
         let point = convert(event.locationInWindow, from: nil)
         (row(at: point) >= 0 ? NSCursor.pointingHand : NSCursor.arrow).set()
     }
+
+    // The toolbar buttons (PointerButton) use cursor *rects*; after one is clicked the window is in
+    // cursor-rect mode and the tracking-area `cursorUpdate` above goes stale over the rows until a
+    // relayout/focus change. Participating in cursor rects too keeps the pointing hand correct in that
+    // state. Only the actual rows get the hand (empty space below stays arrow). Kept current by
+    // invalidating on every reloadData and after collapse-all.
+    override func resetCursorRects() {
+        let visible = rows(in: visibleRect)
+        guard visible.length > 0 else { return }
+        for i in visible.location..<NSMaxRange(visible) { addCursorRect(rect(ofRow: i), cursor: .pointingHand) }
+    }
+    override func reloadData() { super.reloadData(); window?.invalidateCursorRects(for: self) }
 }
