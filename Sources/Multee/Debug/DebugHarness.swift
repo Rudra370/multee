@@ -61,6 +61,10 @@ enum DebugAction {
         case "treeBeginFile": FileTreeViewController.current?.beginNewFile()
         case "treeExpandAll": FileTreeViewController.current?.debugExpandAll()
         case "treeCollapseAll": FileTreeViewController.current?.collapseAll()
+        case "treeRename":
+            let p = arg.split(separator: "|", maxSplits: 1).map(String.init)
+            if p.count == 2 { FileTreeViewController.current?.debugRename(rel: p[0], to: p[1]) }
+        case "treeDelete": FileTreeViewController.current?.debugDelete(rel: arg)
         default: break
         }
     }

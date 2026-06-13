@@ -96,11 +96,21 @@ final class TabBarView: NSView {
                 status: session.tabStatus[tab.id] ?? .idle,
                 dirty: tab.dirty,
                 isActive: tab.id == activeTabID,
+                copyPaths: Self.copyPaths(for: tab, repo: session.url),
                 onSelect: { [weak self] in self?.onSelect?(tab.id) },
                 onClose: { [weak self] in self?.onClose?(tab.id) }
             )
             chips.addArrangedSubview(chip)
         }
+    }
+
+    /// Absolute + repo-relative path for a file tab (nil for non-file tabs). `Tab.path` is absolute;
+    /// relative strips the repo prefix (a file outside the repo keeps its absolute path as "relative").
+    static func copyPaths(for tab: Tab, repo: String) -> (absolute: String, relative: String)? {
+        guard tab.kind == .file, let abs = tab.path else { return nil }
+        let prefix = repo.hasSuffix("/") ? repo : repo + "/"
+        let rel = abs.hasPrefix(prefix) ? String(abs.dropFirst(prefix.count)) : abs
+        return (abs, rel)
     }
 
     @objc private func newClaudeDefault() { onNewClaude?("") }
@@ -165,15 +175,18 @@ final class TabChipView: PointerView, NSDraggingSource {
     let tabID: String
     private let onSelect: () -> Void
     private let onClose: () -> Void
+    private let copyPaths: (absolute: String, relative: String)?   // file tabs only → right-click copy
     private let closeButton = PointerButton()
     private var mouseDownAt: NSPoint = .zero
     private var didDrag = false
 
     init(tabID: String, title: String, kind: TabKind, status: ClaudeState, dirty: Bool, isActive: Bool,
+         copyPaths: (absolute: String, relative: String)? = nil,
          onSelect: @escaping () -> Void, onClose: @escaping () -> Void) {
         self.tabID = tabID
         self.onSelect = onSelect
         self.onClose = onClose
+        self.copyPaths = copyPaths
         super.init(frame: .zero)
 
         wantsLayer = true
@@ -274,6 +287,20 @@ final class TabChipView: PointerView, NSDraggingSource {
     }
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
+
+    // Right-click on a file tab → copy its path. Other tab kinds have no menu (yet).
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard copyPaths != nil else { return nil }
+        let menu = NSMenu()
+        for (title, sel) in [("Copy Path", #selector(copyAbsolute)), ("Copy Relative Path", #selector(copyRelative))] {
+            let item = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        return menu
+    }
+    @objc private func copyAbsolute() { if let p = copyPaths?.absolute { Clipboard.copy(p) } }
+    @objc private func copyRelative() { if let p = copyPaths?.relative { Clipboard.copy(p) } }
 
     @objc private func closeTapped() { onClose() }
 }

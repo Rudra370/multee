@@ -184,13 +184,9 @@ enum Git {
         var seen = Set<String>()
 
         for path in nulSplit(bytes(repo, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"])) {
+            if status[path] == .deleted { continue }   // deleted files belong in Changes, not the tree
             if seen.insert(path).inserted {
                 entries.append(FileEntry(path: path, status: status[path] ?? .none, isDir: false))
-            }
-        }
-        for (p, cat) in status where cat == .deleted {
-            if seen.insert(p).inserted {
-                entries.append(FileEntry(path: p, status: .deleted, isDir: false))
             }
         }
         let ignoredArgs = expand

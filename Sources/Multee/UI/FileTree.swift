@@ -83,8 +83,10 @@ func nsStatusColor(_ s: GitStatus) -> NSColor {
 
 /// One repo's file tree. NSOutlineView gives native disclosure, row virtualization, and correct
 /// cursors. Polls git every 1.5s; only reloads when the visible set actually changes (signature),
-/// preserving expansion across reloads by path.
-final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextFieldDelegate {
+/// preserving expansion across reloads by path. Right-click menu (NSMenuDelegate) does
+/// rename (inline, reusing the draft-field machinery) / delete (→ Trash) / new file / new folder /
+/// copy path / copy relative path, contextual to the clicked row.
+final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextFieldDelegate, NSMenuDelegate {
     private let store: RepoStore
     private let settings: Settings
     private let onOpen: (String) -> Void
@@ -96,12 +98,14 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     private var restoring = false
     private var cancellables = Set<AnyCancellable>()
 
-    // Inline create (new file / folder) — named in-tree like VS Code.
-    private enum EditKind { case newFile, newFolder }
+    // Inline create / rename — named in-tree like VS Code.
+    private enum EditKind { case newFile, newFolder, rename }
     private var editKind: EditKind?
-    private var editingNode: TreeNode?              // the draft node whose cell is being edited
+    private var editingNode: TreeNode?              // the draft (create) or existing (rename) node being edited
     private var draftParentId = ""                  // repo-relative folder the draft lives in ("" = root)
+    private var renameOriginalId = ""               // original repo-relative path being renamed
     private var editCancelled = false
+    private var menuTargetNode: TreeNode?           // the row a context-menu action operates on
     private var pendingFiles: [FileEntry]?          // file updates that arrived mid-edit; applied on end
     private var pendingEmptyDirs = Set<String>()    // just-made empty folders (git omits empty dirs)
     private var isEditing: Bool { editingNode != nil }
@@ -139,6 +143,9 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         outline.target = self
         outline.action = #selector(rowClicked)
         outline.autoresizingMask = [.width, .height]
+        let menu = NSMenu()
+        menu.delegate = self        // rebuilt per right-clicked row in menuNeedsUpdate
+        outline.menu = menu
 
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
@@ -237,13 +244,27 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         outline.window?.invalidateCursorRects(for: outline)   // refresh cursor rects for the new row set
     }
 
-    func beginNewFile()   { beginCreate(.newFile) }
-    func beginNewFolder() { beginCreate(.newFolder) }
+    func beginNewFile()   { beginCreate(.newFile, parent: targetFolder()) }
+    func beginNewFolder() { beginCreate(.newFolder, parent: targetFolder()) }
 
     /// Dev-harness hook: run the inline create end-to-end (begin → name → commit) without a keyboard.
     func debugCreate(name: String, folder: Bool) {
-        beginCreate(folder ? .newFolder : .newFile)
+        beginCreate(folder ? .newFolder : .newFile, parent: targetFolder())
         finishEditing(name: name)
+    }
+
+    /// Dev-harness hooks for the context-menu mutations (right-click can't be synthesized).
+    func debugRename(rel: String, to newName: String) {
+        guard let node = findNode(rel, in: roots) else { return }
+        beginRename(node); finishEditing(name: newName)
+    }
+    func debugDelete(rel: String) {   // skips the confirm sheet; exercises the same trash + cleanup
+        guard let node = findNode(rel, in: roots) else { return }
+        let abs = (store.repo as NSString).appendingPathComponent(node.id)
+        try? FileManager.default.trashItem(at: URL(fileURLWithPath: abs), resultingItemURL: nil)
+        expandedPaths.remove(node.id)
+        if pendingEmptyDirs.remove(node.id) != nil { persistEmptyDirs() }
+        store.refreshNow()
     }
 
     /// Dev-harness hook: expand every folder (to then verify collapse-all closes them).
@@ -256,10 +277,9 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         }
     }
 
-    /// Insert an empty draft row in the target folder and start inline editing it.
-    private func beginCreate(_ kind: EditKind) {
+    /// Insert an empty draft row in the given folder (nil = root) and start inline editing it.
+    private func beginCreate(_ kind: EditKind, parent: TreeNode?) {
         guard editingNode == nil else { return }   // one edit at a time
-        let parent = targetFolder()
         if let parent, !outline.isItemExpanded(parent) {
             restoring = true; outline.expandItem(parent); restoring = false
             expandedPaths.insert(parent.id)
@@ -291,14 +311,95 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         return nil
     }
 
-    /// Focus the draft row's text field so the user can type the name immediately.
+    // MARK: Context menu (right-click)
+
+    /// Rebuild the menu for the right-clicked row (`clickedRow`); empty space → root create actions.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let row = outline.clickedRow
+        menuTargetNode = (row >= 0) ? outline.item(atRow: row) as? TreeNode : nil
+        menu.items = contextItems(for: menuTargetNode)
+    }
+
+    /// Pure builder (also drives the dev-harness menu assertion).
+    func contextItems(for node: TreeNode?) -> [NSMenuItem] {
+        func item(_ title: String, _ sel: Selector) -> NSMenuItem {
+            let i = NSMenuItem(title: title, action: sel, keyEquivalent: ""); i.target = self; return i
+        }
+        guard let node else {   // empty space
+            return [item("New File", #selector(ctxNewFile)), item("New Folder", #selector(ctxNewFolder))]
+        }
+        let copy = [item("Copy Path", #selector(ctxCopyPath)), item("Copy Relative Path", #selector(ctxCopyRelative))]
+        let edit = [item("Rename", #selector(ctxRename)), item("Delete", #selector(ctxDelete))]
+        if node.isFolder {
+            return [item("New File", #selector(ctxNewFile)), item("New Folder", #selector(ctxNewFolder)),
+                    .separator()] + edit + [.separator()] + copy
+        }
+        return edit + [.separator()] + copy + [.separator(),
+                item("New File", #selector(ctxNewFile)), item("New Folder", #selector(ctxNewFolder))]
+    }
+
+    /// Folder a context-menu create should target: the clicked folder, the clicked file's folder, else root.
+    private func contextParent() -> TreeNode? {
+        // Resolve the live node by id (the menu's node object can be stale if the tree refreshed while
+        // the menu was open); fall back to root if it's gone.
+        guard let target = menuTargetNode, let node = findNode(target.id, in: roots) else { return nil }
+        if node.isFolder { return node }
+        let parentId = (node.id as NSString).deletingLastPathComponent
+        return parentId.isEmpty ? nil : findNode(parentId, in: roots)
+    }
+
+    @objc private func ctxNewFile()   { beginCreate(.newFile, parent: contextParent()) }
+    @objc private func ctxNewFolder() { beginCreate(.newFolder, parent: contextParent()) }
+    @objc private func ctxRename()    { if let n = menuTargetNode { beginRename(n) } }
+    @objc private func ctxDelete()    { if let n = menuTargetNode { confirmDelete(n) } }
+    @objc private func ctxCopyPath()  { if let n = menuTargetNode { Clipboard.copy((store.repo as NSString).appendingPathComponent(n.id)) } }
+    @objc private func ctxCopyRelative() { if let n = menuTargetNode { Clipboard.copy(n.id) } }
+
+    /// Inline-rename an existing row (reuses the draft-field machinery; the node stays in place).
+    private func beginRename(_ node: TreeNode) {
+        // Resolve the live node by id — the menu's node object may be stale after a refresh.
+        guard editingNode == nil, !node.id.isEmpty, let live = findNode(node.id, in: roots) else { return }
+        editKind = .rename
+        editingNode = live
+        renameOriginalId = live.id
+        editCancelled = false
+        outline.reloadItem(live)        // re-render the row as an editable field
+        beginFieldEditing(for: live)
+    }
+
+    private func confirmDelete(_ node: TreeNode) {
+        guard !node.id.isEmpty, let window = outline.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(node.name)”?"
+        alert.informativeText = "It will be moved to the Trash."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let abs = (self.store.repo as NSString).appendingPathComponent(node.id)
+            try? FileManager.default.trashItem(at: URL(fileURLWithPath: abs), resultingItemURL: nil)
+            self.expandedPaths.remove(node.id)
+            if self.pendingEmptyDirs.remove(node.id) != nil { self.persistEmptyDirs() }
+            self.store.refreshNow()
+        }
+    }
+
+    /// Focus the row's text field so the user can type the name immediately.
     private func beginFieldEditing(for node: TreeNode) {
         let row = outline.row(forItem: node)
-        guard row >= 0 else { return }
-        outline.scrollRowToVisible(row)
-        guard let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView,
-              let field = cell.textField else { return }
-        outline.window?.makeFirstResponder(field)
+        if row >= 0,
+           let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView,
+           let field = cell.textField {
+            outline.scrollRowToVisible(row)
+            outline.window?.makeFirstResponder(field)
+            return
+        }
+        // Couldn't start the inline edit (row not realizable) — reset so we don't get stuck in edit state.
+        let wasDraft = editingNode?.id == Self.draftId
+        editingNode = nil; editKind = nil; editCancelled = false
+        if wasDraft { removeNode(node) }
+        reloadAfterEdit()
     }
 
     // Commit on Return / focus-loss; cancel on Escape.
@@ -317,14 +418,24 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     }
 
     private func finishEditing(name: String) {
-        guard let kind = editKind, let draft = editingNode else { return }
+        guard let kind = editKind, let node = editingNode else { return }
         let cancelled = editCancelled
         editingNode = nil; editKind = nil; editCancelled = false   // clear first — this can re-enter
         defer { reloadAfterEdit() }
 
-        removeNode(draft)   // a real node arrives via the refresh below
-        guard !cancelled, isValidName(name) else { return }
+        switch kind {
+        case .rename:
+            // The edited row is a real node; only act if the name actually changed and is valid.
+            guard !cancelled, isValidName(name), name != node.name else { return }
+            renameCommit(to: name)
+        case .newFile, .newFolder:
+            removeNode(node)   // drop the draft; a real node arrives via the refresh below
+            guard !cancelled, isValidName(name) else { return }
+            createCommit(kind, name: name)
+        }
+    }
 
+    private func createCommit(_ kind: EditKind, name: String) {
         let rel = draftParentId.isEmpty ? name : draftParentId + "/" + name
         let abs = (store.repo as NSString).appendingPathComponent(rel)
         let fm = FileManager.default
@@ -341,6 +452,37 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         }
         store.refreshNow()
         if kind == .newFile { onOpen(rel) }
+    }
+
+    private func renameCommit(to name: String) {
+        // Rename keeps the item in place; only its last path component changes.
+        let parentId = (renameOriginalId as NSString).deletingLastPathComponent
+        let destRel = parentId.isEmpty ? name : parentId + "/" + name
+        guard destRel != renameOriginalId else { return }
+        let fm = FileManager.default
+        let src = (store.repo as NSString).appendingPathComponent(renameOriginalId)
+        let dst = (store.repo as NSString).appendingPathComponent(destRel)
+        guard !fm.fileExists(atPath: dst) else { warn("“\(name)” already exists."); return }
+        do {
+            try fm.createDirectory(atPath: (dst as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try fm.moveItem(atPath: src, toPath: dst)
+        } catch {
+            warn("Couldn't rename: \(error.localizedDescription)"); return
+        }
+        remapPaths(from: renameOriginalId, to: destRel)   // keep expansion / empty-dir state across the rename
+        store.refreshNow()
+    }
+
+    /// Rewrite saved paths (expanded folders, tracked empty dirs) after a rename so a renamed folder
+    /// keeps its expanded state and its descendants stay consistent.
+    private func remapPaths(from old: String, to new: String) {
+        func remap(_ s: String) -> String {
+            if s == old { return new }
+            if s.hasPrefix(old + "/") { return new + s.dropFirst(old.count) }
+            return s
+        }
+        expandedPaths = Set(expandedPaths.map(remap))
+        if !pendingEmptyDirs.isEmpty { pendingEmptyDirs = Set(pendingEmptyDirs.map(remap)); persistEmptyDirs() }
     }
 
     /// Accepts slash-separated paths ("folder/file.txt"); every component must be a real name.
