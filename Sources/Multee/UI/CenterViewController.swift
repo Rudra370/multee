@@ -172,6 +172,13 @@ final class CenterViewController: NSViewController {
         case .claude, .terminal:
             return TerminalStore.shared.view(for: tab, cwd: session.url)
         case .file:
+            // A .file tab picks its viewer by extension: images render, everything else edits as text.
+            if ImageViewController.handles(tab.path) {
+                let vc = ImageViewController(path: tab.path ?? "")
+                addChild(vc)
+                contentVCs[tab.id] = vc
+                return vc.view
+            }
             let vc = EditorViewController(path: tab.path ?? "", settings: model.settings,
                                           onDirty: { [weak session] dirty in session?.setDirty(tab.id, dirty) })
             addChild(vc)
