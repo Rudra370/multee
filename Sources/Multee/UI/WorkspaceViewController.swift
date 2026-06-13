@@ -76,6 +76,7 @@ final class SidebarViewController: NSViewController {
     private var changesVC: ChangesViewController?
     private var store: RepoStore?            // one shared git poller for the tree + Changes
     private var currentRepo: String?
+    private var lastRevealedPath: String?    // dedup auto-reveal of the active file in the tree
     private let filesModeSeg: PointerSegmentedControl = {
         let s = PointerSegmentedControl()
         s.segmentCount = 2
@@ -156,6 +157,20 @@ final class SidebarViewController: NSViewController {
         rebuildSessions()
         syncFileTree()
         observeSessionStatus()
+        revealActiveFile()
+    }
+
+    /// Auto-reveal the active file in the tree (VS Code-style): when the active tab is a file, expand to
+    /// it, select it, scroll it in. Files mode only; deduped so we don't fight manual scrolling.
+    private func revealActiveFile() {
+        guard !changesMode, let treeVC,
+              let session = model.activeSession, let tab = session.activeTab,
+              tab.kind == .file, let abs = tab.path else { return }
+        let prefix = session.url.hasSuffix("/") ? session.url : session.url + "/"
+        let rel = abs.hasPrefix(prefix) ? String(abs.dropFirst(prefix.count)) : abs
+        guard rel != lastRevealedPath else { return }
+        lastRevealedPath = rel
+        treeVC.reveal(rel)
     }
 
     /// Refresh the SESSIONS dots when *any* session's status changes. The hook routing mutates a
@@ -167,7 +182,7 @@ final class SidebarViewController: NSViewController {
         sessionStatusObservers = Dictionary(uniqueKeysWithValues: model.sessions.map { session in
             (session.id, session.objectWillChange
                 .receive(on: RunLoop.main)
-                .sink { [weak self] in self?.rebuildSessions() })
+                .sink { [weak self] in self?.rebuildSessions(); self?.revealActiveFile() })
         })
     }
 
@@ -229,6 +244,7 @@ final class SidebarViewController: NSViewController {
         if currentRepo != session.url {
             teardownSidebarVCs()
             currentRepo = session.url
+            lastRevealedPath = nil          // new tree → reveal the active file afresh
             let store = RepoStore(repo: session.url, settings: model.settings)
             let tree = FileTreeViewController(store: store, settings: model.settings,
                 onOpen: { [weak self] path in self?.model.activeSession?.openFile(path) },
@@ -261,6 +277,7 @@ final class SidebarViewController: NSViewController {
         }
         // One shared watcher + git poll; only the visible mode's data is fetched.
         store.start(tree: !changesMode, changes: changesMode)
+        if !changesMode { lastRevealedPath = nil; revealActiveFile() }   // entering Files → reveal current file
     }
 
     private func teardownSidebarVCs() {

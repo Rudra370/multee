@@ -32,7 +32,9 @@ delete (→ Trash, confirm) / new file / new folder / copy path / copy relative 
 **file tab** in the top bar offers copy path / copy relative path (`TabChipView.menu(for:)`). Open tabs
 **follow renames** (the live editor retargets in place, keeping unsaved edits + redirecting saves;
 read-only viewers rebuild) and **close on delete** — `Session.fileRenamed`/`fileDeleted`, wired from the
-tree's `onRename`/`onDelete`. The Changes panel is a virtualized
+tree's `onRename`/`onDelete`. The active file is **auto-revealed** (VS Code-style): on tab switch / open
+the tree expands to it, selects it, and scrolls it in (`FileTreeViewController.reveal`, driven by the
+sidebar; re-applied after rebuilds so it survives reloads and launch). The Changes panel is a virtualized
 `NSTableView` (staged/unstaged sections, hover row-actions, commit bar) — see D19 for why it's
 virtualized. Both are fed by **one per-session `RepoStore`** (`UI/RepoStore`): a single FSEvents
 watcher + git poll + the git mutation actions, of which only the *visible* sidebar mode's data is

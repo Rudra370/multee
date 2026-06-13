@@ -208,8 +208,41 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
                 self.outline.reloadData()
                 self.restoreExpansion(self.roots)
                 self.restoring = false
+                self.applyReveal(scroll: false)   // keep the active file selected/expanded across rebuilds + on first load
             }
         }
+    }
+
+    // MARK: Reveal the active file (auto-show like VS Code)
+
+    private var revealPath: String?
+
+    /// Show a file in the tree: expand its ancestor folders, select it, and scroll it into view.
+    func reveal(_ relPath: String) {
+        revealPath = relPath.isEmpty ? nil : relPath
+        applyReveal(scroll: true)
+    }
+
+    private func applyReveal(scroll: Bool) {
+        guard let rel = revealPath else { return }
+        let comps = rel.split(separator: "/").map(String.init)
+        if comps.count > 1 {                       // expand each ancestor folder so the row exists
+            restoring = true
+            var prefix = ""
+            for comp in comps.dropLast() {
+                prefix = prefix.isEmpty ? comp : prefix + "/" + comp
+                if let folder = findNode(prefix, in: roots), folder.isFolder {
+                    outline.expandItem(folder)
+                    expandedPaths.insert(prefix)
+                }
+            }
+            restoring = false
+        }
+        guard let node = findNode(rel, in: roots) else { return }   // not in the tree (yet / gitignored)
+        let row = outline.row(forItem: node)
+        guard row >= 0 else { return }
+        outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        if scroll { outline.scrollRowToVisible(row) }
     }
 
     /// A synthetic empty dir builds as an `isDir` *leaf*; give it `children = []` so it shows as a real
