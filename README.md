@@ -53,9 +53,16 @@ brew uninstall --cask multee
 - **Know what needs you** — a colored dot per session shows whether Claude is working, waiting on you, or
   idle, with an optional sound when it finishes or needs attention.
 - **Browse your code** — a file tree with git-status colors and a syntax-highlighted viewer (~30 languages).
+- **Open any file** — images and icons (PNG/JPG/SVG/`.icns`) with zoom &amp; pan, and Markdown files render as
+  a formatted **preview** (headings, code with highlighting, tables, inline images) with a source toggle.
 - **Review changes** — stage, commit, discard, and view diffs without leaving the app.
 - **Pick up where you left off** — sessions, tabs, and Claude conversations come back when you reopen Multee.
 - **Make it yours** — drag tabs to reorder, set default Claude arguments, font size, and more.
+
+<p align="center">
+  <img src="assets/markdown.png" width="820" alt="Markdown rendered preview with headings, a highlighted code block, and a table"><br>
+  <b>Markdown, rendered</b>
+</p>
 
 <table>
   <tr>

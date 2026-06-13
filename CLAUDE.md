@@ -65,6 +65,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   back to `Bundle.module` outside a packaged `.app`. Our grammar bundle does this in `GrammarBundle`
   (`TextMate/TextMateHighlighter.swift`). Any new resource-bearing target/dep needs the same shim.
   (Dev builds *hide* this bug — their baked build path exists locally — so always test a release `.app`.)
+- **`NSTextBlock`/`NSTextTable` collapse to ~0 width in an auto-resizing text view** (text wraps one
+  char per line). Fix: `block.setContentWidth(100, type: .percentageValueType)` *and* give the text view
+  a real initial frame width (a `.zero` frame collapses block layout). See `MarkdownRenderer`/`MarkdownViewController`.
 - **Self-screenshot needs layer-backed standard views** to capture; the terminal is the exception
   (see harness note above).
 
@@ -78,7 +81,10 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `TabBarView`, `FileTree` (virtualized tree), `RepoStore` (one per-session git poller — single
   FSEvents watcher + poll + actions, feeds the tree *and* Changes), `Editor` (plain NSTextStorage +
   native highlighter; line-based tokenizing run off-main on a serial queue, debounced re-highlight on
-  edit), `Changes` (virtualized list), `Diff`, `SettingsWindow`, `Updates`.
+  edit), `Changes` (virtualized list), `Diff`, `SettingsWindow`, `Updates`. A `.file` tab routes by
+  extension in `CenterViewController.makeContentView`: `ImageViewController` (images/icns/SVG — zoom/pan,
+  source toggle), `MarkdownViewController` + `MarkdownRenderer` (rendered preview — code blocks reuse the
+  TextMate engine, tables via NSTextTable, inline images), else the text `Editor`.
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
   and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).

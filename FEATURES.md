@@ -47,6 +47,16 @@ external-grammar includes (e.g. CSS embedded in HTML) and Oniguruma-only regex a
 tokenizer is ~linear but call-bound (~0.3 ms/line); huge files colour off-main without freezing rather
 than instantly — a combined-regex scanner would be the next step if instant huge-file colour is needed.
 
+## File viewers — `UI/ImageViewController`, `UI/MarkdownViewController`, `UI/MarkdownRenderer`
+A `.file` tab picks its view by extension (`CenterViewController.makeContentView`): images → viewer,
+markdown → preview, else the text editor. **Images** (png/jpg/gif/bmp/tiff/webp/heic/`icns`/ico, plus
+SVG when `NSImage` can render it) show in a magnifiable scroll view — fit-on-open, pinch/scroll zoom,
+pan, double-click fit↔100%, centred — with a type·dimensions·size footer; SVG gets an Image/Source
+toggle. **Markdown** (.md/.markdown) renders to an `NSAttributedString` (a native line-based block
+parser + Foundation for inline + the TextMate engine for fenced code blocks + `NSTextTable` for tables +
+inline image attachments) with a Preview/Source toggle. No WebKit, no dependency; RAM is just the
+rendered content, freed on close.
+
 ## Changes & diff — `UI/Changes`, `UI/Diff`
 `ChangesModel` polls staged/unstaged; the view has a commit bar (Commit / Commit & Push), section +
 per-row git actions (stage/unstage/discard/stash/unstash), NSAlert confirms. Diff is an NSTableView

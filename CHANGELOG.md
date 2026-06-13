@@ -5,6 +5,15 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.4] - 2026-06-13
+
+### Added
+- **Image viewer** — open images and icons (PNG, JPG, GIF, WebP, HEIC, SVG, `.icns`, …) with zoom, pan,
+  and fit-to-window, instead of seeing them as raw bytes.
+- **Markdown preview** — `.md` / `.markdown` files render as formatted documents (headings, **bold** /
+  *italic*, lists, blockquotes, code blocks with syntax highlighting, tables, inline images, links),
+  with a **Preview / Source** toggle.
+
 ## [0.1.3] - 2026-06-12
 
 ### Added
