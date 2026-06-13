@@ -87,6 +87,43 @@ final class Session: ObservableObject, Identifiable {
         addTab(Tab(kind: .diff, title: (path as NSString).lastPathComponent, path: path))
     }
 
+    // MARK: - File-tree sync (rename / delete reflected in open tabs)
+
+    /// A file/folder was renamed on disk — retarget any open tab whose file is it, or sits inside it
+    /// (folder rename). `.file` tabs store an absolute path; `.diff` tabs store a repo-relative one.
+    func fileRenamed(from oldRel: String, to newRel: String) {
+        let oldAbs = absolute(oldRel), newAbs = absolute(newRel)
+        for i in tabs.indices {
+            let (from, to): (String, String)
+            switch tabs[i].kind {
+            case .file: (from, to) = (oldAbs, newAbs)
+            case .diff: (from, to) = (oldRel, newRel)
+            default: continue
+            }
+            guard let p = tabs[i].path, let moved = Self.remap(p, from: from, to: to) else { continue }
+            tabs[i].path = moved
+            tabs[i].title = (moved as NSString).lastPathComponent
+        }
+    }
+
+    /// A file/folder was deleted — close any open tab for it (or for files inside a deleted folder).
+    func fileDeleted(_ rel: String) {
+        let abs = absolute(rel)
+        let doomed = tabs.filter { t in
+            guard t.kind == .file || t.kind == .diff, let p = t.path else { return false }
+            let target = t.kind == .diff ? rel : abs
+            return p == target || p.hasPrefix(target + "/")
+        }
+        doomed.forEach { closeTab($0.id) }
+    }
+
+    /// Map a path through a rename: exact match → new; inside the renamed folder → reparent; else nil.
+    private static func remap(_ path: String, from old: String, to new: String) -> String? {
+        if path == old { return new }
+        if path.hasPrefix(old + "/") { return new + String(path.dropFirst(old.count)) }
+        return nil
+    }
+
     // MARK: - Reorder (drag)
 
     func moveTabToEnd(_ id: String) {

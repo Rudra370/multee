@@ -16,6 +16,7 @@ final class CenterViewController: NSViewController {
     private var emptyStack: NSView?
     private var contentViews: [String: NSView] = [:]
     private var contentVCs: [String: NSViewController] = [:]   // VC-backed content (editor, diff)
+    private var contentPaths: [String: String] = [:]          // path each content view was built for (rename detect)
 
     init(model: AppModel) {
         self.model = model
@@ -156,7 +157,12 @@ final class CenterViewController: NSViewController {
             let v = makeContentView(for: tab, session: session)
             mount(v)
             contentViews[tab.id] = v
+            contentPaths[tab.id] = tab.path ?? ""
             session.markShown(tab.id)
+        } else if (tab.kind == .file || tab.kind == .diff), contentPaths[tab.id] != (tab.path ?? "") {
+            // The file was renamed/moved while open — retarget the editor (keeps edits) or rebuild a
+            // read-only viewer against the new path.
+            retargetContent(for: tab, session: session)
         }
         for (id, v) in contentViews { v.isHidden = (id != tab.id) }
 
@@ -199,6 +205,23 @@ final class CenterViewController: NSViewController {
         }
     }
 
+    /// A renamed-while-open file: an editor retargets in place (preserving unsaved edits); a read-only
+    /// viewer (image/markdown) or diff is rebuilt against the new path.
+    private func retargetContent(for tab: Tab, session: Session) {
+        if let editor = contentVCs[tab.id] as? EditorViewController {
+            editor.retarget(to: tab.path ?? "")
+            contentPaths[tab.id] = tab.path ?? ""
+        } else {
+            contentViews[tab.id]?.removeFromSuperview()
+            contentVCs[tab.id]?.removeFromParent()
+            contentVCs[tab.id] = nil
+            let v = makeContentView(for: tab, session: session)
+            mount(v)
+            contentViews[tab.id] = v
+            contentPaths[tab.id] = tab.path ?? ""
+        }
+    }
+
     private func mount(_ v: NSView) {
         v.translatesAutoresizingMaskIntoConstraints = false
         contentArea.addSubview(v)
@@ -219,6 +242,7 @@ final class CenterViewController: NSViewController {
             contentViews[id] = nil
             contentVCs[id]?.removeFromParent()
             contentVCs[id] = nil
+            contentPaths[id] = nil
         }
     }
 

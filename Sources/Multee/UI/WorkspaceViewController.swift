@@ -231,7 +231,9 @@ final class SidebarViewController: NSViewController {
             currentRepo = session.url
             let store = RepoStore(repo: session.url, settings: model.settings)
             let tree = FileTreeViewController(store: store, settings: model.settings,
-                onOpen: { [weak self] path in self?.model.activeSession?.openFile(path) })
+                onOpen: { [weak self] path in self?.model.activeSession?.openFile(path) },
+                onRename: { [weak self] old, new in self?.model.activeSession?.fileRenamed(from: old, to: new) },
+                onDelete: { [weak self] rel in self?.model.activeSession?.fileDeleted(rel) })
             let changes = ChangesViewController(store: store,
                 onOpenDiff: { [weak self] path in self?.model.activeSession?.openDiff(path) },
                 onOpenFile: { [weak self] path in self?.model.activeSession?.openFile(path) })

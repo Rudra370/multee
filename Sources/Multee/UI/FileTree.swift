@@ -90,6 +90,8 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     private let store: RepoStore
     private let settings: Settings
     private let onOpen: (String) -> Void
+    private let onRename: (String, String) -> Void   // (oldRel, newRel) → keep open tabs in sync
+    private let onDelete: (String) -> Void           // (rel) → close open tabs for the deleted path
 
     private let outline = PointerOutlineView()   // pointing-hand cursor over rows
     private let scroll = NSScrollView()
@@ -114,10 +116,15 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     /// The live tree VC (for the dev harness to drive). Only one is mounted at a time.
     static weak var current: FileTreeViewController?
 
-    init(store: RepoStore, settings: Settings, onOpen: @escaping (String) -> Void) {
+    init(store: RepoStore, settings: Settings,
+         onOpen: @escaping (String) -> Void,
+         onRename: @escaping (String, String) -> Void = { _, _ in },
+         onDelete: @escaping (String) -> Void = { _ in }) {
         self.store = store
         self.settings = settings
         self.onOpen = onOpen
+        self.onRename = onRename
+        self.onDelete = onDelete
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -264,6 +271,7 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         try? FileManager.default.trashItem(at: URL(fileURLWithPath: abs), resultingItemURL: nil)
         expandedPaths.remove(node.id)
         if pendingEmptyDirs.remove(node.id) != nil { persistEmptyDirs() }
+        onDelete(node.id)
         store.refreshNow()
     }
 
@@ -381,6 +389,7 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
             try? FileManager.default.trashItem(at: URL(fileURLWithPath: abs), resultingItemURL: nil)
             self.expandedPaths.remove(node.id)
             if self.pendingEmptyDirs.remove(node.id) != nil { self.persistEmptyDirs() }
+            self.onDelete(node.id)        // close any open tabs for the deleted path
             self.store.refreshNow()
         }
     }
@@ -470,6 +479,7 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
             warn("Couldn't rename: \(error.localizedDescription)"); return
         }
         remapPaths(from: renameOriginalId, to: destRel)   // keep expansion / empty-dir state across the rename
+        onRename(renameOriginalId, destRel)               // retarget any open tabs
         store.refreshNow()
     }
 

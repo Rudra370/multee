@@ -22,13 +22,13 @@ final class CodeTextView: NSTextView {
 /// debounced re-highlight that only repaints colours (text, cursor and undo are untouched). Font size
 /// tracks Settings live; resizing swaps each run's font in place (no re-tokenize).
 final class EditorViewController: NSViewController, NSTextViewDelegate {
-    let path: String          // absolute file path
+    private(set) var path: String   // absolute file path (mutable: a rename retargets it in place)
     private let settings: Settings
     private let onDirty: (Bool) -> Void
 
     private var textView: CodeTextView!
     private var textStorage: NSTextStorage!
-    private let highlighter: TextMateHighlighter?
+    private var highlighter: TextMateHighlighter?
     private var saved = ""
     private var lastFontSize: Double
     private var cancellables = Set<AnyCancellable>()
@@ -116,6 +116,15 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
         try? content.write(toFile: path, atomically: true, encoding: .utf8)
         saved = content
         onDirty(false)
+    }
+
+    /// The file was renamed/moved on disk: redirect saves to the new path and re-pick the syntax
+    /// grammar for the (possibly new) extension. Content, cursor, undo, and dirty state are untouched.
+    func retarget(to newPath: String) {
+        guard newPath != path else { return }
+        path = newPath
+        highlighter = TextMateHighlighter.forPath(newPath)
+        requestHighlight(debounced: false)
     }
 
     // MARK: - Highlighting
