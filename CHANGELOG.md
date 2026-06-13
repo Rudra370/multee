@@ -5,6 +5,25 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.5] - 2026-06-13
+
+### Added
+- **File-tree toolbar** — new file, new folder, and collapse-all, right above the tree (like VS Code's
+  Explorer). New files and folders are **named inline in the tree**; type the name and press Return.
+- **Right-click menu in the tree** — rename (inline), delete (to the Trash), new file / new folder, and
+  **Copy Path / Copy Relative Path**, contextual to the row you click.
+- **Copy Path / Copy Relative Path on file tabs** — right-click an open file's tab in the top bar.
+- **Open tabs follow file changes** — rename a file that's open and its tab + editor follow the new
+  name (unsaved edits kept, saves go to the new path); delete a file and its tab closes.
+- **Auto-reveal the active file** — switching tabs expands the tree to the current file and highlights it.
+
+### Fixed
+- **Syntax highlighting** — fixed a case where one line could turn the rest of a file a single colour,
+  and toned down the over-aggressive red on member access (`.foo`).
+- **File tree** — deleted files no longer linger in the tree (they show only in Changes); the
+  pointing-hand cursor no longer goes stale after using the toolbar; rows fill the full width when
+  folders are expanded.
+
 ## [0.1.4] - 2026-06-13
 
 ### Added
