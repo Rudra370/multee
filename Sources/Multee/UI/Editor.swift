@@ -124,7 +124,14 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
         guard newPath != path else { return }
         path = newPath
         highlighter = TextMateHighlighter.forPath(newPath)
-        requestHighlight(debounced: false)
+        if highlighter == nil {
+            // New extension has no grammar — clear stale colours from the old type (requestHighlight
+            // early-returns when there's no highlighter, so it won't reset them itself).
+            textStorage.addAttribute(.foregroundColor, value: TMTheme.base,
+                                     range: NSRange(location: 0, length: textStorage.length))
+        } else {
+            requestHighlight(debounced: false)
+        }
     }
 
     // MARK: - Highlighting
