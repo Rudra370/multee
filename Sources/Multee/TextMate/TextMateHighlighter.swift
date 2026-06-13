@@ -163,6 +163,23 @@ final class TextMateHighlighter {
     /// Highlighter for a file, by extension / well-known filename. `nil` → no grammar (plain text).
     static func forPath(_ path: String) -> TextMateHighlighter? {
         guard let language = language(forPath: path) else { return nil }
+        return load(language: language)
+    }
+
+    /// Highlighter for a fenced-code-block language tag (```swift, ```py, …). `nil` → plain text.
+    static func forLanguage(_ fence: String) -> TextMateHighlighter? {
+        let f = fence.lowercased()
+        return load(language: fenceAliases[f] ?? f)
+    }
+
+    private static let fenceAliases: [String: String] = [
+        "py": "python", "js": "javascript", "jsx": "javascript", "ts": "typescript", "tsx": "tsx",
+        "rb": "ruby", "rs": "rust", "sh": "shell", "bash": "shell", "zsh": "shell", "shell": "shell",
+        "yml": "yaml", "c++": "cpp", "h": "c", "hpp": "cpp", "objective-c": "objc", "m": "objc",
+        "ps1": "powershell", "md": "markdown", "htm": "html", "dockerfile": "dockerfile",
+    ]
+
+    private static func load(language: String) -> TextMateHighlighter? {
         if let hit = cache[language] { return hit }
         guard let url = GrammarBundle.bundle?.url(forResource: language, withExtension: "json", subdirectory: "Grammars"),
               let data = try? Data(contentsOf: url),

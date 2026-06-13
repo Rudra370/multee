@@ -172,9 +172,15 @@ final class CenterViewController: NSViewController {
         case .claude, .terminal:
             return TerminalStore.shared.view(for: tab, cwd: session.url)
         case .file:
-            // A .file tab picks its viewer by extension: images render, everything else edits as text.
+            // A .file tab picks its viewer by extension: images render, markdown previews, the rest edit.
             if ImageViewController.handles(tab.path) {
                 let vc = ImageViewController(path: tab.path ?? "")
+                addChild(vc)
+                contentVCs[tab.id] = vc
+                return vc.view
+            }
+            if MarkdownViewController.handles(tab.path) {
+                let vc = MarkdownViewController(path: tab.path ?? "")
                 addChild(vc)
                 contentVCs[tab.id] = vc
                 return vc.view
