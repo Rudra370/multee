@@ -112,6 +112,7 @@ enum TMTheme {
         ("support", teal),
         ("variable.language", red),
         ("variable.parameter", base),
+        ("variable.other", base),    // member access (`.foo`): grammars tag every `.member` variable.other — keep it default-coloured, not red
         ("variable", red),
         ("markup.heading", red),
         ("markup.bold", orange),
@@ -291,6 +292,7 @@ final class TextMateHighlighter {
         let lineEnd = lineRange.location + lineRange.length
         var pos = lineRange.location
         var nextMatch = [ObjectIdentifier: NSTextCheckingResult?]()   // per-rule cache, this line only
+        var lastZeroWidthPush: (ObjectIdentifier, Int)?               // guard zero-width begin/end ping-pong
         var iterations = 0
 
         while pos <= lineEnd {
@@ -329,16 +331,31 @@ final class TextMateHighlighter {
                 paint(pos, match.range.location, top.contentColor, &out)
                 if let name = rule.name, let color = TMTheme.color(for: name) { out.append((match.range, color)) }
                 if rule.begin != nil, let endRegex = rule.endRe {
-                    // Open a nested region; its content inherits contentName ?? name ?? parent colour.
-                    applyCaptures(rule.beginCaptures ?? rule.captures, match: match, out: &out)
-                    let contentColor = rule.contentName.flatMap { TMTheme.color(for: $0) }
-                        ?? rule.name.flatMap { TMTheme.color(for: $0) } ?? top.contentColor
-                    stack.append(Frame(rule: rule, endRegex: endRegex,
-                                       patterns: expand(rule.patterns ?? [], visited: []), contentColor: contentColor))
+                    // A begin can match **zero-width** (a lookahead — e.g. a function-call "argument value"
+                    // region opens with `(?=\S)`). Advance by the match's *real* length so the region's
+                    // content starts exactly here. Forcing +1 (as a plain match does) would skip the next
+                    // real character — e.g. the opening `"` of a string — opening an unterminated string
+                    // that paints the rest of the file as one colour.
+                    let zeroWidth = match.range.length == 0
+                    let key = (ObjectIdentifier(rule), match.range.location)
+                    if zeroWidth, let last = lastZeroWidthPush, last == key {
+                        // The one hang this reintroduces: a zero-width begin re-matching at the same spot
+                        // after a zero-width end closed it (ping-pong). Force progress instead of looping.
+                        pos = match.range.location + 1
+                    } else {
+                        if zeroWidth { lastZeroWidthPush = key }
+                        // Open a nested region; its content inherits contentName ?? name ?? parent colour.
+                        applyCaptures(rule.beginCaptures ?? rule.captures, match: match, out: &out)
+                        let contentColor = rule.contentName.flatMap { TMTheme.color(for: $0) }
+                            ?? rule.name.flatMap { TMTheme.color(for: $0) } ?? top.contentColor
+                        stack.append(Frame(rule: rule, endRegex: endRegex,
+                                           patterns: expand(rule.patterns ?? [], visited: []), contentColor: contentColor))
+                        pos = match.range.location + match.range.length
+                    }
                 } else {
                     applyCaptures(rule.captures, match: match, out: &out)   // plain match rule (begin w/o end → match)
+                    pos = match.range.location + max(match.range.length, 1)  // ≥1 so a zero-width match can't spin
                 }
-                pos = match.range.location + max(match.range.length, 1)
             } else {
                 paint(pos, lineEnd, top.contentColor, &out)   // nothing more matches on this line
                 break
