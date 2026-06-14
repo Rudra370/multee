@@ -166,7 +166,7 @@ final class CenterViewController: NSViewController {
         }
         for (id, v) in contentViews { v.isHidden = (id != tab.id) }
 
-        ActiveEditor.current = (tab.kind == .file) ? (contentVCs[tab.id] as? EditorViewController) : nil
+        ActiveEditor.current = (contentVCs[tab.id] as? SourceEditing)?.sourceEditor
 
         if tab.kind == .claude || tab.kind == .terminal {
             DispatchQueue.main.async { TerminalStore.shared.focus(tab.id) }
@@ -179,20 +179,22 @@ final class CenterViewController: NSViewController {
             return TerminalStore.shared.view(for: tab, cwd: session.url)
         case .file:
             // A .file tab picks its viewer by extension: images render, markdown previews, the rest edit.
+            // Markdown and SVG embed the editor too (a Preview/Image ↔ Source toggle), so all three route
+            // dirty state the same way.
+            let onDirty: (Bool) -> Void = { [weak session] dirty in session?.setDirty(tab.id, dirty) }
             if ImageViewController.handles(tab.path) {
-                let vc = ImageViewController(path: tab.path ?? "")
+                let vc = ImageViewController(path: tab.path ?? "", settings: model.settings, onDirty: onDirty)
                 addChild(vc)
                 contentVCs[tab.id] = vc
                 return vc.view
             }
             if MarkdownViewController.handles(tab.path) {
-                let vc = MarkdownViewController(path: tab.path ?? "")
+                let vc = MarkdownViewController(path: tab.path ?? "", settings: model.settings, onDirty: onDirty)
                 addChild(vc)
                 contentVCs[tab.id] = vc
                 return vc.view
             }
-            let vc = EditorViewController(path: tab.path ?? "", settings: model.settings,
-                                          onDirty: { [weak session] dirty in session?.setDirty(tab.id, dirty) })
+            let vc = EditorViewController(path: tab.path ?? "", settings: model.settings, onDirty: onDirty)
             addChild(vc)
             contentVCs[tab.id] = vc
             return vc.view
@@ -205,11 +207,12 @@ final class CenterViewController: NSViewController {
         }
     }
 
-    /// A renamed-while-open file: an editor retargets in place (preserving unsaved edits); a read-only
-    /// viewer (image/markdown) or diff is rebuilt against the new path.
+    /// A renamed-while-open file: anything hosting an editable source editor (the plain-text editor, plus
+    /// markdown/SVG behind their toggle) retargets in place so unsaved edits survive; a raster image
+    /// viewer or diff is rebuilt against the new path (also re-routes the viewer if the extension changed).
     private func retargetContent(for tab: Tab, session: Session) {
-        if let editor = contentVCs[tab.id] as? EditorViewController {
-            editor.retarget(to: tab.path ?? "")
+        if let host = contentVCs[tab.id] as? SourceEditing, host.sourceEditor != nil {
+            host.retarget(to: tab.path ?? "")
             contentPaths[tab.id] = tab.path ?? ""
         } else {
             contentViews[tab.id]?.removeFromSuperview()

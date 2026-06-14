@@ -67,7 +67,10 @@ A `.file` tab picks its view by extension (`CenterViewController.makeContentView
 markdown → preview, else the text editor. **Images** (png/jpg/gif/bmp/tiff/webp/heic/`icns`/ico, plus
 SVG when `NSImage` can render it) show in a magnifiable scroll view — fit-on-open, pinch/scroll zoom,
 pan, double-click fit↔100%, centred — with a type·dimensions·size footer; SVG gets an Image/Source
-toggle. **Markdown** (.md/.markdown) renders to an `NSAttributedString` (a native line-based block
+toggle. **Markdown and SVG are editable**: the Source pane is the real `EditorViewController` (embedded
+as a child — editable, syntax-highlighted, Cmd+S save, dirty dot, line numbers); toggling back to
+Preview/Image re-renders live from the editor's current text. Raster images stay view-only.
+**Markdown** (.md/.markdown) renders to an `NSAttributedString` (a native line-based block
 parser + Foundation for inline + the TextMate engine for fenced code blocks + `NSTextTable` for tables +
 inline image attachments) with a Preview/Source toggle. No WebKit, no dependency; RAM is just the
 rendered content, freed on close.

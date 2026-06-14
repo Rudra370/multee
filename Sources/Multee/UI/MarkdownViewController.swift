@@ -1,20 +1,38 @@
 import AppKit
 
-/// Viewer for Markdown files (routed here by extension from a `.file` tab). Shows a rendered preview by
-/// default with a **Preview / Source** toggle to see the raw text. The preview text view uses an
-/// explicit TextKit 1 stack so `NSTextTable` (tables) and image attachments lay out correctly.
-final class MarkdownViewController: NSViewController {
-    private let path: String
+/// Viewer/editor for Markdown files (routed here by extension from a `.file` tab). Shows a rendered
+/// preview by default with a **Preview / Source** toggle; Source is the real editor (editable,
+/// syntax-highlighted, Cmd+S save, dirty dot, line numbers). Switching back to Preview re-renders live
+/// from the editor's current text, so edits show immediately — saved or not. The preview text view uses
+/// an explicit TextKit 1 stack so `NSTextTable` (tables) and image attachments lay out correctly.
+final class MarkdownViewController: NSViewController, SourceEditing {
+    private var path: String
+    private var baseURL: URL
+    private let editor: EditorViewController
     private var previewScroll: NSScrollView!
-    private var sourceScroll: NSScrollView!
+    private var previewTextView: NSTextView!
+    private var sourceScroll: NSView!
+    private var toggle: PointerSegmentedControl!
+
+    var sourceEditor: EditorViewController? { editor }
+
+    /// Renamed/moved while open: keep the editor's unsaved edits, redirect saves, and update `baseURL`
+    /// so the live preview resolves relative image paths against the new location.
+    func retarget(to newPath: String) {
+        path = newPath
+        baseURL = URL(fileURLWithPath: newPath).deletingLastPathComponent()
+        editor.retarget(to: newPath)
+    }
 
     static func handles(_ path: String?) -> Bool {
         guard let path else { return false }
         return ["md", "markdown"].contains((path as NSString).pathExtension.lowercased())
     }
 
-    init(path: String) {
+    init(path: String, settings: Settings, onDirty: @escaping (Bool) -> Void) {
         self.path = path
+        self.baseURL = URL(fileURLWithPath: path).deletingLastPathComponent()
+        self.editor = EditorViewController(path: path, settings: settings, onDirty: onDirty)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -27,42 +45,42 @@ final class MarkdownViewController: NSViewController {
         root.layer?.backgroundColor = NSColor(calibratedWhite: 0.118, alpha: 1).cgColor
 
         let source = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        let baseURL = URL(fileURLWithPath: path).deletingLastPathComponent()
 
         previewScroll = makePreview(MarkdownRenderer.render(source, baseURL: baseURL))
-        sourceScroll = makeSource(source)
+        addChild(editor)
+        sourceScroll = editor.view              // the editor IS the editable source pane
         sourceScroll.isHidden = true
 
-        let toggle = PointerSegmentedControl(labels: ["Preview", "Source"], trackingMode: .selectOne,
-                                             target: self, action: #selector(modeChanged))
+        toggle = PointerSegmentedControl(labels: ["Preview", "Source"], trackingMode: .selectOne,
+                                         target: self, action: #selector(modeChanged))
         toggle.selectedSegment = 0
         toggle.controlSize = .small
         toggle.segmentStyle = .rounded
-        toggle.translatesAutoresizingMaskIntoConstraints = false
 
-        let topBar = NSView()
-        topBar.translatesAutoresizingMaskIntoConstraints = false
-        topBar.addSubview(toggle)
+        // Toggle sits at the bottom-right (a leading spacer pushes it over), matching the SVG viewer's
+        // Image/Source bar for consistency.
+        let bottomBar = NSStackView(views: [NSView(), toggle])
+        bottomBar.orientation = .horizontal
+        bottomBar.alignment = .centerY
+        bottomBar.translatesAutoresizingMaskIntoConstraints = false
 
+        sourceScroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(previewScroll)
         root.addSubview(sourceScroll)
-        root.addSubview(topBar)
+        root.addSubview(bottomBar)
         NSLayoutConstraint.activate([
-            topBar.topAnchor.constraint(equalTo: root.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 34),
-            toggle.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -10),
-            toggle.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-
-            previewScroll.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            previewScroll.topAnchor.constraint(equalTo: root.topAnchor),
             previewScroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             previewScroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            previewScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            previewScroll.bottomAnchor.constraint(equalTo: bottomBar.topAnchor, constant: -6),
             sourceScroll.topAnchor.constraint(equalTo: previewScroll.topAnchor),
             sourceScroll.leadingAnchor.constraint(equalTo: previewScroll.leadingAnchor),
             sourceScroll.trailingAnchor.constraint(equalTo: previewScroll.trailingAnchor),
             sourceScroll.bottomAnchor.constraint(equalTo: previewScroll.bottomAnchor),
+
+            bottomBar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            bottomBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            bottomBar.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
         ])
         self.view = root
     }
@@ -90,21 +108,7 @@ final class MarkdownViewController: NSViewController {
         tv.autoresizingMask = NSView.AutoresizingMask.width
         tv.linkTextAttributes = [NSAttributedString.Key.foregroundColor: NSColor(srgbRed: 0.45, green: 0.62, blue: 0.96, alpha: 1),
                                  NSAttributedString.Key.cursor: NSCursor.pointingHand]
-        return scrollWrapping(tv)
-    }
-
-    private func makeSource(_ source: String) -> NSScrollView {
-        let tv = NSTextView()
-        tv.isEditable = false
-        tv.drawsBackground = false
-        tv.string = source
-        tv.font = .monospacedSystemFont(ofSize: 12.5, weight: .regular)
-        tv.textColor = NSColor(white: 0.83, alpha: 1)
-        tv.textContainerInset = NSSize(width: 12, height: 12)
-        tv.isVerticallyResizable = true
-        tv.isHorizontallyResizable = false
-        tv.textContainer?.widthTracksTextView = true
-        tv.autoresizingMask = NSView.AutoresizingMask.width
+        previewTextView = tv
         return scrollWrapping(tv)
     }
 
@@ -119,7 +123,13 @@ final class MarkdownViewController: NSViewController {
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
         let showSource = sender.selectedSegment == 1
+        if !showSource {   // returning to Preview: re-render live from the editor's current text
+            previewTextView.textStorage?.setAttributedString(MarkdownRenderer.render(editor.text, baseURL: baseURL))
+        }
         sourceScroll.isHidden = !showSource
         previewScroll.isHidden = showSource
     }
+
+    /// Dev-harness hook: flip Preview/Source (so the editable source + live preview re-render are testable).
+    func debugSetSourceVisible(_ visible: Bool) { toggle.selectedSegment = visible ? 1 : 0; modeChanged(toggle) }
 }

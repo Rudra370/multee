@@ -56,6 +56,10 @@ enum DebugAction {
         case "editorType": ActiveEditor.current?.debugAppend(arg)
         case "editorSave":  ActiveEditor.current?.save()
         case "editorScroll": ActiveEditor.current?.debugScroll(lines: Int(arg) ?? 30)
+        case "sourceMode":   // flip a markdown/SVG viewer's Preview/Image ↔ Source toggle (arg "1"=source)
+            let show = arg == "1" || arg == "source"
+            (ActiveEditor.current?.parent as? MarkdownViewController)?.debugSetSourceVisible(show)
+            (ActiveEditor.current?.parent as? ImageViewController)?.debugSetSourceVisible(show)
         case "setFont":     model.settings.fontSize = Double(arg) ?? 13
         case "treeNewFile":   FileTreeViewController.current?.debugCreate(name: arg, folder: false)
         case "treeNewFolder": FileTreeViewController.current?.debugCreate(name: arg, folder: true)

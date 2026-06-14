@@ -4,6 +4,16 @@ import Combine
 /// DEV harness hook: the editor for the currently-active file tab (set by CenterViewController).
 enum ActiveEditor { static weak var current: EditorViewController? }
 
+/// A content view controller that hosts an editable source editor — directly (the plain-file editor) or
+/// embedded behind a Preview/Image toggle (markdown, SVG). Lets `CenterViewController` find the live
+/// editor uniformly (active-editor tracking, dev harness) and retarget it in place on rename (so unsaved
+/// edits survive) regardless of the viewer wrapping it.
+protocol SourceEditing: AnyObject {
+    var sourceEditor: EditorViewController? { get }
+    /// File renamed/moved while open: redirect saves to the new path, keeping unsaved edits.
+    func retarget(to path: String)
+}
+
 /// NSTextView subclass that intercepts Cmd+S to save.
 final class CodeTextView: NSTextView {
     var onSave: (() -> Void)?
@@ -21,7 +31,11 @@ final class CodeTextView: NSTextView {
 /// TextMate highlighter (no JavaScript engine). Cmd+S saves; edits flag the tab dirty and trigger a
 /// debounced re-highlight that only repaints colours (text, cursor and undo are untouched). Font size
 /// tracks Settings live; resizing swaps each run's font in place (no re-tokenize).
-final class EditorViewController: NSViewController, NSTextViewDelegate {
+final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEditing {
+    var sourceEditor: EditorViewController? { self }
+    /// Current editor text (live, including unsaved edits) — used by preview re-render on toggle.
+    var text: String { textView?.string ?? "" }
+
     private(set) var path: String   // absolute file path (mutable: a rename retargets it in place)
     private let settings: Settings
     private let onDirty: (Bool) -> Void

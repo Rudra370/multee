@@ -4,13 +4,26 @@ import AppKit
 /// magnifiable scroll view: fit-to-window on open, pinch / scroll-wheel to zoom and pan, double-click to
 /// toggle fit ↔ 100%. A footer shows type / dimensions / size. For SVG (whose render is best-effort —
 /// Apple's renderer is a limited subset), a footer **Image / Source** toggle flips to the raw XML.
-final class ImageViewController: NSViewController {
-    private let path: String
+final class ImageViewController: NSViewController, SourceEditing {
+    private var path: String
+    private let settings: Settings
+    private let onDirty: (Bool) -> Void
     private let scrollView = NSScrollView()
     private let imageView = NSImageView()
-    private var sourceScroll: NSScrollView?
+    private var sourceScroll: NSView?
+    private var editor: EditorViewController?     // SVG only: editable source pane
+    private var toggle: PointerSegmentedControl?
     private var nativeSize: NSSize = .zero
     private var didInitialFit = false
+
+    var sourceEditor: EditorViewController? { editor }
+
+    /// Renamed/moved while open: keep the SVG editor's unsaved edits and redirect saves to the new path.
+    /// (Only reached for SVG — raster images have no editor and are rebuilt by `CenterViewController`.)
+    func retarget(to newPath: String) {
+        path = newPath
+        editor?.retarget(to: newPath)
+    }
 
     private static let rasterExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp", "heic", "heif", "icns", "ico",
@@ -29,8 +42,10 @@ final class ImageViewController: NSViewController {
         return false
     }
 
-    init(path: String) {
+    init(path: String, settings: Settings, onDirty: @escaping (Bool) -> Void) {
         self.path = path
+        self.settings = settings
+        self.onDirty = onDirty
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -86,31 +101,23 @@ final class ImageViewController: NSViewController {
         imageView.addGestureRecognizer(doubleClick)
     }
 
-    /// SVG only: a read-only source text view (hidden initially) + a footer Image/Source toggle.
+    /// SVG only: an editable source pane (the real editor, hidden initially) + a footer Image/Source
+    /// toggle. Editing the XML and switching back to Image re-renders the preview live.
     private func addSourceViewAndToggle(into root: NSView, bottomBar: NSStackView) {
-        let textView = NSTextView()
-        textView.isEditable = false
-        textView.isRichText = false
-        textView.drawsBackground = false
-        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.textColor = NSColor(white: 0.83, alpha: 1)
-        textView.string = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        textView.textContainerInset = NSSize(width: 8, height: 8)
-
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.documentView = textView
-        scroll.isHidden = true
-        root.addSubview(scroll)
+        let editor = EditorViewController(path: path, settings: settings, onDirty: onDirty)
+        self.editor = editor
+        addChild(editor)
+        let source = editor.view
+        source.translatesAutoresizingMaskIntoConstraints = false
+        source.isHidden = true
+        root.addSubview(source)
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            source.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            source.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            source.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            source.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
         ])
-        sourceScroll = scroll
+        sourceScroll = source
 
         let toggle = PointerSegmentedControl(labels: ["Image", "Source"], trackingMode: .selectOne, target: self,
                                              action: #selector(modeChanged))
@@ -118,10 +125,24 @@ final class ImageViewController: NSViewController {
         toggle.controlSize = .small
         toggle.segmentStyle = .rounded
         bottomBar.addArrangedSubview(toggle)
+        self.toggle = toggle
+    }
+
+    /// Dev-harness hook: flip Image/Source (so the editable source + image re-render are testable).
+    func debugSetSourceVisible(_ visible: Bool) {
+        guard let toggle else { return }
+        toggle.selectedSegment = visible ? 1 : 0
+        modeChanged(toggle)
     }
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
         let showSource = sender.selectedSegment == 1
+        if !showSource, let editor {   // returning to Image: re-render from the edited SVG source
+            if let img = NSImage(data: Data(editor.text.utf8)), img.isValid {
+                imageView.image = img
+                nativeSize = Self.pixelSize(of: img)
+            }
+        }
         sourceScroll?.isHidden = !showSource
         scrollView.isHidden = showSource
     }
