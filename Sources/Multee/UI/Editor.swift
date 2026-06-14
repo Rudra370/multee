@@ -28,6 +28,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
 
     private var textView: CodeTextView!
     private var textStorage: NSTextStorage!
+    private var lineRuler: LineNumberRuler!
     private var highlighter: TextMateHighlighter?
     private var saved = ""
     private var lastFontSize: Double
@@ -98,6 +99,16 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
         scroll.drawsBackground = true
         scroll.backgroundColor = TMTheme.background
         scroll.documentView = tv
+
+        // Line-number gutter (VS Code-style), drawn as the scroll view's vertical ruler.
+        let ruler = LineNumberRuler(scrollView: scroll, textView: tv)
+        ruler.font = mono(fontSize)
+        scroll.verticalRulerView = ruler
+        scroll.hasVerticalRuler = true
+        scroll.rulersVisible = true
+        ruler.reload()   // build the line index for the just-loaded content
+        self.lineRuler = ruler
+
         self.view = scroll
     }
 
@@ -188,6 +199,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
         let f = mono(size)
         textView.font = f
         textView.typingAttributes[.font] = f
+        lineRuler.font = f   // gutter tracks the editor font size
         // Resize runs in place — DON'T re-tokenize. Only swap each run's font to the new size,
         // preserving bold/italic via the font manager.
         textStorage.beginEditing()
@@ -205,11 +217,20 @@ final class EditorViewController: NSViewController, NSTextViewDelegate {
 
     /// Current editor text (for asserting load/edit/save without pixels).
     var debugText: String { textView?.string ?? "" }
+    /// Scroll the editor down by `lines` (dev harness — to verify the gutter follows the scroll).
+    func debugScroll(lines: Int) {
+        guard let scroll = view as? NSScrollView else { return }
+        let clip = scroll.contentView
+        let y = clip.bounds.origin.y + CGFloat(lines) * (lastFontSize + 4)
+        clip.scroll(to: NSPoint(x: 0, y: max(0, y)))
+        scroll.reflectScrolledClipView(clip)
+    }
     var isDirty: Bool { (textView?.string ?? "") != saved }
     /// Append text (programmatic `.string` set doesn't fire the delegate, so flag dirty + re-highlight).
     func debugAppend(_ s: String) {
         textView.string += s
         onDirty(textView.string != saved)
+        lineRuler.reload()   // programmatic `.string` set doesn't post NSText.didChangeNotification
         requestHighlight(debounced: true)
     }
 }

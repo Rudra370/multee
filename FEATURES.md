@@ -53,7 +53,11 @@ precompiled on load, making `spans(for:)` a pure read safe to run on any thread;
 synchronously on open (no flash), large files and edits colour asynchronously. Edits coalesce via a
 **150 ms debounce** and recolour only (text/selection/undo untouched), with a sequence guard dropping
 any pass a newer edit superseded. Cmd+S saves; edits flag the tab dirty (chip dot). Shared font size
-live-applies with in-place run resize. Coverage is "good, not tree-sitter-perfect": regex-based, and
+live-applies with in-place run resize. A **line-number gutter** (`UI/LineNumberRuler`, the scroll view's
+vertical `NSRulerView`) draws VS Code-style numbers: only the lines in the visible rect are drawn each
+pass, char-index→line is a binary search over a cached `lineStarts` array rebuilt only on text change,
+wrapped logical lines number once (first visual row), the cursor's line is brighter, and width/font track
+the editor font size. Coverage is "good, not tree-sitter-perfect": regex-based, and
 external-grammar includes (e.g. CSS embedded in HTML) and Oniguruma-only regex are skipped. The
 tokenizer is ~linear but call-bound (~0.3 ms/line); huge files colour off-main without freezing rather
 than instantly — a combined-regex scanner would be the next step if instant huge-file colour is needed.

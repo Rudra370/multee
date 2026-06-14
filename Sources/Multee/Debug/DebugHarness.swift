@@ -55,6 +55,7 @@ enum DebugAction {
             }
         case "editorType": ActiveEditor.current?.debugAppend(arg)
         case "editorSave":  ActiveEditor.current?.save()
+        case "editorScroll": ActiveEditor.current?.debugScroll(lines: Int(arg) ?? 30)
         case "setFont":     model.settings.fontSize = Double(arg) ?? 13
         case "treeNewFile":   FileTreeViewController.current?.debugCreate(name: arg, folder: false)
         case "treeNewFolder": FileTreeViewController.current?.debugCreate(name: arg, folder: true)
