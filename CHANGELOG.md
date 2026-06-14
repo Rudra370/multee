@@ -5,6 +5,19 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.8] - 2026-06-14
+
+### Added
+- **Code formatting** — press **⌘⇧F** (or right-click → **Format Document**) to format the current file
+  with the matching formatter installed on your machine: Prettier (JS/TS/JSON/CSS/HTML/Markdown/YAML…),
+  gofmt, rustfmt, Ruff, swift-format, clang-format. Markdown and SVG format their Source. Your cursor
+  stays put and it's a single undo. Multee uses a project-local tool (`node_modules/.bin`) when present.
+- **One-click install** — if a file's formatter isn't installed, Multee offers to install it for you in a
+  Terminal tab (Homebrew where available, else the tool's own installer) so you can watch it run.
+- **Formatters settings** — Settings now has a **Formatters** tab listing each formatter with its install
+  status, an Install button, and an on/off toggle. A **Format on save** option (off by default) formats
+  every time you save.
+
 ## [0.1.7] - 2026-06-14
 
 ### Added
