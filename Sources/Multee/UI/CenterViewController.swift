@@ -82,7 +82,10 @@ final class CenterViewController: NSViewController {
         self.view = root
 
         tabBar.onSelect      = { [weak self] id in self?.model.activeSession?.activate(id) }
-        tabBar.onClose       = { [weak self] id in self?.model.activeSession?.closeTab(id) }
+        tabBar.onClose       = { [weak self] id in
+            guard let session = self?.model.activeSession, let tab = session.tabs.first(where: { $0.id == id }) else { return }
+            if UnsavedGuard.confirmClose(tab) { session.closeTab(id) }
+        }
         tabBar.onNewClaude   = { [weak self] args in
             guard let self else { return }
             // Empty args (the ✦ button and the "Default" menu item) → use the Settings default args,
@@ -110,6 +113,9 @@ final class CenterViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Let the unsaved-changes guard save any (already-mounted) editor tab by id, without it needing
+        // to know about view controllers. A dirty tab has always been viewed, so its editor exists here.
+        UnsavedGuard.saveTab = { [weak self] id in (self?.contentVCs[id] as? SourceEditing)?.sourceEditor?.save() }
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.refresh() }

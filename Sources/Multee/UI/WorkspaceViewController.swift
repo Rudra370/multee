@@ -401,7 +401,12 @@ final class SidebarViewController: NSViewController {
                 isActive: session.id == model.activeSessionID,
                 status: session.status,
                 onSelect: { [weak self] in self?.model.activeSessionID = session.id },
-                onClose: { [weak self] in self?.model.closeSession(session.id) }
+                onClose: { [weak self] in
+                    guard let self else { return }
+                    if UnsavedGuard.confirmCloseMany(session.tabs.filter { $0.dirty }, verb: "closing this folder") {
+                        self.model.closeSession(session.id)
+                    }
+                }
             )
             row.translatesAutoresizingMaskIntoConstraints = false
             sessionsStack.addArrangedSubview(row)

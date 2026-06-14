@@ -40,6 +40,13 @@ enum DebugAction {
         case "newClaude":      model.activeSession?.addTab(Tab(kind: .claude, title: "Claude", args: model.settings.defaultArgs))
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         case "closeActiveTab": if let s = model.activeSession { s.closeTab(s.activeTabID) }
+        case "unsavedResp":   // canned answer for the close/quit guard (modal can't be clicked in harness)
+            switch arg { case "save": UnsavedGuard.debugResponse = .save
+                         case "dontSave", "discard": UnsavedGuard.debugResponse = .dontSave
+                         case "cancel": UnsavedGuard.debugResponse = .cancel
+                         default: UnsavedGuard.debugResponse = nil }
+        case "closeTabGuarded":   // exercises the real guarded close path (⌘W / close button)
+            if let s = model.activeSession, let t = s.activeTab, UnsavedGuard.confirmClose(t) { s.closeTab(t.id) }
         case "closeSession":   if let s = model.activeSession { model.closeSession(s.id) }
         case "openSettings":   model.showSettings = true
         case "sendText":  if let s = model.activeSession { TerminalStore.shared.send(s.activeTabID, arg) }

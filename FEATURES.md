@@ -12,8 +12,11 @@ and a release-only file-open crash, all rooted in the SwiftUI↔AppKit seam; App
 ## Sessions & tabs — `Model/`, `UI/WorkspaceViewController`, `UI/CenterViewController`, `UI/TabBarView`
 Multi-repo sessions (dedup by path); tabs for Claude / shell / file / diff. Tabs stay mounted across
 switches; restored tabs **spawn lazily** (only when first viewed). Claude arg presets via the +menu.
-Cmd+W closes the active tab. Persistence: JSON snapshot in UserDefaults, debounce-saved; restore
-drops repos whose folder is gone.
+Cmd+W closes the active tab. Closing a tab/folder or quitting with **unsaved editor edits** prompts
+first (`UI/UnsavedGuard`: Save / Don't Save / Cancel for one, Save All / Discard / Cancel for many) —
+the red close button is funnelled through quit so it's covered too; saving routes through a closure
+`CenterViewController` registers (the model owns the dirty flag, the view owns `save()`). Persistence:
+JSON snapshot in UserDefaults, debounce-saved; restore drops repos whose folder is gone.
 
 ## Terminal — `Terminal/`
 `TerminalStore` caches one SwiftTerm PTY view per tab id (process survives tab/session switches).

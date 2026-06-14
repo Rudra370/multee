@@ -2,7 +2,7 @@ import AppKit
 
 /// The single main window. Hosts the `WorkspaceViewController` (the split layout). Window frame
 /// persists via an autosave name.
-final class MainWindowController: NSWindowController {
+final class MainWindowController: NSWindowController, NSWindowDelegate {
     init(model: AppModel) {
         let workspace = WorkspaceViewController(model: model)
 
@@ -37,8 +37,17 @@ final class MainWindowController: NSWindowController {
         window.setFrameAutosaveName("MulteeMainWindow")
         if window.frame.origin == .zero { window.center() }
         super.init(window: window)
+        window.delegate = self
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    /// Closing the only window quits the app (`applicationShouldTerminateAfterLastWindowClosed`), so route
+    /// the red close button through `terminate` — that hits the unsaved-changes guard in AppDelegate.
+    /// Returning false here means the window only closes once the guard (and termination) approve it.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        NSApp.terminate(nil)
+        return false
+    }
 }

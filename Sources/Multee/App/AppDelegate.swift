@@ -101,6 +101,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// Quit (⌘Q, menu, or the red close button funnelled through here by MainWindowController): confirm
+    /// before discarding unsaved edits across every session.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let dirty = model.sessions.flatMap { $0.tabs }.filter { $0.dirty }
+        return UnsavedGuard.confirmCloseMany(dirty, verb: "quitting") ? .terminateNow : .terminateCancel
+    }
+
     // MARK: - Key handling (Cmd+W close tab, Cmd+/- font)
 
     private func installKeyMonitor() {
@@ -179,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func checkForUpdates() { Updates.shared.check(force: true) }
 
     @objc private func closeActiveTab() {
-        if let s = model.activeSession, !s.tabs.isEmpty { s.closeTab(s.activeTabID) }
+        guard let s = model.activeSession, let tab = s.activeTab else { return }
+        if UnsavedGuard.confirmClose(tab) { s.closeTab(tab.id) }
     }
 }
