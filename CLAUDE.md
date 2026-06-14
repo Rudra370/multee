@@ -64,6 +64,20 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `pendingEmptyDirs` (persisted per-repo in UserDefaults, filtered on load to ones still on disk &
   empty), injects them as `isDir` entries, and post-processes the built tree (`markEmptyFolder`) to
   give them `children = []` so they render as real expandable folders, not dead `name/` leaves.
+- **NSOutlineView row animations end inline editing (field-editor teardown).** When an `expandItem`
+  or an animated row-insert (`reloadItem(reloadChildren:)`, `insertItems(withAnimation: .effect…)`)
+  finishes, AppKit removes the animation's temporary `NSTableRowsClipView`; that `removeFromSuperview`
+  calls `-[NSWindow endEditingFor:]`, which resigns the inline field's first responder ~0.2s later →
+  `controlTextDidEndEditing` fires and the draft row commits empty/vanishes. Bit creating a file/folder
+  inside an **empty/collapsed** folder (which must expand); already-open folders never animated, so they
+  worked — the asymmetry that pinned it. Fix in `FileTree.beginCreate`: mutate the model + set
+  `editingNode` synchronously, insert the row with `withAnimation: []`, and when an expand is unavoidable
+  **focus the field only after the animation settles** (`asyncAfter ~0.3s` — there is *no* public
+  completion for expand; `NSAnimationContext`/`animator()` do **not** suppress the expand animation).
+  Diagnosing this needed a **call-stack trace at `controlTextDidEndEditing`** (the stack named
+  `animationDidStop` → `endEditingFor:`) — theory-guessing failed for many rounds. Note: the dev harness
+  drives the *model*, so it can't surface view-layer/animation/first-responder bugs; this class needs
+  real HID or in-code stack instrumentation.
 - **SwiftPM resource bundles don't resolve in a distributed `.app`.** The generated `Bundle.module`
   accessor only checks the `.app` *root* and the build-machine path — neither exists for a user, and
   a code-signed `.app` must keep resources in `Contents/Resources/` (nothing at the root, or the

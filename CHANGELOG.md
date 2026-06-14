@@ -5,7 +5,7 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
-## [0.1.5] - 2026-06-13
+## [0.1.5] - 2026-06-14
 
 ### Added
 - **File-tree toolbar** — new file, new folder, and collapse-all, right above the tree (like VS Code's
@@ -23,6 +23,10 @@ commits/PRs since the last tag. Newest first.
 - **File tree** — deleted files no longer linger in the tree (they show only in Changes); the
   pointing-hand cursor no longer goes stale after using the toolbar; rows fill the full width when
   folders are expanded.
+- **Creating inside a folder** — the inline name field no longer vanishes when you add a file or folder
+  inside an empty or collapsed folder.
+- **Empty folders** — always show in the tree now (even ones made earlier, externally, or in another
+  session), so you can open and add files to them.
 
 ## [0.1.4] - 2026-06-13
 

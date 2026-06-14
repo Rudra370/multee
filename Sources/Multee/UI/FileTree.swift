@@ -187,22 +187,28 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         // Don't rebuild under an active inline edit — it would yank the draft row out. Stash and apply
         // once editing ends.
         if isEditing { pendingFiles = files; return }
-        // git omits empty dirs, so a just-created empty folder isn't in `files`. Keep injecting it until
-        // it actually contains a file (then git lists it) or it's deleted.
+        // git omits empty dirs entirely, so the file list never contains them. Clean stale tracked ones
+        // (gained a file / deleted), then below we *also* scan the disk so empty folders made earlier,
+        // externally, or in another build still show.
         let before = pendingEmptyDirs
         pendingEmptyDirs = pendingEmptyDirs.filter { dir in
             FileManager.default.fileExists(atPath: (store.repo as NSString).appendingPathComponent(dir))
                 && !files.contains { $0.path == dir || $0.path.hasPrefix(dir + "/") }
         }
-        if pendingEmptyDirs != before { persistEmptyDirs() }   // a folder gained files or vanished
-        let emptyDirs = pendingEmptyDirs
-        let augmented = emptyDirs.isEmpty ? files
-            : files + emptyDirs.map { FileEntry(path: $0, status: .none, isDir: true) }   // empty folder: neutral, not green
+        if pendingEmptyDirs != before { persistEmptyDirs() }
+        let tracked = pendingEmptyDirs
+        let repo = store.repo
         DispatchQueue.global().async { [weak self] in
+            let emptyDirs = tracked.union(Self.diskEmptyDirs(repo))   // tracked (instant) + everything on disk
+            let augmented = emptyDirs.isEmpty ? files
+                : files + emptyDirs.map { FileEntry(path: $0, status: .none, isDir: true) }   // empty folder: neutral, not green
             let tree = buildTree(augmented)
             for dir in emptyDirs { Self.markEmptyFolder(dir, in: tree) }   // leaf → expandable empty folder
             DispatchQueue.main.async {
                 guard let self else { return }
+                // An inline edit may have started while we built off-main (buildTree can take ~1s on a big
+                // repo). Re-check: reloading now would yank the draft field out. Stash and apply on edit-end.
+                if self.isEditing { self.pendingFiles = files; return }
                 self.roots = tree
                 self.restoring = true
                 self.outline.reloadData()
@@ -243,6 +249,27 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         guard row >= 0 else { return }
         outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         if scroll { outline.scrollRowToVisible(row) }
+    }
+
+    /// Directories on disk that contain no files at all (git omits these). Walked off-main as part of
+    /// the poll; prunes `.git` and a few notoriously huge dirs so it stays cheap.
+    private static func diskEmptyDirs(_ repo: String) -> Set<String> {
+        let fm = FileManager.default
+        var result = Set<String>()
+        let skip: Set<String> = [".git", "node_modules", ".build", ".next", "Pods", "DerivedData"]
+        func scan(_ path: String, _ rel: String) {
+            guard let entries = try? fm.contentsOfDirectory(atPath: path) else { return }
+            if entries.isEmpty { if !rel.isEmpty { result.insert(rel) }; return }
+            for name in entries where !skip.contains(name) {
+                let full = (path as NSString).appendingPathComponent(name)
+                var isDir: ObjCBool = false
+                if fm.fileExists(atPath: full, isDirectory: &isDir), isDir.boolValue {
+                    scan(full, rel.isEmpty ? name : rel + "/" + name)
+                }
+            }
+        }
+        scan(repo, "")
+        return result
     }
 
     /// A synthetic empty dir builds as an `isDir` *leaf*; give it `children = []` so it shows as a real
@@ -319,29 +346,44 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
     }
 
     /// Insert an empty draft row in the given folder (nil = root) and start inline editing it.
+    ///
+    /// NSOutlineView row animations are the hazard here: when an expand or an animated row-insert
+    /// finishes, AppKit removes the animation's temporary clip view, which calls `endEditingFor:` on the
+    /// window and resigns the inline field's first responder — silently ending the edit so the draft
+    /// vanishes. This bit creating inside an empty/collapsed folder (which must expand); already-open
+    /// folders were fine. So: mutate the model + insert the row with NO animation, and when we have to
+    /// expand (animated, no public completion), focus the field only *after* the animation settles.
     private func beginCreate(_ kind: EditKind, parent: TreeNode?) {
         guard editingNode == nil else { return }   // one edit at a time
-        if let parent, !outline.isItemExpanded(parent) {
-            restoring = true; outline.expandItem(parent); restoring = false
-            expandedPaths.insert(parent.id)
-        }
         draftParentId = parent?.id ?? ""
         let draft = TreeNode(id: Self.draftId, name: "", status: .new, isDir: false, children: nil)
         if let parent { parent.children?.insert(draft, at: 0) } else { roots.insert(draft, at: 0) }
         editKind = kind
-        editingNode = draft
+        editingNode = draft        // isEditing == true now → a concurrent git poll stashes instead of rebuilding under us
         editCancelled = false
-        if let parent { outline.reloadItem(parent, reloadChildren: true) } else { outline.reloadData() }
-        beginFieldEditing(for: draft)
+
+        if let parent, !outline.isItemExpanded(parent) {
+            restoring = true; outline.expandItem(parent); restoring = false   // reveals the draft (animates ~0.2s)
+            expandedPaths.insert(parent.id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self, self.editingNode === draft else { return }   // not cancelled meanwhile
+                self.beginFieldEditing(for: draft)
+            }
+        } else {
+            // Already visible: show the row without animation, focus immediately.
+            outline.insertItems(at: IndexSet(integer: 0), inParent: parent, withAnimation: [])
+            beginFieldEditing(for: draft)
+        }
     }
 
-    /// Where a new item goes: the selected folder, the selected file's folder, else the repo root.
+    /// Where the *toolbar* New File/Folder goes: only an explicitly-selected **folder** targets a
+    /// subfolder; a selected file → repo root. (Auto-reveal selects the active *file*, so the old
+    /// "file → its parent folder" rule silently dropped new files into that folder — confusing.) Use
+    /// right-click on a folder to create inside it.
     private func targetFolder() -> TreeNode? {
         let row = outline.selectedRow
-        guard row >= 0, let node = outline.item(atRow: row) as? TreeNode else { return nil }
-        if node.isFolder { return node }
-        let parentId = (node.id as NSString).deletingLastPathComponent
-        return parentId.isEmpty ? nil : findNode(parentId, in: roots)
+        guard row >= 0, let node = outline.item(atRow: row) as? TreeNode, node.isFolder else { return nil }
+        return node
     }
 
     private func findNode(_ id: String, in nodes: [TreeNode]) -> TreeNode? {
@@ -427,21 +469,21 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         }
     }
 
-    /// Focus the row's text field so the user can type the name immediately.
+    /// Start inline editing via NSOutlineView's own `editColumn` (the outline owns the edit, the cleanest
+    /// way to focus a view-based cell's field). Callers must ensure the row is settled first — see
+    /// `beginCreate` for why expanding before this would tear the field down.
     private func beginFieldEditing(for node: TreeNode) {
         let row = outline.row(forItem: node)
-        if row >= 0,
-           let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView,
-           let field = cell.textField {
-            outline.scrollRowToVisible(row)
-            outline.window?.makeFirstResponder(field)
+        guard row >= 0 else {
+            // Couldn't realize the row — reset so we don't get stuck in edit state.
+            let wasDraft = editingNode?.id == Self.draftId
+            editingNode = nil; editKind = nil; editCancelled = false
+            if wasDraft { removeNode(node) }
+            reloadAfterEdit()
             return
         }
-        // Couldn't start the inline edit (row not realizable) — reset so we don't get stuck in edit state.
-        let wasDraft = editingNode?.id == Self.draftId
-        editingNode = nil; editKind = nil; editCancelled = false
-        if wasDraft { removeNode(node) }
-        reloadAfterEdit()
+        outline.scrollRowToVisible(row)
+        outline.editColumn(0, row: row, with: nil, select: true)
     }
 
     // Commit on Return / focus-loss; cancel on Escape.
@@ -481,13 +523,21 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         let rel = draftParentId.isEmpty ? name : draftParentId + "/" + name
         let abs = (store.repo as NSString).appendingPathComponent(rel)
         let fm = FileManager.default
-        guard !fm.fileExists(atPath: abs) else { warn("“\(name)” already exists."); return }
+        var isDir: ObjCBool = false
+        let exists = fm.fileExists(atPath: abs, isDirectory: &isDir)
 
         if kind == .newFolder {
+            if exists {
+                // Already on disk. If it's an (often invisible, git-omitted empty) folder, adopt + reveal
+                // it instead of a dead-end "already exists"; if it's a file, that's a real conflict.
+                guard isDir.boolValue else { warn("A file named “\(name)” already exists."); return }
+                pendingEmptyDirs.insert(rel); persistEmptyDirs()
+                store.refreshNow(); reveal(rel); return
+            }
             try? fm.createDirectory(atPath: abs, withIntermediateDirectories: true)
-            pendingEmptyDirs.insert(rel)
-            persistEmptyDirs()
+            pendingEmptyDirs.insert(rel); persistEmptyDirs()
         } else {
+            guard !exists else { warn("“\(name)” already exists."); return }
             // "folder/file.txt" → create the intervening folders, then the file.
             try? fm.createDirectory(atPath: (abs as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             fm.createFile(atPath: abs, contents: nil)
@@ -504,6 +554,7 @@ final class FileTreeViewController: NSViewController, NSOutlineViewDataSource, N
         let fm = FileManager.default
         let src = (store.repo as NSString).appendingPathComponent(renameOriginalId)
         let dst = (store.repo as NSString).appendingPathComponent(destRel)
+        guard fm.fileExists(atPath: src) else { store.refreshNow(); return }   // tree node went stale; nothing to move
         guard !fm.fileExists(atPath: dst) else { warn("“\(name)” already exists."); return }
         do {
             try fm.createDirectory(atPath: (dst as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
