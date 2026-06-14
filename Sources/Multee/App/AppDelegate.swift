@@ -21,6 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Env.bootstrap()                 // compute login PATH once, before anything spawns
         HookServer.shared.start()       // status listener for Claude hooks
+        Notifier.shared.start()         // request notification permission; deliver background status pings
+        Notifier.shared.onActivate = { [weak self] sessionID, tabID in
+            // The session/tab may have been closed since the banner was posted — only switch if it's still open.
+            guard let self, let session = self.model.sessions.first(where: { $0.id == sessionID }) else { return }
+            self.model.activeSessionID = sessionID
+            session.activate(tabID)
+        }
         TerminalStore.shared.fontSize = model.settings.fontSize
         NSApp.appearance = NSAppearance(named: .darkAqua)
         buildMenu()
@@ -79,9 +86,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for session in self.model.sessions where session.tabs.contains(where: { $0.id == tabID }) {
                 let old = session.tabStatus[tabID] ?? .idle
                 session.tabStatus[tabID] = state
-                if self.model.settings.soundEnabled, old != state,
-                   state == .needs || (state == .idle && old == .working) {
-                    NSSound(named: state == .needs ? "Funk" : "Glass")?.play()
+                // Surface only meaningful transitions: a session wanting input, or finishing its work.
+                guard old != state, state == .needs || (state == .idle && old == .working) else { continue }
+                let settings = self.model.settings
+                let sound = { if settings.soundEnabled { NSSound(named: state == .needs ? "Funk" : "Glass")?.play() } }
+                // You're "looking at it" only if Multee is frontmost AND this is the active tab of the
+                // active session — otherwise (backgrounded, or another session/tab) post a banner.
+                let viewingThisTab = NSApp.isActive
+                    && self.model.activeSessionID == session.id
+                    && session.activeTabID == tabID
+                if viewingThisTab {
+                    sound()
+                } else if settings.notificationsEnabled {
+                    let title = session.tabs.first(where: { $0.id == tabID })?.title ?? "Claude"
+                    Notifier.shared.post(sessionID: session.id, sessionName: session.name, tabID: tabID,
+                                         tabTitle: title, state: state, fallback: sound)
+                } else {
+                    sound()
                 }
             }
         }

@@ -1,14 +1,16 @@
 import AppKit
 import Combine
+import UserNotifications
 
 /// Settings window: native checkboxes / stepper / text field bound to `Settings` (UserDefaults),
 /// plus toggleable preset chips for the default Claude args. ESC closes it.
-final class SettingsWindowController: NSWindowController {
+final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let settings: Settings
     private var fontLabel: NSTextField!
     private var stepper: NSStepper!
     private var argsField: NSTextField!
     private var chipButtons: [(flag: String, button: NSButton)] = []
+    private var notifyStatus: NSStackView!     // "macOS notifications are off" warning (hidden when on)
     private var escMonitor: Any?
 
     private let suggestions = ["--continue", "--resume", "--dangerously-skip-permissions", "--verbose"]
@@ -21,6 +23,7 @@ final class SettingsWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         super.init(window: window)
+        window.delegate = self
         window.contentView = buildContent()
         window.center()
 
@@ -41,6 +44,8 @@ final class SettingsWindowController: NSWindowController {
         let autoLaunch = checkbox("Auto-launch Claude when opening a project", \.autoLaunchClaude)
         let expand = checkbox("Show contents of gitignored folders", \.expandIgnored)
         let sound = checkbox("Play a sound on attention / completion", \.soundEnabled)
+        let notify = checkbox("Notify when a background session needs you", \.notificationsEnabled)
+        notifyStatus = makeNotifyStatusRow()
         let restore = checkbox("Restore sessions & tabs on launch", \.restoreOnLaunch)
         let monitor = checkbox("Show resource usage (memory / CPU) in the title bar", \.showResourceMonitor)
 
@@ -85,7 +90,7 @@ final class SettingsWindowController: NSWindowController {
         argsStack.alignment = .leading
         argsStack.spacing = 8
 
-        let stack = NSStackView(views: [autoLaunch, expand, sound, restore, monitor, fontRow, argsStack])
+        let stack = NSStackView(views: [autoLaunch, expand, sound, notify, notifyStatus, restore, monitor, fontRow, argsStack])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -102,6 +107,59 @@ final class SettingsWindowController: NSWindowController {
         ])
         return host
     }
+
+    /// A warning row shown under the notify checkbox when macOS notifications aren't allowed for Multee.
+    /// Hidden (collapsed) when they are. Indented to sit under the checkbox text.
+    private func makeNotifyStatusRow() -> NSStackView {
+        let warning = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                                                 accessibilityDescription: nil) ?? NSImage())
+        warning.contentTintColor = .systemOrange
+        let label = NSTextField(labelWithString: "macOS notifications are turned off — banners won’t appear.")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = NSColor(white: 0.7, alpha: 1)
+        let open = PointerButton()
+        open.isBordered = false
+        open.target = self
+        open.action = #selector(openNotificationSettings)
+        open.attributedTitle = NSAttributedString(string: "Open System Settings…", attributes: [
+            .foregroundColor: NSColor(srgbRed: 0.45, green: 0.62, blue: 0.96, alpha: 1),
+            .font: NSFont.systemFont(ofSize: 11),
+        ])
+        let row = NSStackView(views: [warning, label, open])
+        row.orientation = .horizontal
+        row.spacing = 6
+        row.alignment = .firstBaseline
+        row.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 0)   // indent under the checkbox
+        row.isHidden = true   // shown after the async authorization check
+        return row
+    }
+
+    /// Show the warning row only when notifications aren't authorized. Async (UNUserNotificationCenter).
+    private func refreshNotificationStatus() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async { [weak self] in
+                let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+                self?.notifyStatus?.isHidden = allowed
+            }
+        }
+    }
+
+    @objc private func openNotificationSettings() {
+        // Deep-link to the Notifications pane; ids differ across macOS versions, so try newest first.
+        for s in ["x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+                  "x-apple.systempreferences:com.apple.preference.notifications"] {
+            if let url = URL(string: s), NSWorkspace.shared.open(url) { return }
+        }
+    }
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        refreshNotificationStatus()   // re-check each time it opens (the user may have just changed it)
+    }
+
+    /// Re-check when the window regains focus — e.g. the user toggled the OS permission in System
+    /// Settings (via the link above) and clicked back, with this window still open.
+    func windowDidBecomeKey(_ notification: Notification) { refreshNotificationStatus() }
 
     private func checkbox(_ title: String, _ keyPath: ReferenceWritableKeyPath<Settings, Bool>) -> NSButton {
         let b = PointerButton(checkboxWithTitle: title, target: self, action: #selector(toggle(_:)))

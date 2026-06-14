@@ -84,9 +84,18 @@ per-row git actions (stage/unstage/discard/stash/unstash), NSAlert confirms. Dif
 rendering `computeDiff` (stdlib Myers) rows, unified or split, with add/del row colors. A Files/Changes
 segmented toggle (persisted) swaps the tree and changes views in the sidebar.
 
-## Status board — `Terminal/HookServer`, `App/AppDelegate`
+## Status board & notifications — `Terminal/HookServer`, `App/Notifier`, `App/AppDelegate`
 Claude hooks `curl` a local `NWListener` with the tab id + state; routed to per-tab/session dots
-(needs > working > idle), with an attention/completion `NSSound`.
+(needs > working > idle). On a meaningful transition (a session wanting input, or finishing its work):
+if you're **looking right at that tab** (Multee frontmost + it's the active tab of the active session)
+it just plays an attention/completion `NSSound`; otherwise (backgrounded, or a different session/tab) it
+posts a **macOS notification** (`App/Notifier`, UserNotifications) titled with the folder name — clicking
+it brings Multee forward and focuses that exact session + tab. `Notifier` re-checks **live**
+authorization on each post (a launch-time cache goes stale the moment you toggle the OS permission while
+running) and falls back to the sound when notifications aren't authorized; `willPresent` lets a banner
+show even while Multee is frontmost. Toggle in Settings (default on); the Settings window shows a warning
+row with an "Open System Settings…" deep-link when macOS notifications are off for Multee (re-checked when
+the window opens or regains focus).
 
 ## Settings & updates — `UI/SettingsWindow`, `UI/Updates`
 Settings window (native controls) bound to `Settings`. Update checker hits the GitHub latest-release

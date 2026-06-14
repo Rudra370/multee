@@ -9,6 +9,7 @@ final class Settings: ObservableObject {
     @Published var autoLaunchClaude: Bool { didSet { d.set(autoLaunchClaude, forKey: K.autoLaunch) } }
     @Published var expandIgnored: Bool    { didSet { d.set(expandIgnored, forKey: K.expandIgnored) } }
     @Published var soundEnabled: Bool     { didSet { d.set(soundEnabled, forKey: K.sound) } }
+    @Published var notificationsEnabled: Bool { didSet { d.set(notificationsEnabled, forKey: K.notifications) } }
     @Published var restoreOnLaunch: Bool  { didSet { d.set(restoreOnLaunch, forKey: K.restore) } }
     @Published var fontSize: Double       { didSet { d.set(fontSize, forKey: K.fontSize) } }
     @Published var defaultClaudeArgs: String { didSet { d.set(defaultClaudeArgs, forKey: K.defaultArgs) } }
@@ -22,6 +23,7 @@ final class Settings: ObservableObject {
             K.autoLaunch: true,
             K.expandIgnored: false,
             K.sound: true,
+            K.notifications: true,
             K.restore: true,
             K.fontSize: 13.0,
             K.defaultArgs: "",
@@ -31,6 +33,7 @@ final class Settings: ObservableObject {
         autoLaunchClaude  = d.bool(forKey: K.autoLaunch)
         expandIgnored     = d.bool(forKey: K.expandIgnored)
         soundEnabled      = d.bool(forKey: K.sound)
+        notificationsEnabled = d.bool(forKey: K.notifications)
         restoreOnLaunch   = d.bool(forKey: K.restore)
         fontSize          = d.double(forKey: K.fontSize)
         defaultClaudeArgs = d.string(forKey: K.defaultArgs) ?? ""
@@ -44,6 +47,7 @@ final class Settings: ObservableObject {
         static let autoLaunch    = "autoLaunchClaude"
         static let expandIgnored = "expandIgnored"
         static let sound         = "soundEnabled"
+        static let notifications = "notificationsEnabled"
         static let restore       = "restoreOnLaunch"
         static let fontSize      = "fontSize"
         static let defaultArgs   = "defaultClaudeArgs"
