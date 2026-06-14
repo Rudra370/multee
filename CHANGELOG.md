@@ -5,6 +5,19 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.7] - 2026-06-14
+
+### Added
+- **Unsaved-changes guard** — closing a tab, closing a folder, or quitting with unsaved editor changes
+  now asks first instead of silently discarding them (one file: **Save & Close** / **Cancel** /
+  **Don't Save & Close**; several: **Save All** / **Cancel** / **Discard**). The red close button is
+  covered too.
+- **Notifications when a background session needs you** — when a Claude session needs input or finishes
+  while you're not looking at that tab (Multee in the background, or you're in another session), you get a
+  macOS notification titled with the folder name; click it to jump straight to that session and tab. Toggle
+  in Settings (on by default), which also warns — with a one-click link to System Settings — if macOS
+  notifications are turned off for Multee.
+
 ## [0.1.6] - 2026-06-14
 
 ### Added
