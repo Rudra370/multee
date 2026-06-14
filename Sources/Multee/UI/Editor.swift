@@ -150,11 +150,36 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     }
 
     func save() {
+        // Format-on-save: if enabled and this file has an enabled formatter, format first, then write.
+        // Never block the save — formatter errors / not-installed just save the unformatted text (no prompt).
+        if settings.formatOnSave, let spec = Formatter.spec(forPath: path), settings.formatterEnabled(spec.id) {
+            let text = textView.string, p = path
+            EditorViewController.formatQueue.async {
+                let outcome = Formatter.format(text: text, path: p)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    if case .formatted(let newText) = outcome, self.textView.string == text {
+                        self.replacePreservingCursor(with: newText)
+                    }
+                    self.writeToDisk()
+                }
+            }
+        } else {
+            writeToDisk()
+        }
+    }
+
+    private func writeToDisk() {
         let content = textView.string
         try? content.write(toFile: path, atomically: true, encoding: .utf8)
         saved = content
         onDirty(false)
     }
+
+    /// Synchronous, unconditional write — used by the unsaved-changes guard so "Save & Close" / quit always
+    /// persists *now*, before the tab or app closes. (format-on-save's async path could otherwise run after
+    /// this editor is torn down and silently drop the edits.)
+    func saveImmediately() { writeToDisk() }
 
     // MARK: - Formatting
 

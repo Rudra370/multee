@@ -162,8 +162,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         intro.textColor = NSColor(white: 0.6, alpha: 1)
         intro.preferredMaxLayoutWidth = 440
 
+        let onSave = checkbox("Format on save (⌘S)", \.formatOnSave)
         let rows: [NSView] = Formatter.specs.enumerated().map { idx, spec in formatterRow(spec, index: idx) }
-        let stack = NSStackView(views: [intro] + rows)
+        let stack = NSStackView(views: [intro, onSave] + rows)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10

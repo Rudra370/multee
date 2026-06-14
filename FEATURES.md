@@ -79,7 +79,11 @@ command** (`FormatterInstall` bridges to the session model; terminal tabs create
 initial command then drop to an interactive shell), Homebrew-then-native per formatter. The **Settings →
 Formatters** tab lists each one with live install status, an **Install in Terminal** button (icon +
 command tooltip), and an enable toggle (off ones are skipped; persisted in `Settings.disabledFormatters`).
-Deferred to Phase 2: format-on-save + per-language command overrides.
+A **Format on save (⌘S)** toggle (off by default) formats before writing — async so it never blocks, and
+it silently skips a missing/disabled formatter (no prompt on save). The unsaved-changes guard saves via a
+separate **synchronous** `saveImmediately()` so "Save & Close" / quit always persists *now* — format-on-
+save's async write could otherwise run after the editor is torn down and drop the edits. (Per-language
+command overrides were intentionally not built — niche + UI cost; revisit if a default command is ever wrong.)
 
 ## File viewers — `UI/ImageViewController`, `UI/MarkdownViewController`, `UI/MarkdownRenderer`
 A `.file` tab picks its view by extension (`CenterViewController.makeContentView`): images → viewer,

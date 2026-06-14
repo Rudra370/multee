@@ -16,6 +16,7 @@ final class Settings: ObservableObject {
     @Published var showResourceMonitor: Bool { didSet { d.set(showResourceMonitor, forKey: K.resourceMonitor) } }
     /// Formatter ids the user has turned off (empty = all enabled).
     @Published var disabledFormatters: Set<String> { didSet { d.set(Array(disabledFormatters), forKey: K.disabledFormatters) } }
+    @Published var formatOnSave: Bool { didSet { d.set(formatOnSave, forKey: K.formatOnSave) } }
 
     /// Alias used at call sites that read the default Claude args.
     var defaultArgs: String { defaultClaudeArgs }
@@ -30,6 +31,7 @@ final class Settings: ObservableObject {
             K.fontSize: 13.0,
             K.defaultArgs: "",
             K.resourceMonitor: false,
+            K.formatOnSave: false,
         ])
         // didSet does not fire for these initial assignments inside init.
         autoLaunchClaude  = d.bool(forKey: K.autoLaunch)
@@ -41,6 +43,7 @@ final class Settings: ObservableObject {
         defaultClaudeArgs = d.string(forKey: K.defaultArgs) ?? ""
         showResourceMonitor = d.bool(forKey: K.resourceMonitor)
         disabledFormatters = Set((d.array(forKey: K.disabledFormatters) as? [String]) ?? [])
+        formatOnSave = d.bool(forKey: K.formatOnSave)
     }
 
     /// Shared font size for terminal + editor, clamped to a readable range.
@@ -61,5 +64,6 @@ final class Settings: ObservableObject {
         static let defaultArgs   = "defaultClaudeArgs"
         static let resourceMonitor = "showResourceMonitor"
         static let disabledFormatters = "disabledFormatters"
+        static let formatOnSave = "formatOnSave"
     }
 }
