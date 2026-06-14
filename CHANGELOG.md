@@ -5,6 +5,19 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.6] - 2026-06-14
+
+### Added
+- **Line numbers in the editor** — a VS Code-style gutter on the left of every file you open. It tracks
+  scrolling and the font size (⌘ +/−), numbers wrapped lines once, and highlights the current line.
+- **Edit Markdown & SVG** — the **Source** view for `.md` files and the **Source** view for `.svg` files
+  are now fully editable (syntax-highlighted, ⌘S to save, unsaved indicator), not just read-only. Switch
+  back to **Preview** / **Image** and it re-renders with your changes immediately. Renaming a file while
+  you have unsaved edits keeps them. Raster images stay view-only.
+
+### Changed
+- Markdown's **Preview / Source** toggle moved to the bottom-right, matching the SVG viewer's bar.
+
 ## [0.1.5] - 2026-06-14
 
 ### Added
