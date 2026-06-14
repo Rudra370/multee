@@ -84,7 +84,9 @@ final class TerminalStore {
             extraEnv["MULTEE_HOOK_PORT"] = String(HookServer.shared.port)
         case .terminal, .file, .diff:   // only .terminal reaches here (file/diff use their own views)
             exe = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            args = ["-l"]
+            // A terminal tab created with an initial command (e.g. "Install" a formatter) runs it, then
+            // drops to an interactive login shell so its output stays visible.
+            args = tab.args.isEmpty ? ["-l"] : ["-l", "-c", "\(tab.args); exec \(exe) -l"]
         }
         tv.startProcess(executable: exe, args: args, environment: Env.array(extra: extraEnv),
                         execName: nil, currentDirectory: cwd)

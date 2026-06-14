@@ -68,6 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Updates.shared.check() }
         }
 
+        // "Manage Formatters…" (from the format prompt) → open Settings on the Formatters tab.
+        FormatterPrompt.openManager = { [weak self] in
+            self?.showSettingsWindow()
+            self?.settingsWC?.showFormatters()
+        }
+
         DebugHarness.start(model: model)   // dev-only (inert in release)
     }
 
@@ -189,6 +195,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        let format = editMenu.addItem(withTitle: "Format Document", action: #selector(formatActiveDocument), keyEquivalent: "f")
+        format.keyEquivalentModifierMask = [.command, .shift]
+        format.target = self
 
         NSApp.mainMenu = mainMenu
     }
@@ -210,4 +220,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let s = model.activeSession, let tab = s.activeTab else { return }
         if UnsavedGuard.confirmClose(tab) { s.closeTab(tab.id) }
     }
+
+    @objc private func formatActiveDocument() { ActiveEditor.current?.formatDocument() }
 }

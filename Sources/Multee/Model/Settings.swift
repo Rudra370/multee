@@ -14,6 +14,8 @@ final class Settings: ObservableObject {
     @Published var fontSize: Double       { didSet { d.set(fontSize, forKey: K.fontSize) } }
     @Published var defaultClaudeArgs: String { didSet { d.set(defaultClaudeArgs, forKey: K.defaultArgs) } }
     @Published var showResourceMonitor: Bool { didSet { d.set(showResourceMonitor, forKey: K.resourceMonitor) } }
+    /// Formatter ids the user has turned off (empty = all enabled).
+    @Published var disabledFormatters: Set<String> { didSet { d.set(Array(disabledFormatters), forKey: K.disabledFormatters) } }
 
     /// Alias used at call sites that read the default Claude args.
     var defaultArgs: String { defaultClaudeArgs }
@@ -38,10 +40,16 @@ final class Settings: ObservableObject {
         fontSize          = d.double(forKey: K.fontSize)
         defaultClaudeArgs = d.string(forKey: K.defaultArgs) ?? ""
         showResourceMonitor = d.bool(forKey: K.resourceMonitor)
+        disabledFormatters = Set((d.array(forKey: K.disabledFormatters) as? [String]) ?? [])
     }
 
     /// Shared font size for terminal + editor, clamped to a readable range.
     func bumpFont(_ delta: Double) { fontSize = min(24, max(9, fontSize + delta)) }
+
+    func formatterEnabled(_ id: String) -> Bool { !disabledFormatters.contains(id) }
+    func setFormatter(_ id: String, enabled: Bool) {
+        if enabled { disabledFormatters.remove(id) } else { disabledFormatters.insert(id) }
+    }
 
     private enum K {
         static let autoLaunch    = "autoLaunchClaude"
@@ -52,5 +60,6 @@ final class Settings: ObservableObject {
         static let fontSize      = "fontSize"
         static let defaultArgs   = "defaultClaudeArgs"
         static let resourceMonitor = "showResourceMonitor"
+        static let disabledFormatters = "disabledFormatters"
     }
 }

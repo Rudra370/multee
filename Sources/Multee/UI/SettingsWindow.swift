@@ -13,6 +13,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var notifyStatus: NSStackView!     // "macOS notifications are off" warning (hidden when on)
     private var escMonitor: Any?
 
+    // Tabs.
+    private var segmented: NSSegmentedControl!
+    private var generalPane: NSView!
+    private var formattersPane: NSView!
+    private var generalStack: NSStackView!
+    private var formattersStack: NSStackView!
+    // Per-formatter row controls, keyed by spec index, for live status refresh.
+    private var fmtStatus: [NSTextField] = []
+    private var fmtInstall: [NSButton] = []
+    private var fmtEnable: [NSButton] = []
+
     private let suggestions = ["--continue", "--resume", "--dangerously-skip-permissions", "--verbose"]
 
     init(settings: Settings) {
@@ -40,7 +51,41 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     deinit { if let escMonitor { NSEvent.removeMonitor(escMonitor) } }
 
+    /// Root: a General | Formatters tab switcher over two panes; the window resizes to fit the active one.
     private func buildContent() -> NSView {
+        segmented = PointerSegmentedControl(labels: ["General", "Formatters"], trackingMode: .selectOne,
+                                            target: self, action: #selector(tabChanged))
+        segmented.selectedSegment = 0
+        segmented.translatesAutoresizingMaskIntoConstraints = false
+
+        generalPane = buildGeneralPane()
+        formattersPane = buildFormattersPane()
+        generalPane.translatesAutoresizingMaskIntoConstraints = false
+        formattersPane.translatesAutoresizingMaskIntoConstraints = false
+
+        let root = NSView()
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor(white: 0.16, alpha: 1).cgColor
+        root.addSubview(segmented)
+        root.addSubview(generalPane)
+        root.addSubview(formattersPane)
+        NSLayoutConstraint.activate([
+            segmented.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            segmented.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+        ])
+        for pane in [generalPane!, formattersPane!] {
+            NSLayoutConstraint.activate([
+                pane.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 8),
+                pane.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+                pane.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+                pane.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            ])
+        }
+        selectTab(0)
+        return root
+    }
+
+    private func buildGeneralPane() -> NSView {
         let autoLaunch = checkbox("Auto-launch Claude when opening a project", \.autoLaunchClaude)
         let expand = checkbox("Show contents of gitignored folders", \.expandIgnored)
         let sound = checkbox("Play a sound on attention / completion", \.soundEnabled)
@@ -95,10 +140,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
+        generalStack = stack
 
         let host = NSView()
-        host.wantsLayer = true
-        host.layer?.backgroundColor = NSColor(white: 0.16, alpha: 1).cgColor
         host.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: host.topAnchor, constant: 24),
@@ -107,6 +151,118 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ])
         return host
     }
+
+    // MARK: - Formatters tab
+
+    private func buildFormattersPane() -> NSView {
+        let intro = NSTextField(wrappingLabelWithString:
+            "Multee formats the active file with the matching tool installed on your machine (⌘⇧F). " +
+            "Turn one off to skip it, or install a missing one.")
+        intro.font = .systemFont(ofSize: 11)
+        intro.textColor = NSColor(white: 0.6, alpha: 1)
+        intro.preferredMaxLayoutWidth = 440
+
+        let rows: [NSView] = Formatter.specs.enumerated().map { idx, spec in formatterRow(spec, index: idx) }
+        let stack = NSStackView(views: [intro] + rows)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        formattersStack = stack
+
+        let host = NSView()
+        host.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: host.topAnchor, constant: 24),
+            stack.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -24),
+        ])
+        refreshFormatterStatus()
+        return host
+    }
+
+    /// One formatter row: name + extensions on the left; status + (enable toggle | Install) on the right.
+    private func formatterRow(_ spec: FormatterSpec, index: Int) -> NSView {
+        let name = NSTextField(labelWithString: spec.name)
+        name.font = .systemFont(ofSize: 13, weight: .medium)
+        let extsText = spec.exts.prefix(6).joined(separator: ", ") + (spec.exts.count > 6 ? ", …" : "")
+        let exts = NSTextField(labelWithString: extsText)
+        exts.font = .systemFont(ofSize: 10)
+        exts.textColor = NSColor(white: 0.55, alpha: 1)
+        let left = NSStackView(views: [name, exts])
+        left.orientation = .vertical
+        left.alignment = .leading
+        left.spacing = 1
+
+        let status = NSTextField(labelWithString: "")
+        status.font = .systemFont(ofSize: 11)
+        fmtStatus.append(status)
+
+        let enable = PointerButton(checkboxWithTitle: "On", target: self, action: #selector(formatterEnableToggled(_:)))
+        enable.tag = index
+        fmtEnable.append(enable)
+
+        let install = PointerButton()
+        install.bezelStyle = .rounded
+        install.controlSize = .small
+        install.title = "Install in Terminal"
+        install.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
+        install.imagePosition = .imageLeading
+        install.toolTip = "Opens a Terminal tab and runs:\n\(spec.installCommand)"
+        install.tag = index
+        install.target = self
+        install.action = #selector(formatterInstall(_:))
+        fmtInstall.append(install)
+
+        let right = NSStackView(views: [status, enable, install])
+        right.orientation = .horizontal
+        right.spacing = 8
+        right.alignment = .centerY
+
+        let row = NSStackView(views: [left, NSView(), right])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: 432).isActive = true
+        return row
+    }
+
+    /// Re-detect each formatter's install status (fast `which`-style checks) and reflect it in the rows.
+    private func refreshFormatterStatus() {
+        for (i, spec) in Formatter.specs.enumerated() {
+            guard i < fmtStatus.count else { continue }
+            let installed = Formatter.isInstalled(spec)
+            fmtStatus[i].stringValue = installed ? "Installed" : "Not installed"
+            fmtStatus[i].textColor = installed ? NSColor(red: 0.45, green: 0.79, blue: 0.57, alpha: 1)
+                                               : NSColor(white: 0.55, alpha: 1)
+            fmtInstall[i].isHidden = installed
+            fmtEnable[i].isHidden = !installed
+            fmtEnable[i].state = settings.formatterEnabled(spec.id) ? .on : .off
+        }
+    }
+
+    @objc private func formatterInstall(_ sender: NSButton) {
+        FormatterInstall.run?(Formatter.specs[sender.tag].installCommand)
+    }
+    @objc private func formatterEnableToggled(_ sender: NSButton) {
+        settings.setFormatter(Formatter.specs[sender.tag].id, enabled: sender.state == .on)
+    }
+
+    @objc private func tabChanged() { selectTab(segmented.selectedSegment) }
+
+    /// Show a tab and size the window to fit it.
+    private func selectTab(_ index: Int) {
+        segmented.selectedSegment = index
+        generalPane.isHidden = index != 0
+        formattersPane.isHidden = index != 1
+        let stack: NSStackView = index == 0 ? generalStack : formattersStack
+        stack.layoutSubtreeIfNeeded()
+        let height = stack.fittingSize.height + 92    // segmented + paddings around the pane
+        window?.setContentSize(NSSize(width: 520, height: height))
+    }
+
+    /// Open Settings to the Formatters tab (used by the "Manage Formatters…" prompt link).
+    func showFormatters() { selectTab(1); refreshFormatterStatus() }
 
     /// A warning row shown under the notify checkbox when macOS notifications aren't allowed for Multee.
     /// Hidden (collapsed) when they are. Indented to sit under the checkbox text.
@@ -155,11 +311,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         refreshNotificationStatus()   // re-check each time it opens (the user may have just changed it)
+        refreshFormatterStatus()
     }
 
-    /// Re-check when the window regains focus — e.g. the user toggled the OS permission in System
-    /// Settings (via the link above) and clicked back, with this window still open.
-    func windowDidBecomeKey(_ notification: Notification) { refreshNotificationStatus() }
+    /// Re-check when the window regains focus — e.g. the user installed a formatter / toggled the OS
+    /// permission in System Settings and clicked back, with this window still open.
+    func windowDidBecomeKey(_ notification: Notification) {
+        refreshNotificationStatus()
+        refreshFormatterStatus()
+    }
 
     private func checkbox(_ title: String, _ keyPath: ReferenceWritableKeyPath<Settings, Bool>) -> NSButton {
         let b = PointerButton(checkboxWithTitle: title, target: self, action: #selector(toggle(_:)))

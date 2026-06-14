@@ -65,6 +65,22 @@ external-grammar includes (e.g. CSS embedded in HTML) and Oniguruma-only regex a
 tokenizer is ~linear but call-bound (~0.3 ms/line); huge files colour off-main without freezing rather
 than instantly — a combined-regex scanner would be the next step if instant huge-file colour is needed.
 
+## Formatting — `Backend/Formatter`, `UI/FormatterPrompt`, `UI/SettingsWindow` (Formatters tab)
+Format the active file with the user's installed CLI formatter (⌘⇧F / right-click → **Format Document**;
+markdown/SVG format their Source). Formatters are **shelled out, never bundled** (zero idle cost): a
+registry maps extensions → `{ binaries, run argv, install command }` for Prettier, gofmt, rustfmt, Ruff,
+swift-format, clang-format. Detection prefers a **project-local** tool (`node_modules/.bin`, walking up
+from the file) over the login-PATH global; the formatter runs stdin→stdout with `cwd` = the file's dir so
+it finds project config. Running is off-main (stdin written + stderr read on background threads to avoid
+pipe deadlock); the result is applied as a **common prefix/suffix diff** so the caret stays put and it's
+one undo, and is dropped if you typed during the run or if the formatter emits empty output (never wipes a
+file). Missing formatter → a prompt offers **one-click install** that opens a **Terminal tab running the
+command** (`FormatterInstall` bridges to the session model; terminal tabs created with `args` run an
+initial command then drop to an interactive shell), Homebrew-then-native per formatter. The **Settings →
+Formatters** tab lists each one with live install status, an **Install in Terminal** button (icon +
+command tooltip), and an enable toggle (off ones are skipped; persisted in `Settings.disabledFormatters`).
+Deferred to Phase 2: format-on-save + per-language command overrides.
+
 ## File viewers — `UI/ImageViewController`, `UI/MarkdownViewController`, `UI/MarkdownRenderer`
 A `.file` tab picks its view by extension (`CenterViewController.makeContentView`): images → viewer,
 markdown → preview, else the text editor. **Images** (png/jpg/gif/bmp/tiff/webp/heic/`icns`/ico, plus

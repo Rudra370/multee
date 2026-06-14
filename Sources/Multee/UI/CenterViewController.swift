@@ -116,6 +116,10 @@ final class CenterViewController: NSViewController {
         // Let the unsaved-changes guard save any (already-mounted) editor tab by id, without it needing
         // to know about view controllers. A dirty tab has always been viewed, so its editor exists here.
         UnsavedGuard.saveTab = { [weak self] id in (self?.contentVCs[id] as? SourceEditing)?.sourceEditor?.save() }
+        // "Install formatter" → open a Terminal tab that runs the command (then drops to an interactive shell).
+        FormatterInstall.run = { [weak self] command in
+            self?.model.activeSession?.addTab(Tab(kind: .terminal, title: "Install", args: command))
+        }
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.refresh() }

@@ -49,6 +49,7 @@ enum DebugAction {
             if let s = model.activeSession, let t = s.activeTab, UnsavedGuard.confirmClose(t) { s.closeTab(t.id) }
         case "closeSession":   if let s = model.activeSession { model.closeSession(s.id) }
         case "openSettings":   model.showSettings = true
+        case "openFormatters": FormatterPrompt.openManager?()
         case "sendText":  if let s = model.activeSession { TerminalStore.shared.send(s.activeTabID, arg) }
         case "sendEnter": if let s = model.activeSession { TerminalStore.shared.send(s.activeTabID, "\r") }
         case "scroll":
@@ -62,6 +63,8 @@ enum DebugAction {
             }
         case "editorType": ActiveEditor.current?.debugAppend(arg)
         case "editorSave":  ActiveEditor.current?.save()
+        case "editorFormat": ActiveEditor.current?.formatDocument()
+        case "fmtInstall":   FormatterInstall.run?(arg)   // exercises the [Install] → Terminal-tab path
         case "editorScroll": ActiveEditor.current?.debugScroll(lines: Int(arg) ?? 30)
         case "sourceMode":   // flip a markdown/SVG viewer's Preview/Image ↔ Source toggle (arg "1"=source)
             let show = arg == "1" || arg == "source"
