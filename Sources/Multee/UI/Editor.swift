@@ -138,30 +138,20 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         self.lineRuler = ruler
         self.scrollView = scroll
 
-        // Vertical layout: a collapsible find-bar slot on top + the editor below. The find bar lives in
-        // the slot (pushes the editor down when open) rather than overlaying the text view — an overlay's
-        // cursor rects overlap the text view's I-beam rect in a different subtree, which AppKit leaves
-        // "undefined" (the glitchy hand/I-beam flicker). Non-overlapping = the buttons get a clean hand
-        // cursor, exactly like the file-tree toolbar. `detachesHiddenViews` collapses the slot when closed.
-        let findSlot = NSView()
-        findSlot.isHidden = true
-        findSlot.translatesAutoresizingMaskIntoConstraints = false
-        self.findSlot = findSlot
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        let wrapper = NSStackView(views: [findSlot, scroll])
-        wrapper.orientation = .vertical
-        wrapper.spacing = 0
-        wrapper.distribution = .fill
-        NSLayoutConstraint.activate([
-            findSlot.widthAnchor.constraint(equalTo: wrapper.widthAnchor),
-            scroll.widthAnchor.constraint(equalTo: wrapper.widthAnchor),
-        ])
-        self.view = wrapper
+        // The find bar floats in its own child window (UI/FindBar in a FindPanel), pinned to the editor's
+        // top-right (VS Code style) — a separate window has its own cursor-rect domain, so the bar's button
+        // cursors don't conflict with the text view's I-beam the way a same-window overlay subview did.
+        self.view = scroll
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         settings.$fontSize.dropFirst().sink { [weak self] in self?.applyFont($0) }.store(in: &cancellables)
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        if findVisible { positionFindPanel() }   // keep the floating bar pinned through sidebar/split resizes
     }
 
     func textDidChange(_ notification: Notification) {
@@ -249,15 +239,17 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     // MARK: - Find (UI/FindBar)
 
     private var findBar: FindBar?
-    private var findSlot: NSView!          // collapsible top strip holding the find bar (non-overlapping)
+    private var findPanel: FindPanel?      // floating child window hosting the find bar (top-right overlay)
+    private var findObservers: [NSObjectProtocol] = []   // reposition on window move/resize
     private var findMatches: [NSRange] = []
     private var findCurrent = -1
-    private var findVisible: Bool { findBar != nil && !(findSlot?.isHidden ?? true) }
+    private var findVisible: Bool { findPanel?.isVisible ?? false }
     private static let findHL = NSColor.systemYellow.withAlphaComponent(0.32)
     private static let findHLCurrent = NSColor.systemOrange.withAlphaComponent(0.6)
 
-    /// Show the find bar (⌘F), seeding it from the current one-line selection, and focus its field.
+    /// Show the find bar (⌘F) in its floating panel, seeding it from the current one-line selection.
     func showFind() {
+        guard let win = view.window else { return }
         if findBar == nil {
             let bar = FindBar(matchCase: settings.findMatchCase,
                               wholeWord: settings.findWholeWord, regex: settings.findRegex)
@@ -267,31 +259,73 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
             bar.onClose = { [weak self] in self?.hideFind() }
             bar.onReplace = { [weak self] in self?.replaceCurrent() }
             bar.onReplaceAll = { [weak self] in self?.replaceAll() }
-            bar.translatesAutoresizingMaskIntoConstraints = false
-            findSlot.addSubview(bar)
-            NSLayoutConstraint.activate([   // right-aligned in the strip; bar height drives the strip
-                bar.topAnchor.constraint(equalTo: findSlot.topAnchor, constant: 8),
-                bar.bottomAnchor.constraint(equalTo: findSlot.bottomAnchor, constant: -8),
-                bar.trailingAnchor.constraint(equalTo: findSlot.trailingAnchor, constant: -18),
-                bar.leadingAnchor.constraint(greaterThanOrEqualTo: findSlot.leadingAnchor, constant: 18),
-            ])
+            bar.onResize = { [weak self] in self?.positionFindPanel() }   // replace row toggled → refit
             findBar = bar
+
+            let panel = FindPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 44),
+                                  styleMask: [.borderless, .nonactivatingPanel],
+                                  backing: .buffered, defer: true)
+            panel.isFloatingPanel = true
+            panel.hidesOnDeactivate = false
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = true
+            panel.contentView = bar
+            findPanel = panel
         }
-        findSlot.isHidden = false
+        guard let panel = findPanel else { return }
+        if panel.parent == nil { win.addChildWindow(panel, ordered: .above) }
+        positionFindPanel()
         let sel = textView.selectedRange()
         if sel.length > 0 {
             let s = (textView.string as NSString).substring(with: sel)
             if !s.contains("\n") { findBar?.setQuery(s) }
         }
+        panel.makeKeyAndOrderFront(nil)
         findBar?.focusField()
+        observeWindowForReposition(win)
         recomputeMatches()
     }
 
     func hideFind() {
-        findSlot.isHidden = true
+        if let panel = findPanel {
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+        removeFindObservers()
         clearFindHighlights()
         findMatches = []; findCurrent = -1
+        view.window?.makeKeyAndOrderFront(nil)        // return key to the main window
         view.window?.makeFirstResponder(textView)
+    }
+
+    /// Close the find panel if it's open — called when this editor's tab stops being active (so a stray
+    /// floating bar doesn't linger over another tab).
+    func hideFindIfShown() { if findVisible { hideFind() } }
+
+    /// Size the panel to the bar and pin it to the editor view's top-right (in screen coords).
+    private func positionFindPanel() {
+        guard let panel = findPanel, let bar = findBar, let win = view.window else { return }
+        let size = bar.fittingSize
+        panel.setContentSize(size)
+        let inScreen = win.convertToScreen(view.convert(view.bounds, to: nil))
+        let margin: CGFloat = 12
+        panel.setFrameOrigin(NSPoint(x: inScreen.maxX - size.width - margin,
+                                     y: inScreen.maxY - size.height - margin))
+    }
+
+    private func observeWindowForReposition(_ win: NSWindow) {
+        removeFindObservers()
+        let nc = NotificationCenter.default
+        for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+            findObservers.append(nc.addObserver(forName: name, object: win, queue: .main) { [weak self] _ in
+                self?.positionFindPanel()
+            })
+        }
+    }
+    private func removeFindObservers() {
+        findObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        findObservers = []
     }
 
     /// ⌘G / ⌘⇧G — open the bar if closed, else step. (Works from the editor, not just the find field.)

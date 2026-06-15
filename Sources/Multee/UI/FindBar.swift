@@ -1,5 +1,13 @@
 import AppKit
 
+/// Borderless floating panel that hosts the find bar over the editor's top-right. A separate window keeps
+/// the bar's cursor rects out of the text view's cursor-rect domain (no hand/I-beam conflict), and must
+/// override `canBecomeKey` so its search field can take text input (a borderless window can't otherwise).
+final class FindPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 /// VS Code-style in-editor find/replace bar: a search field + Match-Case / Whole-Word / Regex toggles, a
 /// match counter, prev/next, close, and a disclosure chevron that expands a Replace row (replace current /
 /// replace all). Pure UI — the owning `EditorViewController` reads `query`/`replaceText`/`matchCase`/
@@ -25,6 +33,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
     var onClose: (() -> Void)?
     var onReplace: (() -> Void)?
     var onReplaceAll: (() -> Void)?
+    var onResize: (() -> Void)?   // the bar's fitting size changed (replace row toggled)
 
     var query: String { field.stringValue }
     var replaceText: String { replaceField.stringValue }
@@ -175,6 +184,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
         replaceRow.isHidden.toggle()
         disclosure.image = NSImage(systemSymbolName: replaceRow.isHidden ? "chevron.right" : "chevron.down",
                                    accessibilityDescription: "Toggle Replace")
+        onResize?()   // host panel refits to the new height
     }
     @objc private func toggleTapped() { onChange?() }
     @objc private func nextTapped() { onNext?() }

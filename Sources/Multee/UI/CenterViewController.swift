@@ -177,12 +177,14 @@ final class CenterViewController: NSViewController {
         }
         for (id, v) in contentViews { v.isHidden = (id != tab.id) }
 
+        let outgoingEditor = ActiveEditor.current
         ActiveEditor.current = (contentVCs[tab.id] as? SourceEditing)?.sourceEditor
 
         // On *becoming* active (not every render — else we'd steal focus from the find bar etc.):
         // focus a text editor so you can type / search / jump immediately, or focus the terminal.
         if tab.id != lastActiveTabID {
             lastActiveTabID = tab.id
+            if outgoingEditor !== ActiveEditor.current { outgoingEditor?.hideFindIfShown() }   // close its floating find bar
             if let editor = contentVCs[tab.id] as? EditorViewController {
                 DispatchQueue.main.async { editor.focusText() }
             }

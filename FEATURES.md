@@ -57,12 +57,14 @@ synchronously on open (no flash), large files and edits colour asynchronously. E
 **150 ms debounce** and recolour only (text/selection/undo untouched), with a sequence guard dropping
 any pass a newer edit superseded. Cmd+S saves; edits flag the tab dirty (chip dot). Shared font size
 live-applies with in-place run resize. **⌘F find / replace** is a custom VS Code-style bar (`UI/FindBar`)
-that lives in a **collapsible top strip** (the editor's view is a vertical stack of `findSlot` + the scroll
-view), right-aligned — it **pushes the editor down rather than overlaying it**. (An earlier overlaying
-version glitched the cursor: a floating bar's button cursor-rects overlap the text view's I-beam rect in a
-*different* view subtree, which AppKit leaves "undefined" → hand/I-beam flicker. Non-overlapping fixes it
-at the root; the bar also `invalidateCursorRects` on appear/relayout since it's shown dynamically — see the
-cursor gotcha in `UI/Cursor.swift`.) A search field with
+floating at the editor's **top-right** in its own borderless child window (`FindPanel`, added via
+`addChildWindow`, pinned by converting the editor view's top-right to screen coords and repositioned on
+window move/resize + editor relayout). **Why a separate window:** an earlier same-window overlay *subview*
+glitched the cursor — its button cursor-rects overlapped the text view's I-beam rect in a *different* view
+subtree, which AppKit leaves "undefined" (hand/I-beam flicker). A separate window has its own cursor-rect
+domain, so there's no conflict. Trade-off: the panel must be key to type (its `canBecomeKey` is overridden),
+so the main window's title bar dims while the find field is focused. The panel closes when its editor's tab
+stops being active (`CenterViewController` calls `hideFindIfShown` on the outgoing editor). A search field with
 **Match-Case / Whole-Word / Regex** toggles (the native `NSTextFinder` has none of these), a `3 of 12`
 counter, prev/next (⏎ / ⇧⏎), Esc to close, and a disclosure chevron that expands a **Replace** row
 (Replace current / Replace All; ⌥⌘F opens it expanded). Matches are found via `NSString` substring or

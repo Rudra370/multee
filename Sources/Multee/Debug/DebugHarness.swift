@@ -104,6 +104,7 @@ enum DebugState {
         var root: [String: Any] = [:]
         if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count; root["editorCaretLine"] = ed.debugCaretLine; root["editorSelText"] = ed.debugSelectedText; root["findCount"] = ed.debugFindCount; root["findCurrent"] = ed.debugFindCurrent }
         root["selfMemMB"] = Int(ResourceMonitor.memoryMB())
+        root["findPanelsVisible"] = NSApp.windows.filter { $0 is FindPanel && $0.isVisible }.count
         if let ed = ActiveEditor.current { root["editorFocused"] = ed.debugIsFocused }
         if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
