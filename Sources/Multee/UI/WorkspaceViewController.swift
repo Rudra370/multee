@@ -67,6 +67,7 @@ final class WorkspaceViewController: NSViewController, NSSplitViewDelegate {
 /// (real, model-driven — proves the layout + binding). The file tree replaces the placeholder in
 /// Phase 2; the sessions panel is fleshed out in Phase 5.
 final class SidebarViewController: NSViewController {
+    static weak var current: SidebarViewController?   // for the debug harness (segment switching)
     private let model: AppModel
     private var cancellables = Set<AnyCancellable>()
     private var sessionStatusObservers: [String: AnyCancellable] = [:]   // per-session dot refresh
@@ -74,19 +75,27 @@ final class SidebarViewController: NSViewController {
     private let filesContainer = NSView()
     private var treeVC: FileTreeViewController?
     private var changesVC: ChangesViewController?
+    private var searchVC: SearchViewController?
     private var store: RepoStore?            // one shared git poller for the tree + Changes
     private var branchBridge: AnyCancellable?   // store.branch → session.gitBranch
     private var currentRepo: String?
     private var lastRevealedPath: String?    // dedup auto-reveal of the active file in the tree
     private let filesModeSeg: PointerSegmentedControl = {
         let s = PointerSegmentedControl()
-        s.segmentCount = 2
-        s.setLabel("Files", forSegment: 0)
-        s.setLabel("Changes", forSegment: 1)
+        s.segmentCount = 3
+        func icon(_ name: String) -> NSImage? { NSImage(systemSymbolName: name, accessibilityDescription: nil) }
+        s.setImage(icon("doc.on.doc"), forSegment: 0)
+        s.setImage(icon("arrow.triangle.branch"), forSegment: 1)
+        s.setImage(icon("magnifyingglass"), forSegment: 2)
+        s.setToolTip("Files", forSegment: 0)
+        s.setToolTip("Changes (git)", forSegment: 1)
+        s.setToolTip("Search", forSegment: 2)
         s.trackingMode = .selectOne
         return s
     }()
-    private var changesMode: Bool { filesModeSeg.selectedSegment == 1 }
+    private enum SidebarMode: Int { case files = 0, changes = 1, search = 2 }
+    private var sidebarMode: SidebarMode { SidebarMode(rawValue: filesModeSeg.selectedSegment) ?? .files }
+    private var changesMode: Bool { sidebarMode == .changes }
     private var fileActionsBar: NSStackView?   // new file / new folder / collapse-all (Files mode only)
 
     // SESSIONS header + collapse
@@ -140,6 +149,8 @@ final class SidebarViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        SidebarViewController.current = self
+        SidebarSearchHook.reveal = { [weak self] in self?.revealSearch() }
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.refresh() }
@@ -164,7 +175,7 @@ final class SidebarViewController: NSViewController {
     /// Auto-reveal the active file in the tree (VS Code-style): when the active tab is a file, expand to
     /// it, select it, scroll it in. Files mode only; deduped so we don't fight manual scrolling.
     private func revealActiveFile() {
-        guard !changesMode, let treeVC,
+        guard sidebarMode == .files, let treeVC,
               let session = model.activeSession, let tab = session.activeTab,
               tab.kind == .file, let abs = tab.path else { return }
         let prefix = session.url.hasSuffix("/") ? session.url : session.url + "/"
@@ -193,7 +204,7 @@ final class SidebarViewController: NSViewController {
         pane.wantsLayer = true
         pane.layer?.backgroundColor = NSColor(white: 0.145, alpha: 1).cgColor
 
-        filesModeSeg.selectedSegment = max(0, min(1, UserDefaults.standard.integer(forKey: "rightMode")))
+        filesModeSeg.selectedSegment = max(0, min(2, UserDefaults.standard.integer(forKey: "rightMode")))
         filesModeSeg.target = self
         filesModeSeg.action = #selector(filesModeChanged)
         filesModeSeg.controlSize = .small
@@ -214,7 +225,7 @@ final class SidebarViewController: NSViewController {
         actions.orientation = .horizontal
         actions.spacing = 8
         actions.translatesAutoresizingMaskIntoConstraints = false
-        actions.isHidden = changesMode
+        actions.isHidden = sidebarMode != .files
         fileActionsBar = actions
 
         pane.addSubview(filesModeSeg)
@@ -254,8 +265,15 @@ final class SidebarViewController: NSViewController {
             let changes = ChangesViewController(store: store,
                 onOpenDiff: { [weak self] path in self?.model.activeSession?.openDiff(path) },
                 onOpenFile: { [weak self] path in self?.model.activeSession?.openFile(path) })
-            addChild(tree); addChild(changes)
-            treeVC = tree; changesVC = changes; self.store = store
+            let search = SearchViewController(repo: session.url,
+                onOpen: { [weak self] rel, line in self?.openSearchResult(rel, line) })
+            search.onOpenAsTab = { [weak self] query, options in
+                SearchSeed.pending = (query, options)        // CenterViewController.render seeds the new tab
+                let title = query.isEmpty ? "Search" : "Search: \(query)"
+                self?.model.activeSession?.addTab(Tab(kind: .search, title: title))   // always a fresh tab (multiple allowed)
+            }
+            addChild(tree); addChild(changes); addChild(search)
+            treeVC = tree; changesVC = changes; searchVC = search; self.store = store
             // Bridge the git poller's branch onto the session so the status bar can show it (no 2nd poller).
             branchBridge = store.$branch.sink { [weak session] in session?.gitBranch = $0 }
         }
@@ -263,11 +281,11 @@ final class SidebarViewController: NSViewController {
     }
 
     private func showSidebarContent() {
-        fileActionsBar?.isHidden = changesMode   // tree actions only apply to the Files tree
-        guard let treeVC, let changesVC, let store else { return }
-        let show: NSViewController = changesMode ? changesVC : treeVC
-        let hide: NSViewController = changesMode ? treeVC : changesVC
-        hide.view.removeFromSuperview()
+        fileActionsBar?.isHidden = sidebarMode != .files   // tree actions only apply to the Files tree
+        guard let treeVC, let changesVC, let searchVC, let store else { return }
+        let panes: [(SidebarMode, NSViewController)] = [(.files, treeVC), (.changes, changesVC), (.search, searchVC)]
+        for (mode, vc) in panes where mode != sidebarMode && vc.isViewLoaded { vc.view.removeFromSuperview() }
+        let show = panes.first { $0.0 == sidebarMode }!.1
         if show.view.superview == nil {
             show.view.translatesAutoresizingMaskIntoConstraints = false
             filesContainer.addSubview(show.view)
@@ -278,15 +296,36 @@ final class SidebarViewController: NSViewController {
                 show.view.trailingAnchor.constraint(equalTo: filesContainer.trailingAnchor),
             ])
         }
-        // One shared watcher + git poll; only the visible mode's data is fetched.
-        store.start(tree: !changesMode, changes: changesMode)
-        if !changesMode { lastRevealedPath = nil; revealActiveFile() }   // entering Files → reveal current file
+        // One shared watcher + git poll; fetch only what the visible mode needs (Search needs neither).
+        store.start(tree: sidebarMode == .files, changes: sidebarMode == .changes)
+        if sidebarMode == .files { lastRevealedPath = nil; revealActiveFile() }   // entering Files → reveal current file
+        if sidebarMode == .search { DispatchQueue.main.async { [weak self] in self?.searchVC?.focusField() } }
     }
 
     private func teardownSidebarVCs() {
         store?.stop(); store = nil
         treeVC?.view.removeFromSuperview(); treeVC?.removeFromParent(); treeVC = nil
         changesVC?.view.removeFromSuperview(); changesVC?.removeFromParent(); changesVC = nil
+        // Search may never have been shown — only touch its view if it was actually loaded.
+        if let sv = searchVC { if sv.isViewLoaded { sv.view.removeFromSuperview() }; sv.removeFromParent() }
+        searchVC = nil
+    }
+
+    /// A search hit was clicked → open that file in the active session and jump to its line.
+    private func openSearchResult(_ rel: String, _ line: Int) {
+        FileNavigator.openAt?(rel, line)
+    }
+
+    /// Reveal the Search segment and focus its field (⌘⇧F / "Find in Files…").
+    func revealSearch() {
+        filesModeSeg.selectedSegment = SidebarMode.search.rawValue
+        filesModeChanged()          // shows the search pane; showSidebarContent focuses the field
+    }
+
+    /// Debug harness: select a sidebar segment (0 Files / 1 Changes / 2 Search) as if clicked.
+    func debugSelectMode(_ index: Int) {
+        filesModeSeg.selectedSegment = max(0, min(2, index))
+        filesModeChanged()
     }
 
     // SESSIONS pane: header (label + settings / open-repo / collapse) over the session list.

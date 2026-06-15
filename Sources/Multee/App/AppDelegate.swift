@@ -195,8 +195,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(.separator())
+        // Format moves to ⇧⌥F (matching VS Code) so ⌘⇧F can open Find in Files below.
         let format = editMenu.addItem(withTitle: "Format Document", action: #selector(formatActiveDocument), keyEquivalent: "f")
-        format.keyEquivalentModifierMask = [.command, .shift]
+        format.keyEquivalentModifierMask = [.shift, .option]
         format.target = self
 
         // Find submenu — routes to the active editor's custom find bar (UI/FindBar), which adds
@@ -214,6 +215,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let replaceItem = findMenu.addItem(withTitle: "Find and Replace…", action: #selector(findReplace), keyEquivalent: "f")
         replaceItem.keyEquivalentModifierMask = [.command, .option]
         replaceItem.target = self
+        findMenu.addItem(.separator())
+        let findInFiles = findMenu.addItem(withTitle: "Find in Files…", action: #selector(findInFilesAction), keyEquivalent: "f")
+        findInFiles.keyEquivalentModifierMask = [.command, .shift]
+        findInFiles.target = self
 
         NSApp.mainMenu = mainMenu
     }
@@ -247,4 +252,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func findPrevMatch() { ActiveEditor.current?.findPrevious() }
     @objc private func findUseSelection() { ActiveEditor.current?.useSelectionForFind() }
     @objc private func findReplace() { ActiveEditor.current?.showReplace() }
+    @objc private func findInFilesAction() { SidebarSearchHook.reveal?() }
 }

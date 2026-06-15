@@ -4,7 +4,7 @@ import Foundation
 enum ClaudeState: String { case idle, working, needs }
 
 /// What a tab shows.
-enum TabKind: String, Codable { case claude, terminal, file, diff }
+enum TabKind: String, Codable { case claude, terminal, file, diff, search }
 
 /// A single tab in a session. Value type — sessions hold `[Tab]` and mutate by index, so changes
 /// flow through `Session`'s `@Published var tabs` for free.

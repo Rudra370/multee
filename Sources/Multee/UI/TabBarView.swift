@@ -246,6 +246,7 @@ final class TabChipView: PointerView, NSDraggingSource {
         case .file:     return "✎"
         case .diff:     return "±"
         case .claude:   return "✦"
+        case .search:   return "⌕"
         }
     }
 

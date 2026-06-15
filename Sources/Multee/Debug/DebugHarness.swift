@@ -81,8 +81,8 @@ enum DebugAction {
         case "editorReplaceOne": ActiveEditor.current?.debugReplaceOne(arg)
         case "sourceMode":   // flip a markdown/SVG viewer's Preview/Image ↔ Source toggle (arg "1"=source)
             let show = arg == "1" || arg == "source"
-            (ActiveEditor.current?.parent as? MarkdownViewController)?.debugSetSourceVisible(show)
-            (ActiveEditor.current?.parent as? ImageViewController)?.debugSetSourceVisible(show)
+            (ActiveEditor.current?.parent as? MarkdownViewController)?.setSourceVisible(show)
+            (ActiveEditor.current?.parent as? ImageViewController)?.setSourceVisible(show)
         case "setFont":     model.settings.fontSize = Double(arg) ?? 13
         case "treeNewFile":   FileTreeViewController.current?.debugCreate(name: arg, folder: false)
         case "treeNewFolder": FileTreeViewController.current?.debugCreate(name: arg, folder: true)
@@ -100,6 +100,16 @@ enum DebugAction {
         case "paletteUp":    CommandPaletteController.current?.debugMove(-1)
         case "paletteEnter": CommandPaletteController.current?.debugOpenSelected()
         case "paletteClose": CommandPaletteController.current?.dismiss()
+        case "sidebarMode":  SidebarViewController.current?.debugSelectMode(Int(arg) ?? 0)   // 0 Files / 1 Changes / 2 Search
+        case "revealSearch":  SidebarSearchHook.reveal?()                         // ⌘⇧F: reveal the sidebar Search
+        case "searchOpenAsTab": SearchViewController.current?.debugOpenAsTab()    // sidebar "Open as Tab" button
+        case "openAt":          // file|line — open a file at a line (a search-result click; tests markdown→Source)
+            let p = arg.split(separator: "|").map(String.init)
+            if p.count == 2, let line = Int(p[1]) { FileNavigator.openAt?(p[0], line) }
+        case "openSearchTab": model.activeSession?.openSearch()
+        case "projectSearchTab": SearchViewController.currentTab?.debugRun(arg)   // search inside the standalone tab
+        case "projectSearch": SearchViewController.current?.debugRun(arg)   // run a sidebar search synchronously
+        case "searchOpenFirst": SearchViewController.current?.debugOpenFirst()   // open the first hit at its line
         default: break
         }
     }
@@ -114,6 +124,8 @@ enum DebugState {
         root["findPanelsVisible"] = NSApp.windows.filter { $0 is FindPanel && $0.isVisible }.count
         if let ed = ActiveEditor.current { root["editorFocused"] = ed.debugIsFocused }
         if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }
+        if let s = SearchViewController.current?.debugState() { root["search"] = s }
+        if let s = SearchViewController.currentTab?.debugState() { root["searchTab"] = s }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
         root["branch"] = model.activeSession?.gitBranch ?? NSNull()
         if let ed = ActiveEditor.current {

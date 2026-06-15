@@ -47,7 +47,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "treeNewFile:a.txt", "treeNewFolder:dir", "treeBeginFile", "treeExpandAll",
               "treeCollapseAll", "treeRename:old.txt|new.txt", "treeDelete:path",
               "paletteOpen", "paletteCommands", "paletteType:foo", "paletteDown", "paletteUp",
-              "paletteEnter", "paletteClose"] }
+              "paletteEnter", "paletteClose", "sidebarMode:2", "revealSearch", "projectSearch:foo",
+              "searchOpenFirst", "searchOpenAsTab", "openSearchTab", "projectSearchTab:foo",
+              "openAt:file.md|3"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -114,14 +116,15 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - `App/` — `main.swift`, `AppDelegate.swift` (menu, key monitors, status routing, settings/update
   wiring), `MainWindowController.swift` (window + banner + workspace).
 - `Model/` — `AppModel`, `Session`, `Tab`, `Settings` (Combine), `Persistence` (JSON snapshot).
-- `Backend/` — `Shell`/`Env`, `Git` (status + actions).
+- `Backend/` — `Shell`/`Env`, `Git` (status + actions), `Search` (project-wide `git grep`).
 - `Terminal/` — `TerminalStore` (PTY per tab + scroll), `HookServer` (status listener), `Hooks`.
 - `UI/` — `WorkspaceViewController` (split + sidebar), `CenterViewController` (tab bar + content),
   `TabBarView`, `FileTree` (virtualized tree + a toolbar row: new file / new folder / collapse-all,
   with **inline in-tree naming** like VS Code), `RepoStore` (one per-session git poller — single
   FSEvents watcher + poll + actions, feeds the tree *and* Changes), `Editor` (plain NSTextStorage +
   native highlighter; line-based tokenizing run off-main on a serial queue, debounced re-highlight on
-  edit), `Changes` (virtualized list), `Diff`, `SettingsWindow`, `Updates`. A `.file` tab routes by
+  edit), `Changes` (virtualized list), `Diff`, `SearchPanel` (`SearchViewController` — project search UI,
+  shared by the sidebar Search segment and a `.search` tab), `SettingsWindow`, `Updates`. A `.file` tab routes by
   extension in `CenterViewController.makeContentView`: `ImageViewController` (images/icns/SVG — zoom/pan,
   source toggle), `MarkdownViewController` + `MarkdownRenderer` (rendered preview — code blocks reuse the
   TextMate engine, tables via NSTextTable, inline images), else the text `Editor`.

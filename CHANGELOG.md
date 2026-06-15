@@ -5,6 +5,22 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.11] - 2026-06-15
+
+### Added
+- **Project search (⌘⇧F)** — VS Code-style search across the active session's repo. **⌘⇧F** (or the command
+  palette → **Find in Files…**) opens the **Search** section in the sidebar (a new third icon next to Files /
+  Changes); type to search, with **Match Case**, **Whole Word**, and **Regular Expression** toggles and a live
+  result count. Results group by file (matches highlighted); click one to **open the file at that line**. It
+  uses `git grep`, so it respects `.gitignore` and needs nothing installed.
+- **Search as a tab** — the search panel has an **Open-as-Tab** button that promotes the current search to a
+  full-width tab (carrying your query + toggles). You can open **several** search tabs at once.
+- Opening a search hit in a **Markdown** or **SVG** file now switches to its **Source** (where the match is),
+  instead of the rendered preview.
+
+### Changed
+- **Format Document** moved to **⇧⌥F** (it was ⌘⇧F), freeing ⌘⇧F for Find in Files — matching VS Code.
+
 ## [0.1.10] - 2026-06-15
 
 ### Added

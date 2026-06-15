@@ -202,6 +202,9 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
                 ActiveEditor.current?.formatDocument()
             })
         }
+        if model.activeSession != nil {
+            c.append(PaletteCommand(title: "Find in Files…", keepsOpen: false) { SidebarSearchHook.reveal?() })
+        }
         c.append(PaletteCommand(title: "Go to File…", keepsOpen: true) { [weak self] in self?.enterFileMode() })
         c.append(PaletteCommand(title: "Settings…", keepsOpen: false) { [weak self] in self?.model.showSettings = true })
         if let s = model.activeSession, let t = s.activeTab {

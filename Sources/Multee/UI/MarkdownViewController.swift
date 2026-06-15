@@ -130,6 +130,6 @@ final class MarkdownViewController: NSViewController, SourceEditing {
         previewScroll.isHidden = showSource
     }
 
-    /// Dev-harness hook: flip Preview/Source (so the editable source + live preview re-render are testable).
-    func debugSetSourceVisible(_ visible: Bool) { toggle.selectedSegment = visible ? 1 : 0; modeChanged(toggle) }
+    /// Show the Preview (false) or the editable Source (true) — used by "open at line" from search and the harness.
+    func setSourceVisible(_ visible: Bool) { toggle.selectedSegment = visible ? 1 : 0; modeChanged(toggle) }
 }

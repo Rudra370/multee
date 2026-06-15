@@ -73,13 +73,16 @@ final class AppModel: ObservableObject {
         guard settings.restoreOnLaunch else { return }   // stateless when restore is off
         let state = PersistedState(
             sessions: sessions.map { s in
-                PersistedSession(
+                // Search tabs are transient tools, not documents — don't persist them. Index the active
+                // tab against the *persisted* list so the selection stays correct after the filter.
+                let persistable = s.tabs.filter { $0.kind != .search }
+                return PersistedSession(
                     url: s.url,
-                    tabs: s.tabs.map {
+                    tabs: persistable.map {
                         PersistedTab(kind: $0.kind.rawValue, title: $0.title, args: $0.args,
                                      path: $0.path, claudeSessionId: $0.claudeSessionId)
                     },
-                    activeTabIndex: s.tabs.firstIndex { $0.id == s.activeTabID }
+                    activeTabIndex: persistable.firstIndex { $0.id == s.activeTabID }
                 )
             },
             activeSessionIndex: sessions.firstIndex { $0.id == activeSessionID }

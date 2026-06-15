@@ -82,7 +82,7 @@ final class TerminalStore {
             args = base + ["--settings", Hooks.json]
             extraEnv["MULTEE_SESSION_ID"] = tab.id
             extraEnv["MULTEE_HOOK_PORT"] = String(HookServer.shared.port)
-        case .terminal, .file, .diff:   // only .terminal reaches here (file/diff use their own views)
+        case .terminal, .file, .diff, .search:   // only .terminal reaches here (file/diff/search use their own views)
             exe = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
             // A terminal tab created with an initial command (e.g. "Install" a formatter) runs it, then
             // drops to an interactive login shell so its output stays visible.

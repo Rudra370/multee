@@ -18,6 +18,7 @@ final class CenterViewController: NSViewController {
     private var contentVCs: [String: NSViewController] = [:]   // VC-backed content (editor, diff)
     private var contentPaths: [String: String] = [:]          // path each content view was built for (rename detect)
     private var lastActiveTabID: String?                       // focus a tab's editor only when it newly becomes active
+    private var pendingReveal: [String: Int] = [:]            // tabID → line to jump to once its editor is built (search hit)
 
     private let statusBar: StatusBarView
 
@@ -127,6 +128,18 @@ final class CenterViewController: NSViewController {
         FormatterInstall.run = { [weak self] command in
             self?.model.activeSession?.addTab(Tab(kind: .terminal, title: "Install", args: command))
         }
+        // A project-search hit (sidebar / search tab) → open the file in the active session and jump to the line.
+        FileNavigator.openAt = { [weak self] rel, line in
+            guard let self, let session = self.model.activeSession else { return }
+            let before = session.activeTabID
+            session.openFile(rel)
+            let id = session.activeTabID
+            if id == before, let editor = (self.contentVCs[id] as? SourceEditing)?.sourceEditor {
+                editor.goToLine(line)            // already the active editor → jump now (no render to ride)
+            } else {
+                self.pendingReveal[id] = line    // otherwise consumed in render() once its editor is built & active
+            }
+        }
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.refresh() }
@@ -194,6 +207,28 @@ final class CenterViewController: NSViewController {
             if let editor = contentVCs[tab.id] as? EditorViewController {
                 DispatchQueue.main.async { editor.focusText() }
             }
+            if let search = contentVCs[tab.id] as? SearchViewController {
+                DispatchQueue.main.async { search.focusField() }
+            }
+        }
+
+        // A search hit opened this file → jump to its line now the editor exists & is active (after any
+        // focus above, so the centering scroll wins).
+        if let line = pendingReveal[tab.id] {
+            pendingReveal.removeValue(forKey: tab.id)
+            // A hit in a markdown/SVG file lives in the Source, not the rendered Preview — show Source so the
+            // selected line is actually visible.
+            (contentVCs[tab.id] as? MarkdownViewController)?.setSourceVisible(true)
+            (contentVCs[tab.id] as? ImageViewController)?.setSourceVisible(true)
+            let editor = ActiveEditor.current
+            DispatchQueue.main.async { editor?.goToLine(line) }
+        }
+
+        // The sidebar's "Open as Tab" seeded a query → apply it to the now-active search tab.
+        if tab.kind == .search, let seed = SearchSeed.pending,
+           let svc = contentVCs[tab.id] as? SearchViewController {
+            SearchSeed.pending = nil
+            DispatchQueue.main.async { svc.seed(seed.query, seed.options) }
         }
 
         if tab.kind == .claude || tab.kind == .terminal {
@@ -229,6 +264,14 @@ final class CenterViewController: NSViewController {
         case .diff:
             let vc = DiffViewController(repo: session.url, path: tab.path ?? "",
                                        onOpenFile: { [weak session] in session?.openFile(tab.path ?? "") })
+            addChild(vc)
+            contentVCs[tab.id] = vc
+            return vc.view
+        case .search:
+            // A full-width project search in the center. `isPrimary: false` so it doesn't steal the
+            // sidebar instance's `SearchViewController.current` (the harness target).
+            let vc = SearchViewController(repo: session.url, isPrimary: false,
+                                          onOpen: { rel, line in FileNavigator.openAt?(rel, line) })
             addChild(vc)
             contentVCs[tab.id] = vc
             return vc.view

@@ -128,8 +128,8 @@ final class ImageViewController: NSViewController, SourceEditing {
         self.toggle = toggle
     }
 
-    /// Dev-harness hook: flip Image/Source (so the editable source + image re-render are testable).
-    func debugSetSourceVisible(_ visible: Bool) {
+    /// Show the Image (false) or the editable Source (true) — used by "open at line" from search and the harness.
+    func setSourceVisible(_ visible: Bool) {
         guard let toggle else { return }
         toggle.selectedSegment = visible ? 1 : 0
         modeChanged(toggle)

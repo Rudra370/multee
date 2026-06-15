@@ -80,6 +80,12 @@ final class Session: ObservableObject, Identifiable {
         addTab(Tab(kind: .file, title: (abs as NSString).lastPathComponent, path: abs))
     }
 
+    /// Open (or focus, if already open) the project Search tab for this session.
+    func openSearch() {
+        if let existing = tabs.first(where: { $0.kind == .search }) { activate(existing.id); return }
+        addTab(Tab(kind: .search, title: "Search"))
+    }
+
     /// `path` is repo-relative here (the diff needs it relative for `git show HEAD:<path>`).
     func openDiff(_ path: String) {
         if let existing = tabs.first(where: { $0.kind == .diff && $0.path == path }) {

@@ -156,6 +156,37 @@ menu via the `CommandPaletteHook` static hook (`toggle` for ⌘P, `command` for 
 / `paletteType:` / `paletteDown` / `paletteUp` / `paletteEnter` / `paletteClose`, with a `palette` block —
 mode, results, selected — in the state dump) since ⌘P + arrows are HID the harness can't synthesize.
 
+## Project search — `Backend/Search`, `UI/SearchPanel`, `UI/WorkspaceViewController`, `UI/CenterViewController`
+VS Code-style project-wide text search, **scoped to the active session's repo**. The backend `ProjectSearch.run`
+shells out to **`git grep`** — every session is a git repo, so no extra dependency: it respects `.gitignore`
+and (with `--untracked`) covers tracked *and* new-but-not-ignored files. Flags map the toggles: `-i` (not
+Match Case), `-w` (Whole Word), `-E` regex vs `-F` fixed-string. Exit codes are read via `Shell.runFull`
+(0 = matches, 1 = none, **>1 = error** → `failed`, e.g. an invalid regex); output is parsed `FILE:LINE:TEXT`
+into `[FileHits]`, previews trimmed of indentation and capped, total matches capped.
+
+`SearchViewController` (the shared UI) is a query field + **Match-Case / Whole-Word / Regex** toggles over an
+`NSOutlineView` of file → matching lines. Searches run **debounced (~220 ms) off-main** with a token to drop
+stale results, so it costs nothing until you type. Results group by file (expanded by default), previews show
+the line with **matched ranges highlighted** (an `NSRegularExpression` mirroring the same options). The
+outline (`SearchOutlineView`) **hides the system disclosure triangle** (`frameOfOutlineCell` → `.zero`) and
+draws its **own chevron** in the file cell, so match rows sit **flush-left** (line number hugging the preview)
+instead of nested — and the chevron has a real gap to the filename. Clicking a result calls the
+`FileNavigator.openAt` static hook → opens the file in the active session and **jumps to the line**
+(`goToLine`); for **markdown / SVG** files it first flips the viewer to **Source** (`setSourceVisible(true)`)
+since the hit is in the source, not the rendered preview.
+
+Two surfaces: (1) the **right sidebar's Search segment** — the Files/Changes switcher became a **3-icon**
+control (Files / Changes / Search); selecting Search shows the panel and focuses the field. (2) a **standalone
+Search tab** (`TabKind.search`, `⌕` glyph) — a full-width search in the center. **⌘⇧F** (and the palette's
+**Find in Files…**) **reveals the sidebar** Search section via the `SidebarSearchHook.reveal` hook (Format
+Document moved to **⇧⌥F** to free the shortcut). The sidebar panel has an **Open-as-Tab** button (⬈, sidebar
+instance only) that opens a **fresh** search tab each time (multiple allowed, titled `Search: <query>`),
+**carrying the query + toggles** via the `SearchSeed` holder, consumed in `CenterViewController.render` when the
+tab activates. Search tabs are **excluded from session restore** (`AppModel.save` filters `.search`, indexing
+the active tab against the filtered list). Harness: `projectSearch:` / `searchOpenFirst` / `sidebarMode:` /
+`revealSearch` / `searchOpenAsTab` / `openSearchTab` / `projectSearchTab:` / `openAt:file|line`, with `search`
++ `searchTab` blocks in the state dump (the field/outline are HID the harness can't drive).
+
 ## File viewers — `UI/ImageViewController`, `UI/MarkdownViewController`, `UI/MarkdownRenderer`
 A `.file` tab picks its view by extension (`CenterViewController.makeContentView`): images → viewer,
 markdown → preview, else the text editor. **Images** (png/jpg/gif/bmp/tiff/webp/heic/`icns`/ico, plus
