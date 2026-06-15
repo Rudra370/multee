@@ -180,6 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileItem.submenu = fileMenu
         let open = fileMenu.addItem(withTitle: "Open Folder…", action: #selector(openFolder), keyEquivalent: "o")
         open.target = self
+        let goToFile = fileMenu.addItem(withTitle: "Go to File…", action: #selector(goToFile), keyEquivalent: "p")
+        goToFile.target = self
         let closeTab = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeActiveTab), keyEquivalent: "w")
         closeTab.target = self
 
@@ -222,4 +224,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func formatActiveDocument() { ActiveEditor.current?.formatDocument() }
+
+    @objc private func goToFile() { CommandPaletteHook.toggle?() }
 }

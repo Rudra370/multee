@@ -42,7 +42,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "closeActiveTab", "closeSession", "openSettings", "sendText:hi", "sendEnter",
               "scroll:up:10", "setStatus:needs", "editorType:x", "editorSave", "setFont:16",
               "treeNewFile:a.txt", "treeNewFolder:dir", "treeBeginFile", "treeExpandAll",
-              "treeCollapseAll", "treeRename:old.txt|new.txt", "treeDelete:path"] }
+              "treeCollapseAll", "treeRename:old.txt|new.txt", "treeDelete:path",
+              "paletteOpen", "paletteType:foo", "paletteDown", "paletteUp", "paletteEnter",
+              "paletteClose"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via

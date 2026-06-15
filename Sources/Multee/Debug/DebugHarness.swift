@@ -80,6 +80,12 @@ enum DebugAction {
             let p = arg.split(separator: "|", maxSplits: 1).map(String.init)
             if p.count == 2 { FileTreeViewController.current?.debugRename(rel: p[0], to: p[1]) }
         case "treeDelete": FileTreeViewController.current?.debugDelete(rel: arg)
+        case "paletteOpen":  CommandPaletteHook.toggle?()
+        case "paletteType":  CommandPaletteController.current?.debugType(arg)
+        case "paletteDown":  CommandPaletteController.current?.debugMove(1)
+        case "paletteUp":    CommandPaletteController.current?.debugMove(-1)
+        case "paletteEnter": CommandPaletteController.current?.debugOpenSelected()
+        case "paletteClose": CommandPaletteController.current?.dismiss()
         default: break
         }
     }
@@ -91,6 +97,7 @@ enum DebugState {
         var root: [String: Any] = [:]
         if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count }
         root["selfMemMB"] = Int(ResourceMonitor.memoryMB())
+        if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
         root["activeSessionPath"] = model.activeSession?.url ?? NSNull()
         root["sessions"] = model.sessions.map { s in

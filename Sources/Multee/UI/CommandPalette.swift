@@ -1,0 +1,406 @@
+import AppKit
+
+/// Global hook so ⌘P (an AppDelegate menu item) can reach the single palette owned by the window
+/// controller — same static-hook pattern as `FormatterInstall` / `ActiveEditor`.
+enum CommandPaletteHook { static var toggle: (() -> Void)? }
+
+/// VS Code-style quick-open (⌘P): a top-centered overlay with a search field over a results list.
+/// Type to fuzzy-match files in the active session's repo, ↑/↓ to move, Enter to open, Esc / click-out
+/// to dismiss. Empty query lists the currently-open file tabs (quick switch). The file list is fetched
+/// once per open via `Git.repoFiles` (off-main, gitignored dirs excluded) — no extra git poller, so it
+/// costs nothing until you press ⌘P.
+final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    static weak var current: CommandPaletteController?
+
+    private let model: AppModel
+    private weak var host: NSView?
+
+    private struct Row { let rel: String; let status: GitStatus }
+    private var allRows: [Row] = []        // full repo listing (lazy, fetched on present)
+    private var openRows: [Row] = []       // currently-open file tabs (shown for empty query)
+    private var hits: [Row] = []           // current filtered/sorted results
+    private var selected = 0
+    private var loadToken = 0              // drops a stale async listing if the palette was reopened
+
+    init(model: AppModel) {
+        self.model = model
+        super.init()
+    }
+
+    /// Remember where to mount the overlay (added only on present, removed on dismiss → zero idle cost).
+    func attach(to host: NSView) { self.host = host }
+
+    var isShown: Bool { overlay?.superview != nil }
+
+    func toggle() { isShown ? dismiss() : present() }
+
+    // MARK: - Present / dismiss
+
+    private var overlay: ScrimView?
+    private let panel = NSView()
+    private let field = NSTextField()
+    private let table = NSTableView()
+    private let scroll = NSScrollView()
+    private let placeholder = NSTextField(labelWithString: "")
+    private var listHeight: NSLayoutConstraint!
+
+    private func present() {
+        guard let host, let session = model.activeSession else { return }
+        CommandPaletteController.current = self
+
+        if overlay == nil { buildUI() }
+        guard let overlay else { return }
+
+        // Seed the open-tabs quick-switch list, then fetch the full repo listing.
+        openRows = session.tabs
+            .filter { $0.kind == .file }
+            .compactMap { $0.path }
+            .map { Row(rel: relative($0, to: session.url), status: .none) }
+        allRows = []
+        loadFiles(repo: session.url)
+
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: host.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            overlay.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+        ])
+
+        field.stringValue = ""
+        selected = 0
+        applyFilter()
+        host.window?.makeFirstResponder(field)
+    }
+
+    func dismiss() {
+        overlay?.removeFromSuperview()
+        loadToken += 1   // ignore any in-flight listing
+    }
+
+    private func loadFiles(repo: String) {
+        loadToken += 1
+        let token = loadToken
+        DispatchQueue.global().async { [weak self] in
+            let rows = Git.repoFiles(repo, expandIgnored: false)
+                .filter { !$0.isDir }
+                .map { Row(rel: $0.path, status: $0.status) }
+            DispatchQueue.main.async {
+                guard let self, token == self.loadToken else { return }   // reopened → drop stale result
+                self.allRows = rows
+                self.applyFilter()
+            }
+        }
+    }
+
+    // MARK: - Filtering
+
+    private func applyFilter() {
+        let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if query.isEmpty {
+            hits = openRows
+        } else {
+            hits = allRows
+                .compactMap { row -> (Row, Int)? in
+                    guard let s = Fuzzy.score(query, row.rel) else { return nil }
+                    return (row, s)
+                }
+                .sorted {
+                    $0.1 != $1.1 ? $0.1 > $1.1
+                        : ($0.0.rel.count != $1.0.rel.count ? $0.0.rel.count < $1.0.rel.count
+                           : $0.0.rel < $1.0.rel)
+                }
+                .prefix(50)
+                .map { $0.0 }
+        }
+        selected = min(selected, max(0, hits.count - 1))
+        table.reloadData()
+        if !hits.isEmpty { table.selectRowIndexes([selected], byExtendingSelection: false) }
+
+        let rows = max(1, min(hits.count, 12))
+        listHeight.constant = CGFloat(rows) * rowHeight
+        placeholder.isHidden = !hits.isEmpty
+        placeholder.stringValue = query.isEmpty ? "No open files" : "No matching files"
+
+        // Resolve the panel→scroll resize synchronously and re-tile the table to its new clip — otherwise
+        // the scroll/table frames lag the constant change for a frame (a shrinking list paints a stretched
+        // selection until the next pass).
+        overlay?.layoutSubtreeIfNeeded()
+        table.tile()
+    }
+
+    private func move(_ delta: Int) {
+        guard !hits.isEmpty else { return }
+        selected = max(0, min(hits.count - 1, selected + delta))
+        table.selectRowIndexes([selected], byExtendingSelection: false)
+        table.scrollRowToVisible(selected)
+    }
+
+    private func openSelected() {
+        guard hits.indices.contains(selected) else { return }
+        let rel = hits[selected].rel
+        dismiss()
+        model.activeSession?.openFile(rel)
+    }
+
+    // MARK: - NSControlTextEditingDelegate (drive the list from the field)
+
+    func controlTextDidChange(_ obj: Notification) {
+        selected = 0
+        applyFilter()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        switch sel {
+        case #selector(NSResponder.moveDown(_:)):       move(1); return true
+        case #selector(NSResponder.moveUp(_:)):         move(-1); return true
+        case #selector(NSResponder.insertNewline(_:)):  openSelected(); return true
+        case #selector(NSResponder.cancelOperation(_:)): dismiss(); return true
+        default: return false
+        }
+    }
+
+    // MARK: - Table
+
+    private let rowHeight: CGFloat = 32
+
+    func numberOfRows(in tableView: NSTableView) -> Int { hits.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let id = NSUserInterfaceItemIdentifier("paletteCell")
+        let cell = (tableView.makeView(withIdentifier: id, owner: self) as? PaletteCellView) ?? {
+            let c = PaletteCellView(); c.identifier = id; return c
+        }()
+        let r = hits[row]
+        cell.configure(name: (r.rel as NSString).lastPathComponent,
+                       dir: (r.rel as NSString).deletingLastPathComponent,
+                       status: r.status)
+        return cell
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PaletteRowView()
+    }
+
+    @objc private func rowClicked() {
+        guard table.clickedRow >= 0 else { return }
+        selected = table.clickedRow
+        openSelected()
+    }
+
+    // MARK: - UI build
+
+    private func buildUI() {
+        let overlay = ScrimView()
+        overlay.wantsLayer = true
+        overlay.onClickOutside = { [weak self] point in
+            guard let self else { return }
+            if !self.panel.frame.contains(point) { self.dismiss() }
+        }
+
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.wantsLayer = true
+        panel.layer?.backgroundColor = NSColor(white: 0.16, alpha: 1).cgColor
+        panel.layer?.cornerRadius = 8
+        panel.layer?.borderWidth = 1
+        panel.layer?.borderColor = NSColor(white: 0.30, alpha: 1).cgColor
+        panel.shadow = NSShadow()
+        panel.layer?.shadowColor = .black
+        panel.layer?.shadowOpacity = 0.4
+        panel.layer?.shadowRadius = 16
+        panel.layer?.shadowOffset = CGSize(width: 0, height: -4)
+        overlay.addSubview(panel)
+
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 15)
+        field.textColor = NSColor(white: 0.95, alpha: 1)
+        field.placeholderString = "Search files by name"
+        field.delegate = self
+        panel.addSubview(field)
+
+        let sep = NSView()
+        sep.translatesAutoresizingMaskIntoConstraints = false
+        sep.wantsLayer = true
+        sep.layer?.backgroundColor = NSColor(white: 0.30, alpha: 1).cgColor
+        panel.addSubview(sep)
+
+        table.translatesAutoresizingMaskIntoConstraints = false
+        table.headerView = nil
+        table.backgroundColor = .clear
+        // `.automatic` (the default on macOS 11+) inset-pads rows and draws a rounded, inset selection —
+        // which stretched our single-row selection band. `.plain` = exact row height, full-width selection.
+        if #available(macOS 11.0, *) { table.style = .plain }
+        table.rowHeight = rowHeight
+        table.intercellSpacing = .zero
+        table.gridStyleMask = []
+        table.selectionHighlightStyle = .regular
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(rowClicked)
+        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c"))
+        col.resizingMask = .autoresizingMask
+        table.addTableColumn(col)
+
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.backgroundColor = .clear
+        panel.addSubview(scroll)
+
+        placeholder.translatesAutoresizingMaskIntoConstraints = false
+        placeholder.font = .systemFont(ofSize: 12)
+        placeholder.textColor = NSColor(white: 0.5, alpha: 1)
+        placeholder.alignment = .center
+        scroll.addSubview(placeholder)
+
+        listHeight = scroll.heightAnchor.constraint(equalToConstant: rowHeight)
+        NSLayoutConstraint.activate([
+            panel.topAnchor.constraint(equalTo: overlay.topAnchor, constant: 80),
+            panel.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            panel.widthAnchor.constraint(equalToConstant: 560),
+
+            field.topAnchor.constraint(equalTo: panel.topAnchor, constant: 12),
+            field.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 14),
+            field.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -14),
+
+            sep.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 10),
+            sep.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            sep.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            sep.heightAnchor.constraint(equalToConstant: 1),
+
+            scroll.topAnchor.constraint(equalTo: sep.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 4),
+            scroll.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -4),
+            scroll.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -4),
+            listHeight,
+
+            placeholder.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            placeholder.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 8),
+        ])
+        self.overlay = overlay
+    }
+
+    private func relative(_ abs: String, to repo: String) -> String {
+        let prefix = repo.hasSuffix("/") ? repo : repo + "/"
+        return abs.hasPrefix(prefix) ? String(abs.dropFirst(prefix.count)) : (abs as NSString).lastPathComponent
+    }
+
+    // MARK: - Debug harness hooks (HID can't drive ⌘P / arrows in the sandbox)
+
+    func debugType(_ text: String) { field.stringValue = text; selected = 0; applyFilter() }
+    func debugMove(_ delta: Int) { move(delta) }
+    func debugOpenSelected() { openSelected() }
+    func debugState() -> [String: Any] {
+        ["shown": isShown, "query": field.stringValue, "results": hits.count,
+         "selected": selected,
+         "selectedPath": hits.indices.contains(selected) ? hits[selected].rel : NSNull()]
+    }
+}
+
+/// Full-host click catcher: a click outside the panel dismisses (handled by the controller).
+private final class ScrimView: NSView {
+    var onClickOutside: ((NSPoint) -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        onClickOutside?(convert(event.locationInWindow, from: nil))
+    }
+}
+
+/// One result row: filename (git-status tinted) + a dim parent dir, vertically centered. Colors brighten
+/// when selected so the dim dir text stays legible on the accent-blue background (`backgroundStyle`
+/// flips to `.emphasized`, driven by the row view's `interiorBackgroundStyle` below).
+private final class PaletteCellView: NSTableCellView {
+    private let nameField = NSTextField(labelWithString: "")
+    private let dirField = NSTextField(labelWithString: "")
+    private var status: GitStatus = .none
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        nameField.font = .systemFont(ofSize: 13)
+        nameField.lineBreakMode = .byTruncatingTail
+        nameField.setContentCompressionResistancePriority(.required, for: .horizontal)
+        dirField.font = .systemFont(ofSize: 11)
+        dirField.lineBreakMode = .byTruncatingMiddle
+        dirField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let stack = NSStackView(views: [nameField, dirField])
+        stack.orientation = .horizontal
+        stack.alignment = .firstBaseline
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(name: String, dir: String, status: GitStatus) {
+        self.status = status
+        nameField.stringValue = name
+        dirField.stringValue = dir
+        dirField.isHidden = dir.isEmpty
+        applyColors()
+    }
+
+    override var backgroundStyle: NSView.BackgroundStyle { didSet { applyColors() } }
+
+    private func applyColors() {
+        let selected = backgroundStyle == .emphasized
+        nameField.textColor = selected ? .white : nsStatusColor(status)
+        dirField.textColor = selected ? NSColor(white: 1, alpha: 0.85) : NSColor(white: 0.5, alpha: 1)
+    }
+}
+
+/// Accent-tinted selection that fills the row (and forces `.emphasized` so cell text brightens even when
+/// the window isn't key — e.g. while the harness drives it).
+private final class PaletteRowView: NSTableRowView {
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { isSelected ? .emphasized : .normal }
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        NSColor.controlAccentColor.withAlphaComponent(0.85).setFill()
+        bounds.fill()
+    }
+}
+
+// MARK: - Fuzzy scoring
+
+enum Fuzzy {
+    /// Subsequence match of `query` in `candidate` (case-insensitive). Returns nil if not all query
+    /// chars appear in order; otherwise a score where higher = better. Bonuses: consecutive runs,
+    /// word-boundary / camelCase starts, and matches in the filename (last path component). Greedy
+    /// earliest-match — complete for detecting a subsequence, good-enough for ranking.
+    static func score(_ query: String, _ candidate: String) -> Int? {
+        let q = Array(query.lowercased())
+        if q.isEmpty { return 0 }
+        let orig = Array(candidate)
+        let lower = Array(candidate.lowercased())
+        let baseStart = lower.count - ((candidate as NSString).lastPathComponent.count)
+
+        var qi = 0, total = 0, prevMatch = -2, i = 0
+        while i < lower.count && qi < q.count {
+            if lower[i] == q[qi] {
+                var s = 1
+                if i == prevMatch + 1 { s += 5 }                                   // consecutive
+                let prev: Character = i > 0 ? orig[i - 1] : "/"
+                if "/._- ".contains(prev) { s += 8 }                               // word boundary
+                else if orig[i].isUppercase && !orig[i - 1].isUppercase { s += 4 } // camelCase
+                if i >= baseStart { s += 3 }                                       // filename region
+                total += s
+                prevMatch = i
+                qi += 1
+            }
+            i += 1
+        }
+        guard qi == q.count else { return nil }
+        return total - lower.count / 40   // mild preference for shorter paths
+    }
+}

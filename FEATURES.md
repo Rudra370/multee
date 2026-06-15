@@ -85,6 +85,21 @@ separate **synchronous** `saveImmediately()` so "Save & Close" / quit always per
 save's async write could otherwise run after the editor is torn down and drop the edits. (Per-language
 command overrides were intentionally not built — niche + UI cost; revisit if a default command is ever wrong.)
 
+## Command palette (⌘P quick-open) — `UI/CommandPalette`, `App/MainWindowController`, `App/AppDelegate`
+A VS Code-style quick-open: **⌘P** (File → **Go to File…**) drops a top-centered overlay — a search field
+over a results list — to jump to any file in the active session's repo. Type to **fuzzy-match** (a
+case-insensitive subsequence over the repo-relative path, scored with bonuses for consecutive runs,
+word-boundary / camelCase starts, and matches in the filename), **↑/↓** to move, **Enter** (or click) to
+open, **Esc** / click-outside to dismiss. An empty query lists the **currently-open file tabs** (quick
+switch). Rows show the filename tinted by git status (reusing the tree's `nsStatusColor`) + a dim parent
+dir. The file list is fetched **once per open** via `Git.repoFiles(expandIgnored: false)` off-main (so
+gitignored dirs are excluded and it's always fresh) — there's **no extra git poller**, and the overlay is
+mounted only while shown, so ⌘P costs nothing until pressed. The palette is owned by `MainWindowController`
+(hosted over the banner + workspace) and reached from the menu via the `CommandPaletteHook` static hook
+(same pattern as `FormatterInstall` / `ActiveEditor`). Harness-driveable for verification
+(`paletteOpen` / `paletteType:` / `paletteDown` / `paletteUp` / `paletteEnter` / `paletteClose`, with a
+`palette` block in the state dump) since ⌘P + arrows are HID the harness can't synthesize.
+
 ## File viewers — `UI/ImageViewController`, `UI/MarkdownViewController`, `UI/MarkdownRenderer`
 A `.file` tab picks its view by extension (`CenterViewController.makeContentView`): images → viewer,
 markdown → preview, else the text editor. **Images** (png/jpg/gif/bmp/tiff/webp/heic/`icns`/ico, plus

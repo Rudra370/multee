@@ -3,8 +3,11 @@ import AppKit
 /// The single main window. Hosts the `WorkspaceViewController` (the split layout). Window frame
 /// persists via an autosave name.
 final class MainWindowController: NSWindowController, NSWindowDelegate {
+    private let palette: CommandPaletteController
+
     init(model: AppModel) {
         let workspace = WorkspaceViewController(model: model)
+        self.palette = CommandPaletteController(model: model)
 
         // Root container: update banner (top, collapses to 0 height when hidden) + workspace.
         let container = NSViewController()
@@ -38,6 +41,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if window.frame.origin == .zero { window.center() }
         super.init(window: window)
         window.delegate = self
+
+        // ⌘P quick-open overlays the whole content area (above the banner + workspace).
+        palette.attach(to: root)
+        CommandPaletteHook.toggle = { [weak palette] in palette?.toggle() }
     }
 
     @available(*, unavailable)
