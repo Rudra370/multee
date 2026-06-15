@@ -56,14 +56,18 @@ precompiled on load, making `spans(for:)` a pure read safe to run on any thread;
 synchronously on open (no flash), large files and edits colour asynchronously. Edits coalesce via a
 **150 ms debounce** and recolour only (text/selection/undo untouched), with a sequence guard dropping
 any pass a newer edit superseded. Cmd+S saves; edits flag the tab dirty (chip dot). Shared font size
-live-applies with in-place run resize. **⌘F find** is a custom VS Code-style find bar (`UI/FindBar`,
+live-applies with in-place run resize. **⌘F find / replace** is a custom VS Code-style bar (`UI/FindBar`,
 overlaying the editor's top-right — the scroll view is wrapped in a container for it): a search field with
 **Match-Case / Whole-Word / Regex** toggles (the native `NSTextFinder` has none of these), a `3 of 12`
-counter, prev/next (⏎ / ⇧⏎), and Esc to close. Matches are found via `NSString` substring or
+counter, prev/next (⏎ / ⇧⏎), Esc to close, and a disclosure chevron that expands a **Replace** row
+(Replace current / Replace All; ⌥⌘F opens it expanded). Matches are found via `NSString` substring or
 `NSRegularExpression` (invalid regex → red field, no crash), highlighted with **layout-manager temporary
 `.backgroundColor` attributes** (no text mutation / undo pollution — they sit alongside the highlighter's
-foreground attributes), the current one stronger + centered; the toggle states persist in `Settings`
-(remembered across files + launches). Edit → Find routes ⌘F / ⌘G / ⌘⇧G / ⌘E to the active editor's bar.
+foreground attributes), the current one stronger + centered; replace is one undoable edit (reverse order
+keeps ranges valid) and expands `$1` templates in regex mode. The toggle states persist in `Settings`
+(remembered across files + launches); find re-runs on edits while open. Edit → Find routes
+⌘F / ⌘G / ⌘⇧G / ⌘E / ⌥⌘F to the active editor's bar. The bar's buttons are `PointerButton`s (hand cursor +
+tooltips).
 A **line-number gutter** (`UI/LineNumberRuler`, the scroll view's
 vertical `NSRulerView`) draws VS Code-style numbers: only the lines in the visible rect are drawn each
 pass, char-index→line is a binary search over a cached `lineStarts` array rebuilt only on text change,

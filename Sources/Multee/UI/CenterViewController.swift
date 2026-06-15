@@ -268,20 +268,4 @@ final class CenterViewController: NSViewController {
             contentPaths[id] = nil
         }
     }
-
-    private func placeholder(_ text: String) -> NSView {
-        let v = NSView()
-        v.wantsLayer = true
-        v.layer?.backgroundColor = NSColor(white: 0.11, alpha: 1).cgColor
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 13)
-        label.textColor = .tertiaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-        v.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: v.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: v.centerYAnchor),
-        ])
-        return v
-    }
 }

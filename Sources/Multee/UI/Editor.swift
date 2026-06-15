@@ -255,6 +255,8 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
             bar.onNext = { [weak self] in self?.findStep(1) }
             bar.onPrev = { [weak self] in self?.findStep(-1) }
             bar.onClose = { [weak self] in self?.hideFind() }
+            bar.onReplace = { [weak self] in self?.replaceCurrent() }
+            bar.onReplaceAll = { [weak self] in self?.replaceAll() }
             bar.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(bar)
             NSLayoutConstraint.activate([
@@ -283,6 +285,47 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     /// ⌘G / ⌘⇧G — open the bar if closed, else step. (Works from the editor, not just the find field.)
     func findNext() { (findBar?.isHidden ?? true) ? showFind() : findStep(1) }
     func findPrevious() { (findBar?.isHidden ?? true) ? showFind() : findStep(-1) }
+
+    /// ⌥⌘F — open find with the Replace row expanded.
+    func showReplace() { showFind(); findBar?.expandReplace() }
+
+    /// Replace the current match, then advance (textDidChange re-runs the search → highlights refresh).
+    func replaceCurrent() {
+        guard let bar = findBar, findMatches.indices.contains(findCurrent) else { return }
+        let r = findMatches[findCurrent]
+        let replacement = expandedReplacement(for: r, bar: bar)
+        if textView.shouldChangeText(in: r, replacementString: replacement) {
+            textView.textStorage?.replaceCharacters(in: r, with: replacement)
+            textView.didChangeText()
+        }
+    }
+
+    /// Replace every match in a single undoable edit (reverse order keeps the earlier ranges valid).
+    func replaceAll() {
+        guard let bar = findBar, !findMatches.isEmpty else { return }
+        let ns = textView.string as NSString
+        let result = NSMutableString(string: ns)
+        for r in findMatches.reversed() {
+            result.replaceCharacters(in: r, with: expandedReplacement(for: r, bar: bar))
+        }
+        let full = NSRange(location: 0, length: ns.length)
+        if textView.shouldChangeText(in: full, replacementString: result as String) {
+            textView.textStorage?.replaceCharacters(in: full, with: result as String)
+            textView.didChangeText()
+        }
+    }
+
+    /// In regex mode, expand `$1`-style templates against the matched text; otherwise a literal replacement.
+    private func expandedReplacement(for range: NSRange, bar: FindBar) -> String {
+        guard bar.regex else { return bar.replaceText }
+        var opts: NSRegularExpression.Options = []
+        if !bar.matchCase { opts.insert(.caseInsensitive) }
+        let pattern = bar.wholeWord ? "\\b(?:\(bar.query))\\b" : bar.query
+        guard let re = try? NSRegularExpression(pattern: pattern, options: opts) else { return bar.replaceText }
+        let matched = (textView.string as NSString).substring(with: range)
+        return re.stringByReplacingMatches(in: matched, range: NSRange(location: 0, length: (matched as NSString).length),
+                                           withTemplate: bar.replaceText)
+    }
 
     /// ⌘E — search for the current selection.
     func useSelectionForFind() {
@@ -539,6 +582,9 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     func debugFind(_ term: String) { showFind(); findBar?.setQuery(term); findChanged() }
     func debugFindToggle(_ which: String) { findBar?.debugToggle(which); findChanged() }
     func debugFindNext() { findNext() }
+    func debugReplaceShow() { showReplace() }
+    func debugReplaceAll(_ with: String) { findBar?.setReplace(with); replaceAll() }
+    func debugReplaceOne(_ with: String) { findBar?.setReplace(with); replaceCurrent() }
     var debugFindCount: Int { findMatches.count }
     var debugFindCurrent: Int { findCurrent }
     /// The currently selected substring (dev harness — to verify a find landed on a match).

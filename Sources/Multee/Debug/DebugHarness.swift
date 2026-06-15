@@ -69,6 +69,9 @@ enum DebugAction {
         case "editorFind":       ActiveEditor.current?.debugFind(arg)
         case "editorFindToggle": ActiveEditor.current?.debugFindToggle(arg)   // case | word | regex
         case "editorFindNext":   ActiveEditor.current?.debugFindNext()
+        case "editorReplaceShow": ActiveEditor.current?.debugReplaceShow()
+        case "editorReplaceAll": ActiveEditor.current?.debugReplaceAll(arg)
+        case "editorReplaceOne": ActiveEditor.current?.debugReplaceOne(arg)
         case "sourceMode":   // flip a markdown/SVG viewer's Preview/Image ↔ Source toggle (arg "1"=source)
             let show = arg == "1" || arg == "source"
             (ActiveEditor.current?.parent as? MarkdownViewController)?.debugSetSourceVisible(show)

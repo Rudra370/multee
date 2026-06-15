@@ -217,6 +217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   findMenu.addItem(withTitle: "Use Selection for Find", action: #selector(findUseSelection), keyEquivalent: "e")] {
             i.target = self
         }
+        let replaceItem = findMenu.addItem(withTitle: "Find and Replace…", action: #selector(findReplace), keyEquivalent: "f")
+        replaceItem.keyEquivalentModifierMask = [.command, .option]
+        replaceItem.target = self
 
         NSApp.mainMenu = mainMenu
     }
@@ -249,4 +252,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func findNextMatch() { ActiveEditor.current?.findNext() }
     @objc private func findPrevMatch() { ActiveEditor.current?.findPrevious() }
     @objc private func findUseSelection() { ActiveEditor.current?.useSelectionForFind() }
+    @objc private func findReplace() { ActiveEditor.current?.showReplace() }
 }
