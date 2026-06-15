@@ -5,6 +5,23 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.9] - 2026-06-15
+
+### Added
+- **Command palette (⌘P)** — a VS Code-style quick-open. Press **⌘P**, type part of a filename, and fuzzy-
+  matched files appear (matched letters highlighted, git-status colored); arrow keys to move, Enter to open.
+  An empty query lists your open files. Two more modes from the same field: type **`:123`** to jump to a line
+  in the current file, or **`>`** (also **⌘⇧P**) for **commands** — New Claude Session, New Terminal, Format
+  Document, Go to File…, Settings, Close Tab.
+- **Find & Replace in the editor (⌘F)** — a find bar floats at the editor's top-right with **Match Case**,
+  **Whole Word**, and **Regular Expression** toggles (which the previous build couldn't do), a live match
+  count, and next/previous (**⏎** / **⇧⏎**). Expand it (or **⌥⌘F**) for **Replace** / **Replace All** — regex
+  replacements support `$1` capture groups. Your toggle choices are remembered across files and launches.
+
+### Fixed
+- **Go to line** now scrolls to and centers the target line instead of jumping to the bottom.
+- **Opening a file focuses its editor** — you can type, search, or jump right away without clicking in first.
+
 ## [0.1.8] - 2026-06-14
 
 ### Added
