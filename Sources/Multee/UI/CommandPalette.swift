@@ -2,7 +2,10 @@ import AppKit
 
 /// Global hook so ⌘P (an AppDelegate menu item) can reach the single palette owned by the window
 /// controller — same static-hook pattern as `FormatterInstall` / `ActiveEditor`.
-enum CommandPaletteHook { static var toggle: (() -> Void)? }
+enum CommandPaletteHook {
+    static var toggle: (() -> Void)?          // ⌘P — file quick-open
+    static var command: (() -> Void)?         // ⌘⇧P — command mode
+}
 
 /// VS Code-style quick-open (⌘P): a top-centered overlay with a search field over a results list.
 /// Type to fuzzy-match files in the active session's repo, ↑/↓ to move, Enter to open, Esc / click-out
@@ -16,11 +19,18 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
     private weak var host: NSView?
 
     private struct Row { let rel: String; let status: GitStatus }
+    private struct PaletteCommand { let title: String; let keepsOpen: Bool; let run: () -> Void }
+    private enum Mode { case file, line, command }
+
     private var allRows: [Row] = []        // full repo listing (lazy, fetched on present)
     private var openRows: [Row] = []       // currently-open file tabs (shown for empty query)
-    private var hits: [Row] = []           // current filtered/sorted results
+    private var hits: [Row] = []           // current filtered/sorted file results
+    private var commandHits: [PaletteCommand] = []   // filtered commands (`>` mode)
+    private var commandQuery = ""          // the text after `>` (for match highlighting)
+    private var mode: Mode = .file
     private var lineJump: Int?             // set when the query is `:123` (jump in the active editor)
     private var selected = 0
+    private var resultCount: Int { mode == .command ? commandHits.count : hits.count }
     private var loadToken = 0              // drops a stale async listing if the palette was reopened
 
     init(model: AppModel) {
@@ -34,6 +44,17 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
     var isShown: Bool { overlay?.superview != nil }
 
     func toggle() { isShown ? dismiss() : present() }
+
+    /// ⌘⇧P — open straight into command mode (or toggle off if already there).
+    func toggleCommand() {
+        if isShown && mode == .command { dismiss(); return }
+        if !isShown { present() }
+        field.stringValue = "> "
+        selected = 0
+        applyFilter()
+        host?.window?.makeFirstResponder(field)
+        field.currentEditor()?.selectedRange = NSRange(location: field.stringValue.count, length: 0)
+    }
 
     // MARK: - Present / dismiss
 
@@ -99,21 +120,27 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
 
     private func applyFilter() {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        if query.hasPrefix(":") {
+        lineJump = nil; hits = []; commandHits = []; commandQuery = ""
+        if query.hasPrefix(">") {
+            // Command mode (`>`): run an action instead of opening a file.
+            mode = .command
+            commandQuery = String(query.dropFirst()).trimmingCharacters(in: .whitespaces)
+            let cmds = buildCommands()
+            commandHits = commandQuery.isEmpty ? cmds
+                : cmds.compactMap { c in Fuzzy.score(commandQuery, c.title).map { (c, $0) } }
+                       .sorted { $0.1 > $1.1 }.map { $0.0 }
+        } else if query.hasPrefix(":") {
             // Line-jump mode (`:123`): no file results — Enter jumps in the active editor.
-            hits = []
+            mode = .line
             let digits = query.dropFirst().filter(\.isNumber)
             lineJump = digits.isEmpty ? nil : Int(digits)
         } else if query.isEmpty {
-            lineJump = nil
+            mode = .file
             hits = openRows
         } else {
-            lineJump = nil
+            mode = .file
             hits = allRows
-                .compactMap { row -> (Row, Int)? in
-                    guard let s = Fuzzy.score(query, row.rel) else { return nil }
-                    return (row, s)
-                }
+                .compactMap { row -> (Row, Int)? in Fuzzy.score(query, row.rel).map { (row, $0) } }
                 .sorted {
                     $0.1 != $1.1 ? $0.1 > $1.1
                         : ($0.0.rel.count != $1.0.rel.count ? $0.0.rel.count < $1.0.rel.count
@@ -122,20 +149,14 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
                 .prefix(50)
                 .map { $0.0 }
         }
-        selected = min(selected, max(0, hits.count - 1))
+        selected = min(selected, max(0, resultCount - 1))
         table.reloadData()
-        if !hits.isEmpty { table.selectRowIndexes([selected], byExtendingSelection: false) }
+        if resultCount > 0 { table.selectRowIndexes([selected], byExtendingSelection: false) }
 
-        let rows = max(1, min(hits.count, 12))
+        let rows = max(1, min(resultCount, 12))
         listHeight.constant = CGFloat(rows) * rowHeight
-        placeholder.isHidden = !hits.isEmpty
-        if query.hasPrefix(":") {
-            placeholder.stringValue =
-                ActiveEditor.current == nil ? "Open a file first" :
-                lineJump == nil ? "Type a line number" : "Go to line \(lineJump!)  ⏎"
-        } else {
-            placeholder.stringValue = query.isEmpty ? "No open files" : "No matching files"
-        }
+        placeholder.isHidden = resultCount > 0
+        placeholder.stringValue = placeholderText(query)
 
         // Resolve the panel→scroll resize synchronously and re-tile the table to its new clip — otherwise
         // the scroll/table frames lag the constant change for a frame (a shrinking list paints a stretched
@@ -144,23 +165,71 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
         table.tile()
     }
 
+    private func placeholderText(_ query: String) -> String {
+        switch mode {
+        case .command: return "No matching commands"
+        case .line: return ActiveEditor.current == nil ? "Open a file first"
+            : lineJump == nil ? "Type a line number" : "Go to line \(lineJump!)  ⏎"
+        case .file: return query.isEmpty ? "No open files" : "No matching files"
+        }
+    }
+
+    /// Actions for command mode, built fresh each filter so availability tracks current state (e.g. New
+    /// Claude only with a session, Format only with an editor open).
+    private func buildCommands() -> [PaletteCommand] {
+        var c: [PaletteCommand] = []
+        if let s = model.activeSession {
+            c.append(PaletteCommand(title: "New Claude Session", keepsOpen: false) { [weak self] in
+                s.addTab(Tab(kind: .claude, title: "Claude", args: self?.model.settings.defaultArgs ?? ""))
+            })
+            c.append(PaletteCommand(title: "New Terminal", keepsOpen: false) {
+                s.addTab(Tab(kind: .terminal, title: "Terminal"))
+            })
+        }
+        if ActiveEditor.current != nil {
+            c.append(PaletteCommand(title: "Format Document", keepsOpen: false) {
+                ActiveEditor.current?.formatDocument()
+            })
+        }
+        c.append(PaletteCommand(title: "Go to File…", keepsOpen: true) { [weak self] in self?.enterFileMode() })
+        c.append(PaletteCommand(title: "Settings…", keepsOpen: false) { [weak self] in self?.model.showSettings = true })
+        if let s = model.activeSession, let t = s.activeTab {
+            c.append(PaletteCommand(title: "Close Tab", keepsOpen: false) {
+                if UnsavedGuard.confirmClose(t) { s.closeTab(t.id) }
+            })
+        }
+        return c
+    }
+
+    /// Switch back to file search from command mode (the "Go to File…" command).
+    private func enterFileMode() {
+        field.stringValue = ""
+        selected = 0
+        applyFilter()
+        host?.window?.makeFirstResponder(field)
+    }
+
     private func move(_ delta: Int) {
-        guard !hits.isEmpty else { return }
-        selected = max(0, min(hits.count - 1, selected + delta))
+        guard resultCount > 0 else { return }
+        selected = max(0, min(resultCount - 1, selected + delta))
         table.selectRowIndexes([selected], byExtendingSelection: false)
         table.scrollRowToVisible(selected)
     }
 
     private func openSelected() {
-        if let line = lineJump, let editor = ActiveEditor.current {
+        switch mode {
+        case .line:
+            if let line = lineJump, let editor = ActiveEditor.current { dismiss(); editor.goToLine(line) }
+        case .command:
+            guard commandHits.indices.contains(selected) else { return }
+            let cmd = commandHits[selected]
+            if cmd.keepsOpen { cmd.run() } else { dismiss(); cmd.run() }   // Go to File… stays open
+        case .file:
+            guard hits.indices.contains(selected) else { return }
+            let rel = hits[selected].rel
             dismiss()
-            editor.goToLine(line)
-            return
+            model.activeSession?.openFile(rel)
         }
-        guard hits.indices.contains(selected) else { return }
-        let rel = hits[selected].rel
-        dismiss()
-        model.activeSession?.openFile(rel)
     }
 
     // MARK: - NSControlTextEditingDelegate (drive the list from the field)
@@ -184,13 +253,19 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
 
     private let rowHeight: CGFloat = 32
 
-    func numberOfRows(in tableView: NSTableView) -> Int { hits.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { resultCount }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("paletteCell")
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? PaletteCellView) ?? {
             let c = PaletteCellView(); c.identifier = id; return c
         }()
+        if mode == .command {
+            let cmd = commandHits[row]
+            cell.configure(name: cmd.title, dir: "", status: .none,
+                           nameMatches: Fuzzy.matches(commandQuery, cmd.title), dirMatches: [])
+            return cell
+        }
         let r = hits[row]
         let name = (r.rel as NSString).lastPathComponent
         let dir = (r.rel as NSString).deletingLastPathComponent
@@ -326,9 +401,11 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
     func debugMove(_ delta: Int) { move(delta) }
     func debugOpenSelected() { openSelected() }
     func debugState() -> [String: Any] {
-        ["shown": isShown, "query": field.stringValue, "results": hits.count,
-         "selected": selected,
-         "selectedPath": hits.indices.contains(selected) ? hits[selected].rel : NSNull()]
+        let label: Any = mode == .command
+            ? (commandHits.indices.contains(selected) ? commandHits[selected].title as Any : NSNull())
+            : (hits.indices.contains(selected) ? hits[selected].rel as Any : NSNull())
+        return ["shown": isShown, "query": field.stringValue, "mode": "\(mode)",
+                "results": resultCount, "selected": selected, "selectedPath": label]
     }
 }
 

@@ -92,13 +92,25 @@ case-insensitive subsequence over the repo-relative path, scored with bonuses fo
 word-boundary / camelCase starts, and matches in the filename), **↑/↓** to move, **Enter** (or click) to
 open, **Esc** / click-outside to dismiss. An empty query lists the **currently-open file tabs** (quick
 switch). Rows show the filename tinted by git status (reusing the tree's `nsStatusColor`) + a dim parent
-dir. The file list is fetched **once per open** via `Git.repoFiles(expandIgnored: false)` off-main (so
-gitignored dirs are excluded and it's always fresh) — there's **no extra git poller**, and the overlay is
-mounted only while shown, so ⌘P costs nothing until pressed. The palette is owned by `MainWindowController`
-(hosted over the banner + workspace) and reached from the menu via the `CommandPaletteHook` static hook
-(same pattern as `FormatterInstall` / `ActiveEditor`). Harness-driveable for verification
-(`paletteOpen` / `paletteType:` / `paletteDown` / `paletteUp` / `paletteEnter` / `paletteClose`, with a
-`palette` block in the state dump) since ⌘P + arrows are HID the harness can't synthesize.
+dir, with the **matched chars brightened + bold** (`Fuzzy.matches` returns the same greedy alignment the
+scorer uses). The file list is fetched **once per open** via `Git.repoFiles(expandIgnored: false)` off-main
+(so gitignored dirs are excluded and it's always fresh) — there's **no extra git poller**, and the overlay
+is mounted only while shown, so ⌘P costs nothing until pressed.
+
+The same field has **three modes**, picked by the leading char: **file** (default), **`:123` line-jump**
+(Enter moves the caret to that 1-based line in the active editor and centers it, via
+`EditorViewController.goToLine`), and **`>` command mode** (**⌘⇧P**, File → **Command Palette…**) — fuzzy-run
+an action: New Claude Session / New Terminal / Format Document / Go to File… / Settings… / Close Tab. The
+command list is rebuilt each keystroke so availability tracks state (New Claude only with a session, Format
+only with an editor open); most commands dismiss-then-run, while "Go to File…" keeps the palette open and
+switches back to file mode. The results list uses `NSTableView.style = .plain` (the default `.automatic`
+inset-pads rows and stretched the single-row selection band).
+
+The palette is owned by `MainWindowController` (hosted over the banner + workspace) and reached from the
+menu via the `CommandPaletteHook` static hook (`toggle` for ⌘P, `command` for ⌘⇧P — same pattern as
+`FormatterInstall` / `ActiveEditor`). Harness-driveable for verification (`paletteOpen` / `paletteCommands`
+/ `paletteType:` / `paletteDown` / `paletteUp` / `paletteEnter` / `paletteClose`, with a `palette` block —
+mode, results, selected — in the state dump) since ⌘P + arrows are HID the harness can't synthesize.
 
 ## File viewers — `UI/ImageViewController`, `UI/MarkdownViewController`, `UI/MarkdownRenderer`
 A `.file` tab picks its view by extension (`CenterViewController.makeContentView`): images → viewer,

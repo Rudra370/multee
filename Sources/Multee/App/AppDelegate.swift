@@ -182,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         open.target = self
         let goToFile = fileMenu.addItem(withTitle: "Go to File…", action: #selector(goToFile), keyEquivalent: "p")
         goToFile.target = self
+        let cmdPalette = fileMenu.addItem(withTitle: "Command Palette…", action: #selector(commandPalette), keyEquivalent: "p")
+        cmdPalette.keyEquivalentModifierMask = [.command, .shift]
+        cmdPalette.target = self
         let closeTab = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeActiveTab), keyEquivalent: "w")
         closeTab.target = self
 
@@ -226,4 +229,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func formatActiveDocument() { ActiveEditor.current?.formatDocument() }
 
     @objc private func goToFile() { CommandPaletteHook.toggle?() }
+
+    @objc private func commandPalette() { CommandPaletteHook.command?() }
 }

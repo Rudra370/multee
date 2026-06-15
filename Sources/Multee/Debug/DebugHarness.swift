@@ -81,6 +81,7 @@ enum DebugAction {
             if p.count == 2 { FileTreeViewController.current?.debugRename(rel: p[0], to: p[1]) }
         case "treeDelete": FileTreeViewController.current?.debugDelete(rel: arg)
         case "paletteOpen":  CommandPaletteHook.toggle?()
+        case "paletteCommands": CommandPaletteHook.command?()
         case "paletteType":  CommandPaletteController.current?.debugType(arg)
         case "paletteDown":  CommandPaletteController.current?.debugMove(1)
         case "paletteUp":    CommandPaletteController.current?.debugMove(-1)

@@ -45,6 +45,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // ⌘P quick-open overlays the whole content area (above the banner + workspace).
         palette.attach(to: root)
         CommandPaletteHook.toggle = { [weak palette] in palette?.toggle() }
+        CommandPaletteHook.command = { [weak palette] in palette?.toggleCommand() }
     }
 
     @available(*, unavailable)
