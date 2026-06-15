@@ -5,6 +5,22 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.10] - 2026-06-15
+
+### Added
+- **Status bar** — a bar across the bottom of the editor/terminal area showing, at a glance: the current
+  **git branch**, and for a file: the **cursor position** (Ln/Col), **indentation** (spaces/tabs), **line
+  ending** (LF/CRLF), and **language**. Optionally the app's **memory · CPU** (Settings → Show resource
+  monitor; it moved here from the title bar). Every item is **clickable**:
+  - **Branch** → switch branches, create a new one, or delete one (always asks first; warns before deleting
+    an unmerged branch).
+  - **Cursor** → Go to Line. **Indentation** → convert to tabs or 2/4/8 spaces. **Line ending** → switch
+    LF/CRLF. **Language** → override the syntax highlighting for the open file.
+  - The bar scales with your font size (⌘ +/−).
+
+### Changed
+- Opening a file now puts the cursor at the **top** of the file instead of the bottom.
+
 ## [0.1.9] - 2026-06-15
 
 ### Added
