@@ -19,6 +19,7 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
     private var allRows: [Row] = []        // full repo listing (lazy, fetched on present)
     private var openRows: [Row] = []       // currently-open file tabs (shown for empty query)
     private var hits: [Row] = []           // current filtered/sorted results
+    private var lineJump: Int?             // set when the query is `:123` (jump in the active editor)
     private var selected = 0
     private var loadToken = 0              // drops a stale async listing if the palette was reopened
 
@@ -98,9 +99,16 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
 
     private func applyFilter() {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        if query.isEmpty {
+        if query.hasPrefix(":") {
+            // Line-jump mode (`:123`): no file results — Enter jumps in the active editor.
+            hits = []
+            let digits = query.dropFirst().filter(\.isNumber)
+            lineJump = digits.isEmpty ? nil : Int(digits)
+        } else if query.isEmpty {
+            lineJump = nil
             hits = openRows
         } else {
+            lineJump = nil
             hits = allRows
                 .compactMap { row -> (Row, Int)? in
                     guard let s = Fuzzy.score(query, row.rel) else { return nil }
@@ -121,7 +129,13 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
         let rows = max(1, min(hits.count, 12))
         listHeight.constant = CGFloat(rows) * rowHeight
         placeholder.isHidden = !hits.isEmpty
-        placeholder.stringValue = query.isEmpty ? "No open files" : "No matching files"
+        if query.hasPrefix(":") {
+            placeholder.stringValue =
+                ActiveEditor.current == nil ? "Open a file first" :
+                lineJump == nil ? "Type a line number" : "Go to line \(lineJump!)  ⏎"
+        } else {
+            placeholder.stringValue = query.isEmpty ? "No open files" : "No matching files"
+        }
 
         // Resolve the panel→scroll resize synchronously and re-tile the table to its new clip — otherwise
         // the scroll/table frames lag the constant change for a frame (a shrinking list paints a stretched
@@ -138,6 +152,11 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
     }
 
     private func openSelected() {
+        if let line = lineJump, let editor = ActiveEditor.current {
+            dismiss()
+            editor.goToLine(line)
+            return
+        }
         guard hits.indices.contains(selected) else { return }
         let rel = hits[selected].rel
         dismiss()
@@ -266,7 +285,8 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
         placeholder.font = .systemFont(ofSize: 12)
         placeholder.textColor = NSColor(white: 0.5, alpha: 1)
         placeholder.alignment = .center
-        scroll.addSubview(placeholder)
+        // On the panel (above the scroll), not inside it — NSScrollView clips/hides directly-added subviews.
+        panel.addSubview(placeholder)
 
         listHeight = scroll.heightAnchor.constraint(equalToConstant: rowHeight)
         NSLayoutConstraint.activate([
@@ -290,7 +310,7 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
             listHeight,
 
             placeholder.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
-            placeholder.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 8),
+            placeholder.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
         ])
         self.overlay = overlay
     }

@@ -95,7 +95,7 @@ enum DebugAction {
 enum DebugState {
     static func capture(to path: String, _ model: AppModel) {
         var root: [String: Any] = [:]
-        if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count }
+        if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count; root["editorCaretLine"] = ed.debugCaretLine }
         root["selfMemMB"] = Int(ResourceMonitor.memoryMB())
         if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }
         root["activeSession"] = model.activeSession?.name ?? NSNull()

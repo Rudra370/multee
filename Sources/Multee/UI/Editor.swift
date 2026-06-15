@@ -181,6 +181,37 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     /// this editor is torn down and silently drop the edits.)
     func saveImmediately() { writeToDisk() }
 
+    /// Jump to (and select) a 1-based line, centering it in the viewport — used by the command palette's
+    /// `:123` line jump. Clamps to the valid range; no-op on an empty editor.
+    func goToLine(_ line: Int) {
+        guard let tv = textView else { return }
+        let ns = tv.string as NSString
+        guard ns.length > 0 else { return }
+        var idx = 0, current = 1
+        while current < line {
+            let r = ns.range(of: "\n", range: NSRange(location: idx, length: ns.length - idx))
+            if r.location == NSNotFound { break }
+            idx = r.location + 1
+            current += 1
+        }
+        let nl = ns.range(of: "\n", range: NSRange(location: idx, length: ns.length - idx))
+        let end = nl.location == NSNotFound ? ns.length : nl.location
+        let range = NSRange(location: idx, length: end - idx)
+        tv.setSelectedRange(range)
+        tv.scrollRangeToVisible(range)
+        // Center the target line rather than just barely revealing it.
+        if let lm = tv.layoutManager, let tc = tv.textContainer, let scroll = view as? NSScrollView {
+            let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let rect = lm.boundingRect(forGlyphRange: glyphs, in: tc)
+            let midY = rect.midY + tv.textContainerOrigin.y
+            let h = scroll.contentView.bounds.height
+            let y = max(0, min(midY - h / 2, tv.bounds.height - h))
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        tv.window?.makeFirstResponder(tv)
+    }
+
     // MARK: - Formatting
 
     private static let formatQueue = DispatchQueue(label: "com.multee.format", qos: .userInitiated)
@@ -335,6 +366,13 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         scroll.reflectScrolledClipView(clip)
     }
     var isDirty: Bool { (textView?.string ?? "") != saved }
+    /// 1-based line of the caret/selection start (dev harness — to verify `:N` line jumps).
+    var debugCaretLine: Int {
+        guard let tv = textView else { return 0 }
+        let ns = tv.string as NSString
+        let loc = min(tv.selectedRange().location, ns.length)
+        return (ns.substring(to: loc) as NSString).components(separatedBy: "\n").count
+    }
     /// Append text (programmatic `.string` set doesn't fire the delegate, so flag dirty + re-highlight).
     func debugAppend(_ s: String) {
         textView.string += s
