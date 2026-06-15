@@ -56,8 +56,13 @@ precompiled on load, making `spans(for:)` a pure read safe to run on any thread;
 synchronously on open (no flash), large files and edits colour asynchronously. Edits coalesce via a
 **150 ms debounce** and recolour only (text/selection/undo untouched), with a sequence guard dropping
 any pass a newer edit superseded. Cmd+S saves; edits flag the tab dirty (chip dot). Shared font size
-live-applies with in-place run resize. **⌘F find / replace** is a custom VS Code-style bar (`UI/FindBar`,
-overlaying the editor's top-right — the scroll view is wrapped in a container for it): a search field with
+live-applies with in-place run resize. **⌘F find / replace** is a custom VS Code-style bar (`UI/FindBar`)
+that lives in a **collapsible top strip** (the editor's view is a vertical stack of `findSlot` + the scroll
+view), right-aligned — it **pushes the editor down rather than overlaying it**. (An earlier overlaying
+version glitched the cursor: a floating bar's button cursor-rects overlap the text view's I-beam rect in a
+*different* view subtree, which AppKit leaves "undefined" → hand/I-beam flicker. Non-overlapping fixes it
+at the root; the bar also `invalidateCursorRects` on appear/relayout since it's shown dynamically — see the
+cursor gotcha in `UI/Cursor.swift`.) A search field with
 **Match-Case / Whole-Word / Regex** toggles (the native `NSTextFinder` has none of these), a `3 of 12`
 counter, prev/next (⏎ / ⇧⏎), Esc to close, and a disclosure chevron that expands a **Replace** row
 (Replace current / Replace All; ⌥⌘F opens it expanded). Matches are found via `NSString` substring or

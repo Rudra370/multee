@@ -39,9 +39,6 @@ final class FindBar: NSView, NSTextFieldDelegate {
         layer?.cornerRadius = 6
         layer?.borderWidth = 1
         layer?.borderColor = NSColor(white: 0.30, alpha: 1).cgColor
-        shadow = NSShadow()
-        layer?.shadowColor = .black; layer?.shadowOpacity = 0.35
-        layer?.shadowRadius = 10; layer?.shadowOffset = CGSize(width: 0, height: -2)
 
         configField(field, "Find")
         configField(replaceField, "Replace")
@@ -94,6 +91,18 @@ final class FindBar: NSView, NSTextFieldDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    // The bar appears dynamically and relayouts (replace row toggle, window resize). Cursor rects are
+    // window-owned and only rebuilt on invalidation — so re-register this bar + every control whenever it
+    // moves into a window or relays out, else the hand/I-beam cursors stay stale until the next global
+    // invalidation (resize / focus change). Matches the "invalidate on content change" rule in Cursor.swift.
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); refreshCursorRects() }
+    override func layout() { super.layout(); refreshCursorRects() }
+    private func refreshCursorRects() {
+        guard let w = window else { return }
+        func walk(_ v: NSView) { w.invalidateCursorRects(for: v); v.subviews.forEach(walk) }
+        walk(self)
+    }
 
     func focusField() {
         window?.makeFirstResponder(field)

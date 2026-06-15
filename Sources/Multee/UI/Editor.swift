@@ -138,15 +138,23 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         self.lineRuler = ruler
         self.scrollView = scroll
 
-        // Wrap the scroll in a container so the find bar (UI/FindBar) can overlay the top-right.
-        let wrapper = NSView()
+        // Vertical layout: a collapsible find-bar slot on top + the editor below. The find bar lives in
+        // the slot (pushes the editor down when open) rather than overlaying the text view — an overlay's
+        // cursor rects overlap the text view's I-beam rect in a different subtree, which AppKit leaves
+        // "undefined" (the glitchy hand/I-beam flicker). Non-overlapping = the buttons get a clean hand
+        // cursor, exactly like the file-tree toolbar. `detachesHiddenViews` collapses the slot when closed.
+        let findSlot = NSView()
+        findSlot.isHidden = true
+        findSlot.translatesAutoresizingMaskIntoConstraints = false
+        self.findSlot = findSlot
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(scroll)
+        let wrapper = NSStackView(views: [findSlot, scroll])
+        wrapper.orientation = .vertical
+        wrapper.spacing = 0
+        wrapper.distribution = .fill
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: wrapper.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            findSlot.widthAnchor.constraint(equalTo: wrapper.widthAnchor),
+            scroll.widthAnchor.constraint(equalTo: wrapper.widthAnchor),
         ])
         self.view = wrapper
     }
@@ -241,8 +249,10 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     // MARK: - Find (UI/FindBar)
 
     private var findBar: FindBar?
+    private var findSlot: NSView!          // collapsible top strip holding the find bar (non-overlapping)
     private var findMatches: [NSRange] = []
     private var findCurrent = -1
+    private var findVisible: Bool { findBar != nil && !(findSlot?.isHidden ?? true) }
     private static let findHL = NSColor.systemYellow.withAlphaComponent(0.32)
     private static let findHLCurrent = NSColor.systemOrange.withAlphaComponent(0.6)
 
@@ -258,14 +268,16 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
             bar.onReplace = { [weak self] in self?.replaceCurrent() }
             bar.onReplaceAll = { [weak self] in self?.replaceAll() }
             bar.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(bar)
-            NSLayoutConstraint.activate([
-                bar.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
-                bar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            findSlot.addSubview(bar)
+            NSLayoutConstraint.activate([   // right-aligned in the strip; bar height drives the strip
+                bar.topAnchor.constraint(equalTo: findSlot.topAnchor, constant: 8),
+                bar.bottomAnchor.constraint(equalTo: findSlot.bottomAnchor, constant: -8),
+                bar.trailingAnchor.constraint(equalTo: findSlot.trailingAnchor, constant: -18),
+                bar.leadingAnchor.constraint(greaterThanOrEqualTo: findSlot.leadingAnchor, constant: 18),
             ])
             findBar = bar
         }
-        findBar?.isHidden = false
+        findSlot.isHidden = false
         let sel = textView.selectedRange()
         if sel.length > 0 {
             let s = (textView.string as NSString).substring(with: sel)
@@ -276,15 +288,15 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     }
 
     func hideFind() {
-        findBar?.isHidden = true
+        findSlot.isHidden = true
         clearFindHighlights()
         findMatches = []; findCurrent = -1
         view.window?.makeFirstResponder(textView)
     }
 
     /// ⌘G / ⌘⇧G — open the bar if closed, else step. (Works from the editor, not just the find field.)
-    func findNext() { (findBar?.isHidden ?? true) ? showFind() : findStep(1) }
-    func findPrevious() { (findBar?.isHidden ?? true) ? showFind() : findStep(-1) }
+    func findNext() { findVisible ? findStep(1) : showFind() }
+    func findPrevious() { findVisible ? findStep(-1) : showFind() }
 
     /// ⌥⌘F — open find with the Replace row expanded.
     func showReplace() { showFind(); findBar?.expandReplace() }
