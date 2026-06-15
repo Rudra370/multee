@@ -41,6 +41,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   "actions": ["openRepo:/path", "openFile:rel", "openDiff:rel", "newClaude", "newTerminal",
               "closeActiveTab", "closeSession", "openSettings", "sendText:hi", "sendEnter",
               "scroll:up:10", "setStatus:needs", "editorType:x", "editorSave", "setFont:16",
+              "editorFind:foo", "editorFindToggle:case|word|regex", "editorFindNext",
               "treeNewFile:a.txt", "treeNewFolder:dir", "treeBeginFile", "treeExpandAll",
               "treeCollapseAll", "treeRename:old.txt|new.txt", "treeDelete:path",
               "paletteOpen", "paletteCommands", "paletteType:foo", "paletteDown", "paletteUp",

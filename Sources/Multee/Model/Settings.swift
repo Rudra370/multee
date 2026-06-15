@@ -17,6 +17,10 @@ final class Settings: ObservableObject {
     /// Formatter ids the user has turned off (empty = all enabled).
     @Published var disabledFormatters: Set<String> { didSet { d.set(Array(disabledFormatters), forKey: K.disabledFormatters) } }
     @Published var formatOnSave: Bool { didSet { d.set(formatOnSave, forKey: K.formatOnSave) } }
+    /// Find-bar toggles, remembered across files + launches (like VS Code).
+    @Published var findMatchCase: Bool { didSet { d.set(findMatchCase, forKey: K.findMatchCase) } }
+    @Published var findWholeWord: Bool { didSet { d.set(findWholeWord, forKey: K.findWholeWord) } }
+    @Published var findRegex: Bool     { didSet { d.set(findRegex, forKey: K.findRegex) } }
 
     /// Alias used at call sites that read the default Claude args.
     var defaultArgs: String { defaultClaudeArgs }
@@ -44,6 +48,9 @@ final class Settings: ObservableObject {
         showResourceMonitor = d.bool(forKey: K.resourceMonitor)
         disabledFormatters = Set((d.array(forKey: K.disabledFormatters) as? [String]) ?? [])
         formatOnSave = d.bool(forKey: K.formatOnSave)
+        findMatchCase = d.bool(forKey: K.findMatchCase)
+        findWholeWord = d.bool(forKey: K.findWholeWord)
+        findRegex = d.bool(forKey: K.findRegex)
     }
 
     /// Shared font size for terminal + editor, clamped to a readable range.
@@ -65,5 +72,8 @@ final class Settings: ObservableObject {
         static let resourceMonitor = "showResourceMonitor"
         static let disabledFormatters = "disabledFormatters"
         static let formatOnSave = "formatOnSave"
+        static let findMatchCase = "findMatchCase"
+        static let findWholeWord = "findWholeWord"
+        static let findRegex = "findRegex"
     }
 }

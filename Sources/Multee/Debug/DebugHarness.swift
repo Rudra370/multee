@@ -66,9 +66,9 @@ enum DebugAction {
         case "editorFormat": ActiveEditor.current?.formatDocument()
         case "fmtInstall":   FormatterInstall.run?(arg)   // exercises the [Install] → Terminal-tab path
         case "editorScroll": ActiveEditor.current?.debugScroll(lines: Int(arg) ?? 30)
-        case "editorFind":     ActiveEditor.current?.debugFind(arg)
-        case "editorFindShow": ActiveEditor.current?.debugFindShow()
-        case "editorFindNext": ActiveEditor.current?.debugFindNext()
+        case "editorFind":       ActiveEditor.current?.debugFind(arg)
+        case "editorFindToggle": ActiveEditor.current?.debugFindToggle(arg)   // case | word | regex
+        case "editorFindNext":   ActiveEditor.current?.debugFindNext()
         case "sourceMode":   // flip a markdown/SVG viewer's Preview/Image ↔ Source toggle (arg "1"=source)
             let show = arg == "1" || arg == "source"
             (ActiveEditor.current?.parent as? MarkdownViewController)?.debugSetSourceVisible(show)
@@ -99,7 +99,7 @@ enum DebugAction {
 enum DebugState {
     static func capture(to path: String, _ model: AppModel) {
         var root: [String: Any] = [:]
-        if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count; root["editorCaretLine"] = ed.debugCaretLine; root["editorSelText"] = ed.debugSelectedText }
+        if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count; root["editorCaretLine"] = ed.debugCaretLine; root["editorSelText"] = ed.debugSelectedText; root["findCount"] = ed.debugFindCount; root["findCurrent"] = ed.debugFindCurrent }
         root["selfMemMB"] = Int(ResourceMonitor.memoryMB())
         if let ed = ActiveEditor.current { root["editorFocused"] = ed.debugIsFocused }
         if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }

@@ -205,18 +205,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         format.keyEquivalentModifierMask = [.command, .shift]
         format.target = self
 
-        // Find submenu — first-responder actions on the focused NSTextView's native find bar (tags are
-        // NSTextFinder.Action raw values: showFindInterface=1, nextMatch=2, previousMatch=3, setSearchString=7).
+        // Find submenu — routes to the active editor's custom find bar (UI/FindBar), which adds
+        // match-case / whole-word / regex toggles the native NSTextFinder can't do.
         editMenu.addItem(.separator())
         let findItem = editMenu.addItem(withTitle: "Find", action: nil, keyEquivalent: "")
         let findMenu = NSMenu(title: "Find")
         findItem.submenu = findMenu
-        let findAction = #selector(NSTextView.performFindPanelAction(_:))
-        findMenu.addItem(withTitle: "Find…", action: findAction, keyEquivalent: "f").tag = 1
-        findMenu.addItem(withTitle: "Find Next", action: findAction, keyEquivalent: "g").tag = 2
-        let findPrev = findMenu.addItem(withTitle: "Find Previous", action: findAction, keyEquivalent: "G")
-        findPrev.tag = 3
-        findMenu.addItem(withTitle: "Use Selection for Find", action: findAction, keyEquivalent: "e").tag = 7
+        for i in [findMenu.addItem(withTitle: "Find…", action: #selector(findInFile), keyEquivalent: "f"),
+                  findMenu.addItem(withTitle: "Find Next", action: #selector(findNextMatch), keyEquivalent: "g"),
+                  findMenu.addItem(withTitle: "Find Previous", action: #selector(findPrevMatch), keyEquivalent: "G"),
+                  findMenu.addItem(withTitle: "Use Selection for Find", action: #selector(findUseSelection), keyEquivalent: "e")] {
+            i.target = self
+        }
 
         NSApp.mainMenu = mainMenu
     }
@@ -244,4 +244,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func goToFile() { CommandPaletteHook.toggle?() }
 
     @objc private func commandPalette() { CommandPaletteHook.command?() }
+
+    @objc private func findInFile() { ActiveEditor.current?.showFind() }
+    @objc private func findNextMatch() { ActiveEditor.current?.findNext() }
+    @objc private func findPrevMatch() { ActiveEditor.current?.findPrevious() }
+    @objc private func findUseSelection() { ActiveEditor.current?.useSelectionForFind() }
 }

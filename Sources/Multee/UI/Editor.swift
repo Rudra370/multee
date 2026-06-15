@@ -53,6 +53,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     private let onDirty: (Bool) -> Void
 
     private var textView: CodeTextView!
+    private var scrollView: NSScrollView!
     private var textStorage: NSTextStorage!
     private var lineRuler: LineNumberRuler!
     private var highlighter: TextMateHighlighter?
@@ -102,10 +103,6 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         tv.autoresizingMask = NSView.AutoresizingMask.width
         tv.textContainerInset = NSSize(width: 6, height: 8)
-        // Native in-editor find (⌘F): a search bar at the top of the scroll view with next/prev, match
-        // count, and highlight-all — driven by the Find menu's performFindPanelAction: items.
-        tv.usesFindBar = true
-        tv.isIncrementalSearchingEnabled = true
         tv.font = mono(fontSize)
         tv.typingAttributes = [.font: mono(fontSize), .foregroundColor: TMTheme.base]
         tv.delegate = self
@@ -139,8 +136,19 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         scroll.rulersVisible = true
         ruler.reload()   // build the line index for the just-loaded content
         self.lineRuler = ruler
+        self.scrollView = scroll
 
-        self.view = scroll
+        // Wrap the scroll in a container so the find bar (UI/FindBar) can overlay the top-right.
+        let wrapper = NSView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+        ])
+        self.view = wrapper
     }
 
     override func viewDidLoad() {
@@ -151,6 +159,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     func textDidChange(_ notification: Notification) {
         onDirty(textView.string != saved)
         requestHighlight(debounced: true)
+        if findBar?.isHidden == false { recomputeMatches() }   // keep find matches/highlights in sync with edits
     }
 
     func save() {
@@ -219,7 +228,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     /// mis-measures.
     private func centerSelection() {
         guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer,
-              let clip = (view as? NSScrollView)?.contentView else { return }
+              let clip = scrollView?.contentView else { return }
         let range = tv.selectedRange()
         lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: NSMaxRange(range)))
         let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
@@ -227,6 +236,148 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         rect.origin.y += tv.textContainerOrigin.y
         let h = clip.bounds.height
         tv.scrollToVisible(NSRect(x: 0, y: rect.midY - h / 2, width: 1, height: h))
+    }
+
+    // MARK: - Find (UI/FindBar)
+
+    private var findBar: FindBar?
+    private var findMatches: [NSRange] = []
+    private var findCurrent = -1
+    private static let findHL = NSColor.systemYellow.withAlphaComponent(0.32)
+    private static let findHLCurrent = NSColor.systemOrange.withAlphaComponent(0.6)
+
+    /// Show the find bar (⌘F), seeding it from the current one-line selection, and focus its field.
+    func showFind() {
+        if findBar == nil {
+            let bar = FindBar(matchCase: settings.findMatchCase,
+                              wholeWord: settings.findWholeWord, regex: settings.findRegex)
+            bar.onChange = { [weak self] in self?.findChanged() }
+            bar.onNext = { [weak self] in self?.findStep(1) }
+            bar.onPrev = { [weak self] in self?.findStep(-1) }
+            bar.onClose = { [weak self] in self?.hideFind() }
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
+                bar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            ])
+            findBar = bar
+        }
+        findBar?.isHidden = false
+        let sel = textView.selectedRange()
+        if sel.length > 0 {
+            let s = (textView.string as NSString).substring(with: sel)
+            if !s.contains("\n") { findBar?.setQuery(s) }
+        }
+        findBar?.focusField()
+        recomputeMatches()
+    }
+
+    func hideFind() {
+        findBar?.isHidden = true
+        clearFindHighlights()
+        findMatches = []; findCurrent = -1
+        view.window?.makeFirstResponder(textView)
+    }
+
+    /// ⌘G / ⌘⇧G — open the bar if closed, else step. (Works from the editor, not just the find field.)
+    func findNext() { (findBar?.isHidden ?? true) ? showFind() : findStep(1) }
+    func findPrevious() { (findBar?.isHidden ?? true) ? showFind() : findStep(-1) }
+
+    /// ⌘E — search for the current selection.
+    func useSelectionForFind() {
+        showFind()
+        let sel = textView.selectedRange()
+        if sel.length > 0 {
+            findBar?.setQuery((textView.string as NSString).substring(with: sel))
+            findChanged()
+        }
+    }
+
+    private func findChanged() {
+        guard let bar = findBar else { return }
+        settings.findMatchCase = bar.matchCase   // persist the toggles (remembered across files/launches)
+        settings.findWholeWord = bar.wholeWord
+        settings.findRegex = bar.regex
+        recomputeMatches()
+    }
+
+    private func findStep(_ delta: Int) {
+        guard !findMatches.isEmpty else { return }
+        findCurrent = (findCurrent + delta + findMatches.count) % findMatches.count
+        focusCurrentMatch()
+    }
+
+    private func recomputeMatches() {
+        guard let bar = findBar, let lm = textView.layoutManager else { return }
+        clearFindHighlights()
+        findMatches = []
+        bar.setInvalid(false)
+        let full = textView.string
+        let ns = full as NSString
+        let q = bar.query
+        guard !q.isEmpty else { findCurrent = -1; bar.setCount(current: 0, total: 0); return }
+
+        if bar.regex {
+            var opts: NSRegularExpression.Options = []
+            if !bar.matchCase { opts.insert(.caseInsensitive) }
+            let pattern = bar.wholeWord ? "\\b(?:\(q))\\b" : q
+            guard let re = try? NSRegularExpression(pattern: pattern, options: opts) else {
+                bar.setInvalid(true); findCurrent = -1; bar.setCount(current: 0, total: 0); return
+            }
+            re.enumerateMatches(in: full, range: NSRange(location: 0, length: ns.length)) { m, _, _ in
+                if let r = m?.range, r.length > 0 { findMatches.append(r) }
+            }
+        } else {
+            var opts: NSString.CompareOptions = []
+            if !bar.matchCase { opts.insert(.caseInsensitive) }
+            var from = 0
+            while from < ns.length {
+                let r = ns.range(of: q, options: opts, range: NSRange(location: from, length: ns.length - from))
+                if r.location == NSNotFound { break }
+                if !bar.wholeWord || isWholeWord(r, ns) { findMatches.append(r) }
+                from = r.location + max(1, r.length)
+            }
+        }
+
+        if findMatches.isEmpty {
+            findCurrent = -1; bar.setCount(current: 0, total: 0)
+        } else {
+            let caret = textView.selectedRange().location
+            findCurrent = findMatches.firstIndex { $0.location >= caret } ?? 0
+            focusCurrentMatch()
+        }
+    }
+
+    /// Repaint every match (yellow) + the current one (orange), select & center it, update the counter.
+    private func focusCurrentMatch() {
+        guard let lm = textView.layoutManager, let bar = findBar,
+              findMatches.indices.contains(findCurrent) else { return }
+        lm.removeTemporaryAttribute(.backgroundColor,
+            forCharacterRange: NSRange(location: 0, length: (textView.string as NSString).length))
+        for r in findMatches { lm.addTemporaryAttribute(.backgroundColor, value: Self.findHL, forCharacterRange: r) }
+        let r = findMatches[findCurrent]
+        lm.addTemporaryAttribute(.backgroundColor, value: Self.findHLCurrent, forCharacterRange: r)
+        textView.setSelectedRange(r)
+        centerSelection()
+        bar.setCount(current: findCurrent + 1, total: findMatches.count)
+    }
+
+    private func clearFindHighlights() {
+        guard let lm = textView?.layoutManager else { return }
+        lm.removeTemporaryAttribute(.backgroundColor,
+            forCharacterRange: NSRange(location: 0, length: (textView.string as NSString).length))
+    }
+
+    private func isWholeWord(_ r: NSRange, _ s: NSString) -> Bool {
+        func word(_ c: unichar) -> Bool {
+            guard let u = UnicodeScalar(c) else { return false }
+            return CharacterSet.alphanumerics.contains(u) || u == "_"
+        }
+        let before = r.location > 0 ? word(s.character(at: r.location - 1)) : false
+        let afterIdx = r.location + r.length
+        let after = afterIdx < s.length ? word(s.character(at: afterIdx)) : false
+        return !before && !after
     }
 
     // MARK: - Formatting
@@ -376,7 +527,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     var debugText: String { textView?.string ?? "" }
     /// Scroll the editor down by `lines` (dev harness — to verify the gutter follows the scroll).
     func debugScroll(lines: Int) {
-        guard let scroll = view as? NSScrollView else { return }
+        guard let scroll = scrollView else { return }
         let clip = scroll.contentView
         let y = clip.bounds.origin.y + CGFloat(lines) * (lastFontSize + 4)
         clip.scroll(to: NSPoint(x: 0, y: max(0, y)))
@@ -384,20 +535,12 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     }
     var isDirty: Bool { (textView?.string ?? "") != saved }
     var debugIsFocused: Bool { textView?.window?.firstResponder === textView }
-    /// Drive the native find bar (dev harness — ⌘F is HID/menu the harness can't synthesize): seed the
-    /// find pasteboard, show the bar, and select the first match.
-    func debugFind(_ term: String) {
-        let pb = NSPasteboard(name: .find)
-        pb.clearContents(); pb.setString(term, forType: .string)
-    }
-    func debugFindShow() {
-        guard let tv = textView else { return }
-        let show = NSMenuItem(); show.tag = 1; tv.performFindPanelAction(show)
-    }
-    func debugFindNext() {
-        guard let tv = textView else { return }
-        let next = NSMenuItem(); next.tag = 2; tv.performFindPanelAction(next)
-    }
+    /// Drive the custom find bar (dev harness — ⌘F + typing into the field is HID the harness can't synthesize).
+    func debugFind(_ term: String) { showFind(); findBar?.setQuery(term); findChanged() }
+    func debugFindToggle(_ which: String) { findBar?.debugToggle(which); findChanged() }
+    func debugFindNext() { findNext() }
+    var debugFindCount: Int { findMatches.count }
+    var debugFindCurrent: Int { findCurrent }
     /// The currently selected substring (dev harness — to verify a find landed on a match).
     var debugSelectedText: String {
         guard let tv = textView else { return "" }
