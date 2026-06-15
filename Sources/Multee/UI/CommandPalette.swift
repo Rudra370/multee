@@ -173,9 +173,18 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
             let c = PaletteCellView(); c.identifier = id; return c
         }()
         let r = hits[row]
-        cell.configure(name: (r.rel as NSString).lastPathComponent,
-                       dir: (r.rel as NSString).deletingLastPathComponent,
-                       status: r.status)
+        let name = (r.rel as NSString).lastPathComponent
+        let dir = (r.rel as NSString).deletingLastPathComponent
+        // Map the full-path match positions onto the name (after the last "/") and dir segments so each
+        // field bolds its own matched chars. The char at baseStart-1 is the "/" separator (never bolded).
+        let baseStart = r.rel.count - name.count
+        var nameMatches: [Int] = [], dirMatches: [Int] = []
+        for m in Fuzzy.matches(field.stringValue.trimmingCharacters(in: .whitespaces), r.rel) {
+            if m >= baseStart { nameMatches.append(m - baseStart) }
+            else if m < baseStart - 1 { dirMatches.append(m) }
+        }
+        cell.configure(name: name, dir: dir, status: r.status,
+                       nameMatches: nameMatches, dirMatches: dirMatches)
         return cell
     }
 
@@ -318,14 +327,12 @@ private final class PaletteCellView: NSTableCellView {
     private let nameField = NSTextField(labelWithString: "")
     private let dirField = NSTextField(labelWithString: "")
     private var status: GitStatus = .none
+    private var name = "", dir = ""
+    private var nameMatches: Set<Int> = [], dirMatches: Set<Int> = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        nameField.font = .systemFont(ofSize: 13)
-        nameField.lineBreakMode = .byTruncatingTail
         nameField.setContentCompressionResistancePriority(.required, for: .horizontal)
-        dirField.font = .systemFont(ofSize: 11)
-        dirField.lineBreakMode = .byTruncatingMiddle
         dirField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let stack = NSStackView(views: [nameField, dirField])
         stack.orientation = .horizontal
@@ -343,20 +350,46 @@ private final class PaletteCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(name: String, dir: String, status: GitStatus) {
-        self.status = status
-        nameField.stringValue = name
-        dirField.stringValue = dir
+    func configure(name: String, dir: String, status: GitStatus, nameMatches: [Int], dirMatches: [Int]) {
+        self.name = name; self.dir = dir; self.status = status
+        self.nameMatches = Set(nameMatches); self.dirMatches = Set(dirMatches)
         dirField.isHidden = dir.isEmpty
         applyColors()
     }
 
     override var backgroundStyle: NSView.BackgroundStyle { didSet { applyColors() } }
 
+    /// Rebuilds both labels' attributed text: base color from selection + git status, with matched chars
+    /// brightened and bold. Re-run on selection change so the highlight tracks the accent background.
     private func applyColors() {
         let selected = backgroundStyle == .emphasized
-        nameField.textColor = selected ? .white : nsStatusColor(status)
-        dirField.textColor = selected ? NSColor(white: 1, alpha: 0.85) : NSColor(white: 0.5, alpha: 1)
+        nameField.attributedStringValue = styled(name, size: 13, truncate: .byTruncatingTail,
+            base: selected ? NSColor(white: 1, alpha: 0.85) : nsStatusColor(status),
+            match: .white, matches: nameMatches)
+        dirField.attributedStringValue = styled(dir, size: 11, truncate: .byTruncatingMiddle,
+            base: selected ? NSColor(white: 1, alpha: 0.75) : NSColor(white: 0.5, alpha: 1),
+            match: selected ? .white : NSColor(white: 0.85, alpha: 1), matches: dirMatches)
+    }
+
+    private func styled(_ s: String, size: CGFloat, truncate: NSLineBreakMode,
+                        base: NSColor, match: NSColor, matches: Set<Int>) -> NSAttributedString {
+        let para = NSMutableParagraphStyle(); para.lineBreakMode = truncate
+        let a = NSMutableAttributedString(string: s, attributes: [
+            .foregroundColor: base, .font: NSFont.systemFont(ofSize: size), .paragraphStyle: para,
+        ])
+        if !matches.isEmpty {
+            let bold = NSFont.systemFont(ofSize: size, weight: .bold)
+            var u16 = 0   // matched indices are Character offsets; map each to its UTF-16 range
+            for (ci, ch) in s.enumerated() {
+                let len = String(ch).utf16.count
+                if matches.contains(ci) {
+                    a.addAttributes([.font: bold, .foregroundColor: match],
+                                    range: NSRange(location: u16, length: len))
+                }
+                u16 += len
+            }
+        }
+        return a
     }
 }
 
@@ -402,5 +435,19 @@ enum Fuzzy {
         }
         guard qi == q.count else { return nil }
         return total - lower.count / 40   // mild preference for shorter paths
+    }
+
+    /// The character indices `query` matches in `candidate` (same greedy earliest-match as `score`, so the
+    /// highlighted chars are exactly the ones that earned the score). Empty if not a full subsequence.
+    static func matches(_ query: String, _ candidate: String) -> [Int] {
+        let q = Array(query.lowercased())
+        if q.isEmpty { return [] }
+        let lower = Array(candidate.lowercased())
+        var qi = 0, out: [Int] = [], i = 0
+        while i < lower.count && qi < q.count {
+            if lower[i] == q[qi] { out.append(i); qi += 1 }
+            i += 1
+        }
+        return qi == q.count ? out : []
     }
 }
