@@ -185,6 +185,10 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     /// this editor is torn down and silently drop the edits.)
     func saveImmediately() { writeToDisk() }
 
+    /// Make the text view first responder — called when its tab becomes active so you can type / search /
+    /// jump without clicking into it first.
+    func focusText() { textView?.window?.makeFirstResponder(textView) }
+
     /// Jump to (and select) a 1-based line, centering it in the viewport — used by the command palette's
     /// `:123` line jump. Clamps to the valid range; no-op on an empty editor.
     func goToLine(_ line: Int) {
@@ -200,20 +204,29 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         }
         let nl = ns.range(of: "\n", range: NSRange(location: idx, length: ns.length - idx))
         let end = nl.location == NSNotFound ? ns.length : nl.location
-        let range = NSRange(location: idx, length: end - idx)
-        tv.setSelectedRange(range)
-        tv.scrollRangeToVisible(range)
-        // Center the target line rather than just barely revealing it.
-        if let lm = tv.layoutManager, let tc = tv.textContainer, let scroll = view as? NSScrollView {
-            let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-            let rect = lm.boundingRect(forGlyphRange: glyphs, in: tc)
-            let midY = rect.midY + tv.textContainerOrigin.y
-            let h = scroll.contentView.bounds.height
-            let y = max(0, min(midY - h / 2, tv.bounds.height - h))
-            scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
-            scroll.reflectScrolledClipView(scroll.contentView)
-        }
+        tv.setSelectedRange(NSRange(location: idx, length: end - idx))
         tv.window?.makeFirstResponder(tv)
+        centerSelection()
+        // Re-center next runloop: a just-opened (or just-focused) editor may not have completed layout /
+        // sizing yet, so the first pass can mis-measure. The deferred pass runs against the settled view.
+        DispatchQueue.main.async { [weak self] in self?.centerSelection() }
+    }
+
+    /// Scroll so the current selection sits vertically centered. Uses `scrollToVisible` with a
+    /// viewport-tall rect centered on the line — `NSView` handles the clip's (non-standard, ruler-offset)
+    /// coordinate space, which manual `clip.scroll(to:)` got wrong (sending the view past the text).
+    /// Forces layout up to the selection first, since `NSLayoutManager` is lazy and an un-laid-out range
+    /// mis-measures.
+    private func centerSelection() {
+        guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer,
+              let clip = (view as? NSScrollView)?.contentView else { return }
+        let range = tv.selectedRange()
+        lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: NSMaxRange(range)))
+        let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        var rect = lm.boundingRect(forGlyphRange: glyphs, in: tc)
+        rect.origin.y += tv.textContainerOrigin.y
+        let h = clip.bounds.height
+        tv.scrollToVisible(NSRect(x: 0, y: rect.midY - h / 2, width: 1, height: h))
     }
 
     // MARK: - Formatting
@@ -370,6 +383,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         scroll.reflectScrolledClipView(clip)
     }
     var isDirty: Bool { (textView?.string ?? "") != saved }
+    var debugIsFocused: Bool { textView?.window?.firstResponder === textView }
     /// Drive the native find bar (dev harness — ⌘F is HID/menu the harness can't synthesize): seed the
     /// find pasteboard, show the bar, and select the first match.
     func debugFind(_ term: String) {

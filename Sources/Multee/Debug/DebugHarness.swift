@@ -101,6 +101,7 @@ enum DebugState {
         var root: [String: Any] = [:]
         if let ed = ActiveEditor.current { root["editorDirty"] = ed.isDirty; root["editorTextLen"] = ed.debugText.count; root["editorCaretLine"] = ed.debugCaretLine; root["editorSelText"] = ed.debugSelectedText }
         root["selfMemMB"] = Int(ResourceMonitor.memoryMB())
+        if let ed = ActiveEditor.current { root["editorFocused"] = ed.debugIsFocused }
         if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
         root["activeSessionPath"] = model.activeSession?.url ?? NSNull()

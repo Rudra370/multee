@@ -17,6 +17,7 @@ final class CenterViewController: NSViewController {
     private var contentViews: [String: NSView] = [:]
     private var contentVCs: [String: NSViewController] = [:]   // VC-backed content (editor, diff)
     private var contentPaths: [String: String] = [:]          // path each content view was built for (rename detect)
+    private var lastActiveTabID: String?                       // focus a tab's editor only when it newly becomes active
 
     init(model: AppModel) {
         self.model = model
@@ -177,6 +178,15 @@ final class CenterViewController: NSViewController {
         for (id, v) in contentViews { v.isHidden = (id != tab.id) }
 
         ActiveEditor.current = (contentVCs[tab.id] as? SourceEditing)?.sourceEditor
+
+        // On *becoming* active (not every render — else we'd steal focus from the find bar etc.):
+        // focus a text editor so you can type / search / jump immediately, or focus the terminal.
+        if tab.id != lastActiveTabID {
+            lastActiveTabID = tab.id
+            if let editor = contentVCs[tab.id] as? EditorViewController {
+                DispatchQueue.main.async { editor.focusText() }
+            }
+        }
 
         if tab.kind == .claude || tab.kind == .terminal {
             DispatchQueue.main.async { TerminalStore.shared.focus(tab.id) }
