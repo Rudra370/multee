@@ -9,7 +9,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let workspace = WorkspaceViewController(model: model)
         self.palette = CommandPaletteController(model: model)
 
-        // Root container: update banner (top, collapses to 0 height when hidden) + workspace.
+        // Root container: update banner (top, collapses to 0 height when hidden) + workspace. The status
+        // bar lives at the bottom of the workspace's *center* pane (CenterViewController), not here, so it
+        // covers only the file/Claude area and not the sidebar.
         let container = NSViewController()
         let root = NSView()
         let banner = UpdateBannerView(updates: Updates.shared, model: model)
@@ -46,6 +48,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         palette.attach(to: root)
         CommandPaletteHook.toggle = { [weak palette] in palette?.toggle() }
         CommandPaletteHook.command = { [weak palette] in palette?.toggleCommand() }
+        CommandPaletteHook.lineJump = { [weak palette] in palette?.presentLineJump() }
     }
 
     @available(*, unavailable)

@@ -39,20 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireStatusRouting()
         installKeyMonitor()
 
-        // Live resource usage of Multee's own process in the title bar (Claude sessions are separate
-        // processes — shown as a count for context).
-        resourceMonitor.onUpdate = { [weak self] memMB, cpu in
-            guard let self else { return }
-            let n = self.model.sessions.count
-            self.windowController.window?.subtitle =
-                String(format: "%.0f MB · %.1f%% CPU · %d session%@", memMB, cpu, n, n == 1 ? "" : "s")
-        }
+        // Live resource usage of Multee's own process, shown in the bottom status bar (the bar reads the
+        // setting to show/hide; only the *running* monitor produces updates).
+        resourceMonitor.onUpdate = { memMB, cpu in ResourceStatus.onUpdate?(memMB, cpu) }
         // Off by default; toggling the setting starts/stops it live.
         model.settings.$showResourceMonitor
             .sink { [weak self] on in
                 guard let self else { return }
-                if on { self.resourceMonitor.start() }
-                else { self.resourceMonitor.stop(); self.windowController.window?.subtitle = "" }
+                if on { self.resourceMonitor.start() } else { self.resourceMonitor.stop() }
             }
             .store(in: &cancellables)
 

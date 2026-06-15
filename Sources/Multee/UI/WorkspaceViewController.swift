@@ -75,6 +75,7 @@ final class SidebarViewController: NSViewController {
     private var treeVC: FileTreeViewController?
     private var changesVC: ChangesViewController?
     private var store: RepoStore?            // one shared git poller for the tree + Changes
+    private var branchBridge: AnyCancellable?   // store.branch → session.gitBranch
     private var currentRepo: String?
     private var lastRevealedPath: String?    // dedup auto-reveal of the active file in the tree
     private let filesModeSeg: PointerSegmentedControl = {
@@ -255,6 +256,8 @@ final class SidebarViewController: NSViewController {
                 onOpenFile: { [weak self] path in self?.model.activeSession?.openFile(path) })
             addChild(tree); addChild(changes)
             treeVC = tree; changesVC = changes; self.store = store
+            // Bridge the git poller's branch onto the session so the status bar can show it (no 2nd poller).
+            branchBridge = store.$branch.sink { [weak session] in session?.gitBranch = $0 }
         }
         showSidebarContent()
     }

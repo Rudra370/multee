@@ -104,6 +104,31 @@ separate **synchronous** `saveImmediately()` so "Save & Close" / quit always per
 save's async write could otherwise run after the editor is torn down and drop the edits. (Per-language
 command overrides were intentionally not built — niche + UI cost; revisit if a default command is ever wrong.)
 
+## Status bar — `UI/StatusBar`, `Model/Session` (gitBranch), `Backend/Git` (branch ops)
+A VS Code-style bar pinned to the bottom of the **center pane only** — it's an arranged subview of
+`CenterViewController`'s vstack (not the window root), so it doesn't span the sidebar; hidden when no repo
+is open. **Left:** the active session's git **branch** + (when the resource-monitor setting is on) the
+process **mem · CPU**. **Right (editor tabs only):** `Ln X, Col Y` · indentation · line-ending · language —
+context-aware, hidden for terminal / Claude / diff / image tabs. Everything **scales with the shared font
+size** (the bar's `intrinsicContentSize` height tracks it).
+
+All items are **clickable** (flat `PointerButton`s, hand cursor — non-overlapping, so no cursor conflict):
+- **Branch** → menu: switch (checkout), **Create New Branch…** (its text field is focused on open), **Delete
+  Branch…** (submenu; *always* confirms, with a stronger warning + force-delete only for an unmerged branch,
+  detected via `git merge-base --is-ancestor`). Git failures surface in an alert; the label refreshes
+  immediately after an op (not waiting for the FS poll, which won't fire when branches share a commit).
+- **Ln/Col** → Go to Line (opens the palette in `:` mode).
+- **Indentation** → Tabs / Spaces 2·4·8 (rewrites existing indentation, one undoable edit; heuristic).
+- **Line ending** → LF / CRLF (converts the buffer — `\r\n` actually lands, so it persists on save).
+- **Language** → Auto-detect + the bundled grammars (overrides highlighting for the open file; resets on reopen).
+
+Data sources, **no new pollers**: **branch** rides the existing per-session `RepoStore` git poll (bridged to
+`Session.gitBranch`); **Ln/Col** comes from the editor's selection (the gutter's cached line index) via the
+`EditorStatus.onChange` nudge on `textViewDidChangeSelection`; **EOL/indent/language** are read once on load;
+**mem/CPU** is pushed from `AppDelegate`'s `ResourceMonitor` via `ResourceStatus.onUpdate` (only while the
+setting is on — it used to live in the title-bar subtitle). Opening a file now parks the caret at the **top**
+(Ln 1) rather than the end (`setAttributedString` had left it at the end — the status bar surfaced it).
+
 ## Command palette (⌘P quick-open) — `UI/CommandPalette`, `App/MainWindowController`, `App/AppDelegate`
 A VS Code-style quick-open: **⌘P** (File → **Go to File…**) drops a top-centered overlay — a search field
 over a results list — to jump to any file in the active session's repo. Type to **fuzzy-match** (a

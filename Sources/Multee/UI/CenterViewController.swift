@@ -19,8 +19,11 @@ final class CenterViewController: NSViewController {
     private var contentPaths: [String: String] = [:]          // path each content view was built for (rename detect)
     private var lastActiveTabID: String?                       // focus a tab's editor only when it newly becomes active
 
+    private let statusBar: StatusBarView
+
     init(model: AppModel) {
         self.model = model
+        self.statusBar = StatusBarView(model: model)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -42,8 +45,10 @@ final class CenterViewController: NSViewController {
         contentArea.layer?.backgroundColor = NSColor(white: 0.11, alpha: 1).cgColor
 
         // Vertical stack guarantees tabBar (fixed height) sits ABOVE a filling contentArea with no
-        // overlap — manual top/bottom constraints were collapsing the bar to zero height.
-        let vstack = NSStackView(views: [tabBar, contentArea])
+        // overlap — manual top/bottom constraints were collapsing the bar to zero height. The status bar
+        // sits at the bottom of the *center* pane only (so it doesn't span the sidebar).
+        statusBar.translatesAutoresizingMaskIntoConstraints = false
+        let vstack = NSStackView(views: [tabBar, contentArea, statusBar])
         vstack.orientation = .vertical
         vstack.spacing = 0
         vstack.distribution = .fill
@@ -76,6 +81,7 @@ final class CenterViewController: NSViewController {
             tabBar.heightAnchor.constraint(equalToConstant: 34),
             tabBar.widthAnchor.constraint(equalTo: vstack.widthAnchor),
             contentArea.widthAnchor.constraint(equalTo: vstack.widthAnchor),
+            statusBar.widthAnchor.constraint(equalTo: vstack.widthAnchor),   // height = StatusBarView intrinsic (font-driven)
 
             emptyStack.centerXAnchor.constraint(equalTo: contentArea.centerXAnchor),
             emptyStack.centerYAnchor.constraint(equalTo: contentArea.centerYAnchor),

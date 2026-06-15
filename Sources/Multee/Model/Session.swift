@@ -11,6 +11,7 @@ final class Session: ObservableObject, Identifiable {
     @Published var tabs: [Tab]
     @Published var activeTabID: String
     @Published var tabStatus: [String: ClaudeState] = [:]   // keyed by tab id
+    @Published var gitBranch: String?                       // current branch, bridged from the RepoStore poll
 
     init(id: String = UUID().uuidString, url: String, tabs: [Tab] = [], activeTabID: String? = nil) {
         self.id = id

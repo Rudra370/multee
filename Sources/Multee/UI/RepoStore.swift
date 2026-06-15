@@ -18,6 +18,7 @@ final class RepoStore: ObservableObject {
     @Published private(set) var staged: [FileEntry] = []     // Changes — staged (index)
     @Published private(set) var unstaged: [FileEntry] = []   // Changes — unstaged (worktree)
     @Published private(set) var stashCount = 0
+    @Published private(set) var branch: String?              // current branch (for the status bar)
 
     private var watcher: RepoWatcher?
     private var fallbackTimer: Timer?
@@ -43,6 +44,7 @@ final class RepoStore: ObservableObject {
     /// that one is polled. Safe to call repeatedly (e.g. on every sidebar-mode toggle / app activate).
     func start(tree: Bool, changes: Bool) {
         setActive(tree: tree, changes: changes)
+        pollBranch()   // show the branch immediately, not only after the first FS event
         if watcher == nil { watcher = RepoWatcher(path: repo) { [weak self] in self?.poll() } }
         watcher?.start()
         fallbackTimer?.invalidate()
@@ -63,8 +65,20 @@ final class RepoStore: ObservableObject {
     // MARK: Polling (only the active consumers)
 
     private func poll() {
+        pollBranch()   // cheap; always read (independent of which sidebar mode is visible)
         if treeActive { pollTree() }
         if changesActive { pollChanges() }
+    }
+
+    private func pollBranch() {
+        let repo = self.repo
+        DispatchQueue.global().async { [weak self] in
+            let b = Git.branch(repo)
+            DispatchQueue.main.async {
+                guard let self, b != self.branch else { return }
+                self.branch = b
+            }
+        }
     }
 
     private func pollTree() {

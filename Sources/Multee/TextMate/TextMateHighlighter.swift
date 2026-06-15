@@ -180,6 +180,12 @@ final class TextMateHighlighter {
         "ps1": "powershell", "md": "markdown", "htm": "html", "dockerfile": "dockerfile",
     ]
 
+    /// All bundled grammar keys (the status-bar language picker), sorted.
+    static var availableLanguages: [String] {
+        guard let urls = GrammarBundle.bundle?.urls(forResourcesWithExtension: "json", subdirectory: "Grammars") else { return [] }
+        return urls.map { $0.deletingPathExtension().lastPathComponent }.sorted()
+    }
+
     private static func load(language: String) -> TextMateHighlighter? {
         if let hit = cache[language] { return hit }
         guard let url = GrammarBundle.bundle?.url(forResource: language, withExtension: "json", subdirectory: "Grammars"),

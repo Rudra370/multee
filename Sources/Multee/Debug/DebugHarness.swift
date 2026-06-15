@@ -66,6 +66,13 @@ enum DebugAction {
         case "editorFormat": ActiveEditor.current?.formatDocument()
         case "fmtInstall":   FormatterInstall.run?(arg)   // exercises the [Install] → Terminal-tab path
         case "editorScroll": ActiveEditor.current?.debugScroll(lines: Int(arg) ?? 30)
+        case "editorEol":        ActiveEditor.current?.debugConvertEol(arg)   // LF | CRLF
+        case "editorIndent":     ActiveEditor.current?.convertIndentation(to: arg)   // Tabs | Spaces: N
+        case "editorLang":       ActiveEditor.current?.setLanguageOverride(arg.isEmpty ? nil : arg)
+        case "paletteLineJump":  CommandPaletteHook.lineJump?()
+        case "gitCheckout":      if let s = model.activeSession { _ = Git.checkout(s.url, arg); s.gitBranch = Git.branch(s.url) }
+        case "gitBranchNew":     if let s = model.activeSession { _ = Git.createBranch(s.url, arg); s.gitBranch = Git.branch(s.url) }
+        case "gitBranchDel":     if let s = model.activeSession { _ = Git.deleteBranch(s.url, arg, force: false) }
         case "editorFind":       ActiveEditor.current?.debugFind(arg)
         case "editorFindToggle": ActiveEditor.current?.debugFindToggle(arg)   // case | word | regex
         case "editorFindNext":   ActiveEditor.current?.debugFindNext()
@@ -108,6 +115,13 @@ enum DebugState {
         if let ed = ActiveEditor.current { root["editorFocused"] = ed.debugIsFocused }
         if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
+        root["branch"] = model.activeSession?.gitBranch ?? NSNull()
+        if let ed = ActiveEditor.current {
+            let lc = ed.cursorLineColumn()
+            root["status"] = ["ln": lc.line, "col": lc.column, "eol": ed.lineEnding,
+                              "indent": ed.indentStyle, "lang": ed.languageDisplayName,
+                              "hasCRLF": ed.debugHasCRLF]
+        }
         root["activeSessionPath"] = model.activeSession?.url ?? NSNull()
         root["sessions"] = model.sessions.map { s in
             ["name": s.name, "path": s.url, "active": s.id == model.activeSessionID,

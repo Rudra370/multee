@@ -75,6 +75,13 @@ final class LineNumberRuler: NSRulerView {
         lineStarts = starts                          // a trailing "\n" leaves a final start == length (empty last line)
     }
 
+    /// 1-based (line, column) for a character index — for the status bar. Reuses the cached line index.
+    func lineColumn(at charIndex: Int) -> (line: Int, column: Int) {
+        rebuildLineStartsIfNeeded()
+        let line = lineNumber(for: charIndex)
+        return (line, charIndex - lineStarts[line - 1] + 1)
+    }
+
     /// 1-based line number containing `charIndex` (binary search for the greatest start ≤ charIndex).
     private func lineNumber(for charIndex: Int) -> Int {
         var lo = 0, hi = lineStarts.count - 1, ans = 0

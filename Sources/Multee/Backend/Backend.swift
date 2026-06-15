@@ -22,6 +22,24 @@ enum Shell {
         return (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Run a command, returning stdout, stderr, and exit code — for git ops that must distinguish failure
+    /// modes (a dirty-tree checkout conflict, an unmerged-branch delete refusal). Output is small here, so
+    /// reading the two pipes sequentially won't deadlock.
+    static func runFull(_ launchPath: String, _ args: [String], cwd: String? = nil) -> (out: String, err: String, code: Int32) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: launchPath)
+        p.arguments = args
+        if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
+        let outPipe = Pipe(), errPipe = Pipe()
+        p.standardOutput = outPipe; p.standardError = errPipe
+        do { try p.run() } catch { return ("", "\(error)", -1) }
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let trim = { (d: Data) in (String(data: d, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        return (trim(outData), trim(errData), p.terminationStatus)
+    }
+
     /// Raw bytes of a command's stdout (for NUL-delimited git output).
     static func runData(_ launchPath: String, _ args: [String], cwd: String? = nil) -> Data {
         let p = Process()

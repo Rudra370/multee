@@ -5,6 +5,7 @@ import AppKit
 enum CommandPaletteHook {
     static var toggle: (() -> Void)?          // ⌘P — file quick-open
     static var command: (() -> Void)?         // ⌘⇧P — command mode
+    static var lineJump: (() -> Void)?        // status-bar Ln/Col click — open in `:` line-jump mode
 }
 
 /// VS Code-style quick-open (⌘P): a top-centered overlay with a search field over a results list.
@@ -54,6 +55,16 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
         applyFilter()
         host?.window?.makeFirstResponder(field)
         field.currentEditor()?.selectedRange = NSRange(location: field.stringValue.count, length: 0)
+    }
+
+    /// Status-bar Ln/Col click — open in `:` line-jump mode, caret after the colon.
+    func presentLineJump() {
+        if !isShown { present() }
+        field.stringValue = ":"
+        selected = 0
+        applyFilter()
+        host?.window?.makeFirstResponder(field)
+        field.currentEditor()?.selectedRange = NSRange(location: 1, length: 0)
     }
 
     // MARK: - Present / dismiss

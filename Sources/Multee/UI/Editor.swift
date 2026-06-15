@@ -49,6 +49,9 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     var text: String { textView?.string ?? "" }
 
     private(set) var path: String   // absolute file path (mutable: a rename retargets it in place)
+    private(set) var lineEnding = "LF"     // status bar — detected on load
+    private(set) var indentStyle = "Spaces: 4"
+    private var languageOverride: String?  // status-bar language picker (nil = auto-detect from extension)
     private let settings: Settings
     private let onDirty: (Bool) -> Void
 
@@ -112,6 +115,9 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         textStorage.setAttributedString(NSAttributedString(
             string: content, attributes: [.font: mono(fontSize), .foregroundColor: TMTheme.base]))
         saved = content
+        tv.setSelectedRange(NSRange(location: 0, length: 0))   // caret at the top on open (setAttributedString parks it at the end)
+        lineEnding = content.contains("\r\n") ? "CRLF" : "LF"   // status bar (detected once on load)
+        indentStyle = EditorViewController.detectIndent(content)
         tv.onSave = { [weak self] in self?.save() }
         tv.onFormat = { [weak self] in self?.formatDocument() }
         requestHighlight(debounced: false)   // colours apply off-main; first paint shows plain text instantly
@@ -158,6 +164,103 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         onDirty(textView.string != saved)
         requestHighlight(debounced: true)
         if findBar?.isHidden == false { recomputeMatches() }   // keep find matches/highlights in sync with edits
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        EditorStatus.onChange?()   // status bar Ln/Col follows the caret
+    }
+
+    // MARK: - Status bar info
+
+    /// 1-based caret line + column (reuses the gutter's cached line index).
+    func cursorLineColumn() -> (line: Int, column: Int) {
+        guard let tv = textView else { return (1, 1) }
+        let loc = min(tv.selectedRange().location, (tv.string as NSString).length)
+        return lineRuler.lineColumn(at: loc)
+    }
+
+    /// Convert the document's line endings (status-bar LF/CRLF click). One undoable edit; marks dirty so
+    /// it persists on save. Normalizes to LF first, then to CRLF if requested.
+    func convertLineEndings(to eol: String) {
+        guard let tv = textView, eol != lineEnding else { return }
+        let lf = (tv.string as NSString).replacingOccurrences(of: "\r\n", with: "\n")
+        let converted = eol == "CRLF" ? lf.replacingOccurrences(of: "\n", with: "\r\n") : lf
+        let full = NSRange(location: 0, length: (tv.string as NSString).length)
+        if tv.shouldChangeText(in: full, replacementString: converted) {
+            tv.textStorage?.replaceCharacters(in: full, with: converted)
+            tv.didChangeText()
+        }
+        lineEnding = eol
+    }
+
+    /// Override the syntax language for this open file (status-bar picker; nil = auto-detect). Non-
+    /// destructive (re-highlights only, no dirty flag) and resets when the file is closed/reopened.
+    func setLanguageOverride(_ key: String?) {
+        languageOverride = key
+        highlighter = key.map { TextMateHighlighter.forLanguage($0) } ?? TextMateHighlighter.forPath(path)
+        if highlighter == nil {
+            textStorage.addAttribute(.foregroundColor, value: TMTheme.base,
+                                     range: NSRange(location: 0, length: textStorage.length))
+        } else {
+            requestHighlight(debounced: false)
+        }
+        EditorStatus.onChange?()   // refresh the status-bar language label
+    }
+
+    /// All bundled grammar keys + their display names, for the status-bar language menu.
+    static func availableLanguages() -> [(key: String, name: String)] {
+        TextMateHighlighter.availableLanguages.map { (key: $0, name: langDisplayNames[$0] ?? $0.prefix(1).uppercased() + $0.dropFirst()) }
+    }
+
+    /// Convert the file's existing indentation to tabs or N-wide spaces (status-bar click). One undoable
+    /// edit; marks dirty. Heuristic: derives each line's indent *level* from the current style, re-emits
+    /// it in the target — correct for consistent indentation, approximate for mixed tabs+spaces.
+    func convertIndentation(to target: String) {
+        guard let tv = textView, target != indentStyle else { return }
+        let toTabs = target == "Tabs"
+        let toWidth = Int(target.replacingOccurrences(of: "Spaces: ", with: "")) ?? 4
+        let srcTabs = indentStyle == "Tabs"
+        let srcWidth = max(1, Int(indentStyle.replacingOccurrences(of: "Spaces: ", with: "")) ?? 4)
+        let converted = (tv.string as NSString).components(separatedBy: "\n").map { line -> String in
+            let ws = line.prefix { $0 == " " || $0 == "\t" }
+            guard !ws.isEmpty else { return line }
+            let level = srcTabs ? ws.filter { $0 == "\t" }.count : ws.filter { $0 == " " }.count / srcWidth
+            let newWS = toTabs ? String(repeating: "\t", count: level) : String(repeating: " ", count: level * toWidth)
+            return newWS + line.dropFirst(ws.count)
+        }.joined(separator: "\n")
+        let full = NSRange(location: 0, length: (tv.string as NSString).length)
+        if tv.shouldChangeText(in: full, replacementString: converted) {
+            tv.textStorage?.replaceCharacters(in: full, with: converted)
+            tv.didChangeText()
+        }
+        indentStyle = target
+    }
+
+    /// Display name for the language (override if set, else detected from extension); "Plain Text" if none.
+    var languageDisplayName: String {
+        guard let key = languageOverride ?? TextMateHighlighter.language(forPath: path) else { return "Plain Text" }
+        return Self.langDisplayNames[key] ?? key.prefix(1).uppercased() + key.dropFirst()
+    }
+
+    private static let langDisplayNames = [
+        "javascript": "JavaScript", "typescript": "TypeScript", "tsx": "TypeScript JSX",
+        "objc": "Objective-C", "cpp": "C++", "json": "JSON", "html": "HTML", "css": "CSS",
+        "scss": "SCSS", "less": "Less", "yaml": "YAML", "toml": "TOML", "ini": "INI",
+        "php": "PHP", "sql": "SQL", "xml": "XML", "objcpp": "Objective-C++",
+    ]
+
+    /// Tabs vs spaces (+ unit) from the file's leading whitespace — a quick heuristic over the first lines.
+    private static func detectIndent(_ s: String) -> String {
+        var tabLines = 0, spaceLines = 0, unit = Int.max
+        for line in s.split(separator: "\n", omittingEmptySubsequences: true).prefix(1000) {
+            if line.first == "\t" { tabLines += 1 }
+            else {
+                let n = line.prefix { $0 == " " }.count
+                if n > 0 { spaceLines += 1; unit = min(unit, n) }
+            }
+        }
+        if tabLines > spaceLines { return "Tabs" }
+        return spaceLines == 0 ? "Spaces: 4" : "Spaces: \(min(unit, 8))"
     }
 
     func save() {
@@ -398,7 +501,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     }
 
     private func recomputeMatches() {
-        guard let bar = findBar, let lm = textView.layoutManager else { return }
+        guard let bar = findBar else { return }
         clearFindHighlights()
         findMatches = []
         bar.setInvalid(false)
@@ -531,6 +634,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     func retarget(to newPath: String) {
         guard newPath != path else { return }
         path = newPath
+        languageOverride = nil           // new path → re-detect language
         highlighter = TextMateHighlighter.forPath(newPath)
         if highlighter == nil {
             // New extension has no grammar — clear stale colours from the old type (requestHighlight
@@ -633,6 +737,8 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     func debugReplaceOne(_ with: String) { findBar?.setReplace(with); replaceCurrent() }
     var debugFindCount: Int { findMatches.count }
     var debugFindCurrent: Int { findCurrent }
+    var debugHasCRLF: Bool { (textView?.string ?? "").contains("\r\n") }
+    func debugConvertEol(_ eol: String) { convertLineEndings(to: eol) }
     /// The currently selected substring (dev harness — to verify a find landed on a match).
     var debugSelectedText: String {
         guard let tv = textView else { return "" }

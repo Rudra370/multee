@@ -141,6 +141,51 @@ enum Git {
         op(repo, ["clean", "-fd"])
     }
 
+    /// Current branch name for the status bar; a short sha in parens when detached. nil outside a repo.
+    static func branch(_ repo: String) -> String? {
+        guard isRepo(repo) else { return nil }
+        let name = Shell.run(git, ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"])
+        guard !name.isEmpty else { return nil }
+        if name == "HEAD" {                         // detached — show the short commit instead
+            let sha = Shell.run(git, ["-C", repo, "rev-parse", "--short", "HEAD"])
+            return sha.isEmpty ? nil : "(\(sha))"
+        }
+        return name
+    }
+
+    /// Local branch names (sorted). The caller marks the current one via `branch(_:)`.
+    static func localBranches(_ repo: String) -> [String] {
+        guard isRepo(repo) else { return [] }
+        return Shell.run(git, ["-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/heads"])
+            .split(separator: "\n").map(String.init).sorted()
+    }
+
+    /// Switch to an existing branch. nil on success, else the git error (e.g. uncommitted-changes block).
+    static func checkout(_ repo: String, _ branch: String) -> String? {
+        let r = Shell.runFull(git, ["-C", repo, "checkout", branch])
+        return r.code == 0 ? nil : (r.err.isEmpty ? r.out : r.err)
+    }
+
+    /// Create + check out a new branch. nil on success, else the git error.
+    static func createBranch(_ repo: String, _ name: String) -> String? {
+        let r = Shell.runFull(git, ["-C", repo, "checkout", "-b", name])
+        return r.code == 0 ? nil : (r.err.isEmpty ? r.out : r.err)
+    }
+
+    /// Whether `branch` is fully merged into HEAD (an ancestor of the current commit). Lets the caller
+    /// word the delete confirmation appropriately and pick `-d` vs `-D`.
+    static func isMerged(_ repo: String, _ branch: String) -> Bool {
+        Shell.runFull(git, ["-C", repo, "merge-base", "--is-ancestor", branch, "HEAD"]).code == 0
+    }
+
+    /// Delete a branch. `force` uses `-D` (deletes even if unmerged). Reports whether a safe `-d` was
+    /// refused because the branch isn't fully merged, so the caller can confirm a force-delete.
+    static func deleteBranch(_ repo: String, _ name: String, force: Bool) -> (ok: Bool, unmerged: Bool, error: String?) {
+        let r = Shell.runFull(git, ["-C", repo, "branch", force ? "-D" : "-d", name])
+        if r.code == 0 { return (true, false, nil) }
+        return (false, r.err.contains("not fully merged"), r.err.isEmpty ? r.out : r.err)
+    }
+
     /// Commit staged changes. Returns git output (non-empty on error to surface).
     @discardableResult static func commit(_ repo: String, _ message: String) -> String {
         op(repo, ["commit", "-m", message])
