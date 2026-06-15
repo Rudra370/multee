@@ -205,6 +205,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         format.keyEquivalentModifierMask = [.command, .shift]
         format.target = self
 
+        // Find submenu — first-responder actions on the focused NSTextView's native find bar (tags are
+        // NSTextFinder.Action raw values: showFindInterface=1, nextMatch=2, previousMatch=3, setSearchString=7).
+        editMenu.addItem(.separator())
+        let findItem = editMenu.addItem(withTitle: "Find", action: nil, keyEquivalent: "")
+        let findMenu = NSMenu(title: "Find")
+        findItem.submenu = findMenu
+        let findAction = #selector(NSTextView.performFindPanelAction(_:))
+        findMenu.addItem(withTitle: "Find…", action: findAction, keyEquivalent: "f").tag = 1
+        findMenu.addItem(withTitle: "Find Next", action: findAction, keyEquivalent: "g").tag = 2
+        let findPrev = findMenu.addItem(withTitle: "Find Previous", action: findAction, keyEquivalent: "G")
+        findPrev.tag = 3
+        findMenu.addItem(withTitle: "Use Selection for Find", action: findAction, keyEquivalent: "e").tag = 7
+
         NSApp.mainMenu = mainMenu
     }
 

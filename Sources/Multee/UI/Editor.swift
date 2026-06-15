@@ -102,6 +102,10 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         tv.autoresizingMask = NSView.AutoresizingMask.width
         tv.textContainerInset = NSSize(width: 6, height: 8)
+        // Native in-editor find (⌘F): a search bar at the top of the scroll view with next/prev, match
+        // count, and highlight-all — driven by the Find menu's performFindPanelAction: items.
+        tv.usesFindBar = true
+        tv.isIncrementalSearchingEnabled = true
         tv.font = mono(fontSize)
         tv.typingAttributes = [.font: mono(fontSize), .foregroundColor: TMTheme.base]
         tv.delegate = self
@@ -366,6 +370,25 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
         scroll.reflectScrolledClipView(clip)
     }
     var isDirty: Bool { (textView?.string ?? "") != saved }
+    /// Drive the native find bar (dev harness — ⌘F is HID/menu the harness can't synthesize): seed the
+    /// find pasteboard, show the bar, and select the first match.
+    func debugFind(_ term: String) {
+        let pb = NSPasteboard(name: .find)
+        pb.clearContents(); pb.setString(term, forType: .string)
+    }
+    func debugFindShow() {
+        guard let tv = textView else { return }
+        let show = NSMenuItem(); show.tag = 1; tv.performFindPanelAction(show)
+    }
+    func debugFindNext() {
+        guard let tv = textView else { return }
+        let next = NSMenuItem(); next.tag = 2; tv.performFindPanelAction(next)
+    }
+    /// The currently selected substring (dev harness — to verify a find landed on a match).
+    var debugSelectedText: String {
+        guard let tv = textView else { return "" }
+        return (tv.string as NSString).substring(with: tv.selectedRange())
+    }
     /// 1-based line of the caret/selection start (dev harness — to verify `:N` line jumps).
     var debugCaretLine: Int {
         guard let tv = textView else { return 0 }
