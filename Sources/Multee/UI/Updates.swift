@@ -2,9 +2,10 @@ import AppKit
 import Combine
 
 /// Lightweight update checker: asks GitHub for the latest release and, if it's newer than the
-/// running build, surfaces a banner. "Install now" runs `brew upgrade` in an in-app terminal (no
-/// Sparkle / appcast / signing needed). Falls back to opening the release page. (`isDev` lives in
-/// AppDelegate.)
+/// running build, surfaces a banner. "Install now" runs `brew upgrade` non-interactively in an in-app
+/// terminal (opening one in the home folder if no session is open), then auto-relaunches into the new
+/// build when it succeeds (no Sparkle / appcast / signing needed). "Download" opens the release page when
+/// the app isn't brew-managed. (`isDev` lives in AppDelegate.)
 final class Updates: ObservableObject {
     static let shared = Updates()
 
@@ -67,16 +68,39 @@ final class Updates: ObservableObject {
     }
 
     func installNow(app: AppModel) {
-        guard let session = app.activeSession else { download(); return }
+        // No session open? Open a bare terminal in the home folder so the update runs with nothing open.
+        let session = app.activeSession ?? app.openRepo(NSHomeDirectory(), autoLaunchClaude: false)
         let tab = Tab(kind: .terminal, title: "Update")
         session.addTab(tab)
         let appPath = Bundle.main.bundlePath
-        let command = "brew update && brew upgrade --cask \(caskRef) && xattr -dr com.apple.quarantine '\(appPath)'\n"
+        let flag = (NSTemporaryDirectory() as NSString).appendingPathComponent("multee-update-\(UUID().uuidString).done")
+        // NONINTERACTIVE + --force so Homebrew never stops for a Y/N; `xattr` clears the new app's quarantine;
+        // the flag is written only on full success → Multee then auto-relaunches into the new build.
+        let command = "NONINTERACTIVE=1 brew update && NONINTERACTIVE=1 brew upgrade --cask --force \(caskRef)"
+            + " && xattr -dr com.apple.quarantine '\(appPath)' && touch '\(flag)'\n"
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             TerminalStore.shared.send(tab.id, command)
+            self.watchForCompletion(flag: flag)
         }
         installing = true
         dismissed = false
+    }
+
+    /// Poll for the success flag the update command writes; when it appears, relaunch into the new build.
+    private var updateWatch: Timer?
+    private func watchForCompletion(flag: String) {
+        updateWatch?.invalidate()
+        let deadline = Date().addingTimeInterval(900)   // give up after 15 min (failed/cancelled)
+        updateWatch = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
+            if FileManager.default.fileExists(atPath: flag) {
+                t.invalidate()
+                try? FileManager.default.removeItem(atPath: flag)
+                self.relaunch()
+            } else if Date() > deadline {
+                t.invalidate()
+            }
+        }
     }
 
     func download() { NSWorkspace.shared.open(releasePage) }

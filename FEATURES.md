@@ -318,7 +318,10 @@ established before parking it:
 
 ## Settings & updates — `UI/SettingsWindow`, `UI/Updates`
 Settings window (native controls) bound to `Settings`. Update checker hits the GitHub latest-release
-API; a top banner offers Homebrew self-update (runs `brew upgrade` in an in-app terminal) or Download.
+API; a top banner offers Homebrew self-update or Download. **Install now** runs
+`NONINTERACTIVE=1 brew upgrade --cask --force …` (no Y/N prompt) in an in-app terminal — opening a bare
+home-folder session if nothing is open — then **auto-relaunches** into the new build: the command writes a
+temp flag on success, which `watchForCompletion` polls for before calling `relaunch()`.
 
 ## Deferred (v0.1.1 polish)
 Collapsible SESSIONS panel; drag-reorder tabs; per-button hand cursor. None are functional blockers.

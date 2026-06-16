@@ -32,15 +32,17 @@ final class AppModel: ObservableObject {
 
     // MARK: - Sessions
 
+    /// `autoLaunchClaude` overrides the setting (nil = use it) — the updater opens a home-folder session
+    /// with `false` so it gets a bare terminal, no Claude tab.
     @discardableResult
-    func openRepo(_ path: String) -> Session {
+    func openRepo(_ path: String, autoLaunchClaude: Bool? = nil) -> Session {
         let resolved = (path as NSString).standardizingPath
         if let existing = sessions.first(where: { $0.url == resolved }) {
             activeSessionID = existing.id
             return existing
         }
         var tabs: [Tab] = []
-        if settings.autoLaunchClaude {
+        if autoLaunchClaude ?? settings.autoLaunchClaude {
             tabs.append(Tab(kind: .claude, title: "Claude", args: settings.defaultArgs))
         }
         let session = Session(url: resolved, tabs: tabs)

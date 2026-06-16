@@ -5,6 +5,13 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.13] - 2026-06-16
+
+### Changed
+- **Self-update is now one click, end to end** — "Install now" runs the Homebrew upgrade **without any Y/N
+  prompt**, works even when **no project is open** (it opens a terminal in your home folder), and
+  **relaunches Multee automatically** when the update finishes — no manual restart.
+
 ## [0.1.12] - 2026-06-16
 
 ### Added
