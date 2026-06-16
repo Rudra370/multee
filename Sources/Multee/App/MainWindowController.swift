@@ -4,10 +4,12 @@ import AppKit
 /// persists via an autosave name.
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let palette: CommandPaletteController
+    private let quickTerm: QuickTerminalController
 
     init(model: AppModel) {
         let workspace = WorkspaceViewController(model: model)
         self.palette = CommandPaletteController(model: model)
+        self.quickTerm = QuickTerminalController(model: model)
 
         // Root container: update banner (top, collapses to 0 height when hidden) + workspace. The status
         // bar lives at the bottom of the workspace's *center* pane (CenterViewController), not here, so it
@@ -49,6 +51,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         CommandPaletteHook.toggle = { [weak palette] in palette?.toggle() }
         CommandPaletteHook.command = { [weak palette] in palette?.toggleCommand() }
         CommandPaletteHook.lineJump = { [weak palette] in palette?.presentLineJump() }
+
+        // ⌃` quick terminal: the centered-overlay mode also mounts into root.
+        quickTerm.attach(root: root)
+        QuickTerminalHook.toggle = { [weak quickTerm] in quickTerm?.toggle() }
     }
 
     @available(*, unavailable)

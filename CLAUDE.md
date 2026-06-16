@@ -50,7 +50,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "paletteEnter", "paletteClose", "sidebarMode:2", "revealSearch", "projectSearch:foo",
               "searchOpenFirst", "searchOpenAsTab", "openSearchTab", "projectSearchTab:foo",
               "openAt:file.md|3", "setStatus:done", "hookStatus:0:idle", "activateTab:1",
-              "renderAttentionMenu:/tmp/x.png", "showShortcuts", "renderShortcuts:/tmp/x.png"] }
+              "renderAttentionMenu:/tmp/x.png", "showShortcuts", "renderShortcuts:/tmp/x.png",
+              "quickToggle", "quickMode:floating|centered|bottom", "quickSend:echo hi"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -119,7 +120,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `AttentionItem`/`AttentionMenu` (menu-bar `»` status item + its custom-view dropdown).
 - `Model/` — `AppModel`, `Session`, `Tab`, `Settings` (Combine), `Persistence` (JSON snapshot).
 - `Backend/` — `Shell`/`Env`, `Git` (status + actions), `Search` (project-wide `git grep`).
-- `Terminal/` — `TerminalStore` (PTY per tab + scroll), `HookServer` (status listener), `Hooks`.
+- `Terminal/` — `TerminalStore` (PTY per tab + scroll; plus one **quick-terminal** PTY per session,
+  `quickView(sessionID:cwd:)` under a reserved `__quick__<sid>` id), `HookServer` (status listener), `Hooks`.
 - `UI/` — `WorkspaceViewController` (split + sidebar), `CenterViewController` (tab bar + content),
   `TabBarView`, `FileTree` (virtualized tree + a toolbar row: new file / new folder / collapse-all,
   with **inline in-tree naming** like VS Code), `RepoStore` (one per-session git poller — single
@@ -130,7 +132,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   extension in `CenterViewController.makeContentView`: `ImageViewController` (images/icns/SVG — zoom/pan,
   source toggle), `MarkdownViewController` + `MarkdownRenderer` (rendered preview — code blocks reuse the
   TextMate engine, tables via NSTextTable, inline images), else the text `Editor`. `ShortcutsWindow` is the
-  bottom-bar keyboard-icon panel listing all shortcuts (`Shortcuts` table + keycap chips).
+  bottom-bar keyboard-icon panel listing all shortcuts (`Shortcuts` table + keycap chips). `QuickTerminal`
+  (`QuickTerminalController` + `QuickTerminalHook`) is the ⌃` quick terminal — one per-session shell shown as a
+  floating panel / centered overlay / bottom dock (the dock is a vertical `NSSplitView` inside `CenterViewController`).
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
   and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).

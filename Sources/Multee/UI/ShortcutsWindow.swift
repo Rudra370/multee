@@ -36,6 +36,7 @@ enum Shortcuts {
             Item(name: "Use Selection for Find", keys: "⌘E"),
         ]),
         Section(title: "View", items: [
+            Item(name: "Toggle Terminal", keys: "⌃`"),
             Item(name: "Increase Font Size", keys: "⌘+"),
             Item(name: "Decrease Font Size", keys: "⌘−"),
         ]),

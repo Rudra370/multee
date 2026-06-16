@@ -256,6 +256,47 @@ mirror of `AppDelegate.buildMenu` + the ⌘+/− monitor + ⌘S — keep it in s
 swallowed as text input over the editor (Option composes a special char), it's handled in `AppDelegate`'s key
 monitor — intercepted before the editor when one is focused — not as a menu key-equivalent.
 
+## Quick terminal (⌃`) — `UI/QuickTerminal`, `Terminal/TerminalStore`, `UI/CenterViewController`, `UI/SettingsWindow`
+A VS Code-style quick-access terminal: **⌃`** pops a per-session login shell and the same key hides it
+(`QuickTerminalController.toggle`, reached via `QuickTerminalHook` from `AppDelegate`'s key monitor +
+the View ▸ Toggle Terminal menu item). The shell is **one PTY per session** (cwd = its repo),
+spawned lazily by `TerminalStore.quickView(sessionID:cwd:)` under a reserved id (`__quick__<sid>`,
+never a tab; killed in `Session.killTerminals`). Switching session swaps which shell is shown; each
+session keeps its own buffer. It appears in one of **three modes** (Settings ▸ "Quick terminal opens
+as", persisted as `Settings.quickTermMode`): **floating** (a key-able `NSPanel`; close button just
+hides), **centered** (an in-window dimmed scrim + rounded box, click-outside to dismiss — what we
+call the non-blocking "modal"), or **bottom** (a VS Code-style dock under the content, via a vertical
+`NSSplitView` in `CenterViewController` with a draggable divider). The controller owns one terminal
+view and re-parents it between the three containers, so changing mode or session never restarts the
+shell. ⌃` is intercepted in the key monitor (like ⇧⌥F) because a focused terminal would otherwise
+eat Control-backtick. Closing restores first-responder to the active tab's content
+(`CenterViewController.focusActiveContent` from `hide()`), so focus returns to your session/file.
+**Verification:** the harness can't synthesize ⌃` (sandbox) and the floating panel's terminal doesn't
+screenshot, so the keystroke is user-verified; the rest is driven via `quickToggle` / `quickMode` /
+`quickSend` harness actions + `quickTerminal` state (the shell buffer).
+
+**Known issue — bottom-dock repaint gap (PARKED, unresolved).** In **bottom** mode only, after you close
+the dock the Claude TUI stays top-anchored with blank space below until you type in it; it then snaps to
+full height. Floating/centered modes are unaffected (they never resize the Claude terminal). What we
+established before parking it:
+- It is **our** issue, not Claude's: Claude repaints fine on a normal window resize.
+- The data layer works in the harness: forcing a layout on close grows the embedded terminal 22→36 rows
+  *synchronously* (`MacTerminalView.setFrameSize` → `processSizeChange` → `sizeChanged` → `setWinSize`,
+  the `TIOCSWINSZ`/SIGWINCH path), and the real Claude process's output buffer reflows to 36 lines with
+  its input bar back at the bottom — **no typing needed**. So resize → SIGWINCH → Claude-redraw is correct
+  at the buffer level.
+- Yet the user still sees the on-screen gap, and it could **not be reproduced** in the harness, nor the
+  rendered terminal observed (SwiftTerm doesn't appear in `cacheDisplay` self-shots; `screencapture` is
+  blocked without Screen-Recording permission). Leading hypothesis: a **view-render refresh** issue — the
+  buffer is correct but the grown region's pixels aren't repainted until an event (typing) forces a full
+  redraw. Untested open question for resuming: does dragging the window edge fix the gap like typing does?
+- Tried and reverted (didn't resolve it): forcing a synchronous `window.layoutIfNeeded()` in
+  `hideBottomDock` on close; a duplicate-toggle debounce in `toggle()` (for a separate "auto-reopen" that
+  appeared during these attempts). Focus restoration on close was **kept** (it's good UX regardless).
+- Next ideas to try: a view-redraw nudge (`setNeedsDisplay`) after Claude responds; a small resize
+  "nudge" (grow past then back) to force a full re-render; or a redesign that doesn't resize the Claude
+  terminal (the user rejected an overlay-style bottom panel).
+
 ## Settings & updates — `UI/SettingsWindow`, `UI/Updates`
 Settings window (native controls) bound to `Settings`. Update checker hits the GitHub latest-release
 API; a top banner offers Homebrew self-update (runs `brew upgrade` in an in-app terminal) or Download.

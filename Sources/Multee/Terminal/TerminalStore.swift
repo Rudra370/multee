@@ -94,6 +94,35 @@ final class TerminalStore {
         return tv
     }
 
+    // MARK: Quick terminal (one per session, never a tab)
+
+    /// Reserved id for a session's quick-access terminal (the ⌃` shell). Distinct from any tab id so it
+    /// lives alongside the session's tab PTYs without colliding.
+    static func quickID(_ sessionID: String) -> String { "__quick__" + sessionID }
+
+    /// Get (or lazily spawn) the quick-terminal shell for a session, opened in its repo root. A plain
+    /// interactive login shell — no Claude, no hooks; just a scratch terminal you pop with ⌃`.
+    func quickView(sessionID: String, cwd: String) -> MulteeTerminalView {
+        installScrollMonitorIfNeeded()
+        let id = Self.quickID(sessionID)
+        if let v = views[id] { return v }
+
+        let tv = MulteeTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 420))
+        tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        tv.nativeBackgroundColor = QuickTerminalController.backgroundColor   // distinct tint vs tab terminals
+        tv.nativeForegroundColor = NSColor(calibratedWhite: 0.83, alpha: 1)
+        let exe = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        tv.startProcess(executable: exe, args: ["-l"], environment: Env.array(),
+                        execName: nil, currentDirectory: cwd)
+        views[id] = tv
+        return tv
+    }
+
+    func closeQuick(_ sessionID: String) { close(Self.quickID(sessionID)) }
+
+    /// The quick shell's visible buffer (harness can't see the terminal in a screenshot).
+    func debugQuickText(_ sessionID: String) -> String? { debugText(Self.quickID(sessionID)) }
+
     func has(_ id: String) -> Bool { views[id] != nil }
 
     func close(_ id: String) {

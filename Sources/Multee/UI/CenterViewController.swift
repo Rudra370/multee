@@ -4,13 +4,18 @@ import Combine
 /// The workspace pane: a tab bar on top and the active tab's content below. Tab content views stay
 /// mounted (hidden) so terminals keep running across switches; content is lazily created the first
 /// time a tab becomes active (so a restored session only spawns its active tab).
-final class CenterViewController: NSViewController {
+final class CenterViewController: NSViewController, NSSplitViewDelegate {
+    static weak var current: CenterViewController?   // for the quick-terminal bottom dock
+
     private let model: AppModel
     private var cancellables = Set<AnyCancellable>()
     private var activeSessionObserver: AnyCancellable?
 
     private let tabBar = TabBarView()
     private let contentArea = NSView()
+    /// Vertical split hosting the content area, with the quick terminal docked below it in "bottom" mode.
+    private let centerSplit = NSSplitView()
+    private var bottomDock: NSView?
     private let emptyLabel = NSTextField(labelWithString: "Open a folder to start  (⌘O)")
     private let openButton = PointerButton()
     private var emptyStack: NSView?
@@ -45,11 +50,20 @@ final class CenterViewController: NSViewController {
         contentArea.wantsLayer = true
         contentArea.layer?.backgroundColor = NSColor(white: 0.11, alpha: 1).cgColor
 
-        // Vertical stack guarantees tabBar (fixed height) sits ABOVE a filling contentArea with no
+        // The content area lives inside a vertical split so the quick terminal can dock beneath it
+        // (bottom mode) with a draggable divider; with no dock it's the split's only pane and fills.
+        centerSplit.isVertical = false                  // horizontal divider → stacked
+        centerSplit.dividerStyle = .thin
+        centerSplit.delegate = self
+        centerSplit.translatesAutoresizingMaskIntoConstraints = false
+        centerSplit.setContentHuggingPriority(.defaultLow, for: .vertical)
+        centerSplit.addArrangedSubview(contentArea)
+
+        // Vertical stack guarantees tabBar (fixed height) sits ABOVE a filling content split with no
         // overlap — manual top/bottom constraints were collapsing the bar to zero height. The status bar
         // sits at the bottom of the *center* pane only (so it doesn't span the sidebar).
         statusBar.translatesAutoresizingMaskIntoConstraints = false
-        let vstack = NSStackView(views: [tabBar, contentArea, statusBar])
+        let vstack = NSStackView(views: [tabBar, centerSplit, statusBar])
         vstack.orientation = .vertical
         vstack.spacing = 0
         vstack.distribution = .fill
@@ -81,7 +95,7 @@ final class CenterViewController: NSViewController {
 
             tabBar.heightAnchor.constraint(equalToConstant: 34),
             tabBar.widthAnchor.constraint(equalTo: vstack.widthAnchor),
-            contentArea.widthAnchor.constraint(equalTo: vstack.widthAnchor),
+            centerSplit.widthAnchor.constraint(equalTo: vstack.widthAnchor),  // contentArea fills the split
             statusBar.widthAnchor.constraint(equalTo: vstack.widthAnchor),   // height = StatusBarView intrinsic (font-driven)
 
             emptyStack.centerXAnchor.constraint(equalTo: contentArea.centerXAnchor),
@@ -121,6 +135,7 @@ final class CenterViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        CenterViewController.current = self
         // Let the unsaved-changes guard save any (already-mounted) editor tab by id, without it needing
         // to know about view controllers. A dirty tab has always been viewed, so its editor exists here.
         UnsavedGuard.saveTab = { [weak self] id in (self?.contentVCs[id] as? SourceEditing)?.sourceEditor?.saveImmediately() }
@@ -319,5 +334,60 @@ final class CenterViewController: NSViewController {
             contentVCs[id] = nil
             contentPaths[id] = nil
         }
+    }
+
+    // MARK: - Quick-terminal bottom dock (VS Code-style panel under the editor)
+
+    /// Show (and return) the empty bottom-dock container, sizing the divider so it gets ~260pt the first
+    /// time. The quick-terminal controller mounts its terminal view into the returned container.
+    func showBottomDock() -> NSView {
+        let dock: NSView
+        if let d = bottomDock { dock = d } else {
+            let d = NSView()
+            d.wantsLayer = true
+            d.layer?.backgroundColor = QuickTerminalController.backgroundColor.cgColor   // matches the quick terminal
+            d.translatesAutoresizingMaskIntoConstraints = false
+            bottomDock = d; dock = d
+        }
+        if dock.superview == nil {
+            centerSplit.addArrangedSubview(dock)
+            centerSplit.setHoldingPriority(.defaultLow, forSubviewAt: 0)    // content flexes on window resize
+            centerSplit.setHoldingPriority(.defaultHigh, forSubviewAt: 1)   // dock keeps its height
+            view.layoutSubtreeIfNeeded()
+            let h = centerSplit.bounds.height
+            if h > 0 { centerSplit.setPosition(max(120, h - 260), ofDividerAt: 0) }
+        }
+        return dock
+    }
+
+    /// Collapse the bottom dock (the terminal view stays inside it, just detached from the split).
+    /// NOTE: bottom-dock close has an unresolved repaint gap — see the Quick terminal section in FEATURES.md.
+    func hideBottomDock() { bottomDock?.removeFromSuperview() }
+
+    /// Restore first-responder to the active tab's content (Claude/terminal or editor) — called when the
+    /// quick terminal closes so focus returns to your session/file. The focus change also flushes any
+    /// pending layout, settling the content back to full size.
+    func focusActiveContent() {
+        guard let session = model.activeSession, let tab = session.activeTab else { return }
+        switch tab.kind {
+        case .claude, .terminal:
+            TerminalStore.shared.focus(tab.id)
+        case .file:
+            (contentVCs[tab.id] as? EditorViewController)?.focusText()
+        default:
+            break
+        }
+    }
+
+    // Keep both panes usable while dragging the divider. (Label is `ofSubviewAt` — that's the protocol
+    // requirement; `ofDividerAt` silently doesn't conform and never fires.)
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMin: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        max(proposedMin, 120)
+    }
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMax: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        min(proposedMax, splitView.bounds.height - 120)
+    }
+    func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
+        view === contentArea   // window resize grows/shrinks the content, keeps the terminal height
     }
 }

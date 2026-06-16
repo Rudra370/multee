@@ -8,6 +8,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let settings: Settings
     private var fontLabel: NSTextField!
     private var stepper: NSStepper!
+    private var quickTermSeg: NSSegmentedControl!
     private var argsField: NSTextField!
     private var chipButtons: [(flag: String, button: NSButton)] = []
     private var notifyStatus: NSStackView!     // "macOS notifications are off" warning (hidden when on)
@@ -104,6 +105,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let fontRow = NSStackView(views: [fontLabel, stepper])
         fontRow.orientation = .horizontal; fontRow.spacing = 8
 
+        // Quick-terminal (⌃`) display mode.
+        quickTermSeg = PointerSegmentedControl(labels: ["Floating", "Centered", "Bottom"],
+                                               trackingMode: .selectOne,
+                                               target: self, action: #selector(quickTermModeChanged))
+        quickTermSeg.selectedSegment = Settings.QuickTermMode.allCases.firstIndex(of: settings.quickTermMode) ?? 0
+        let quickTermLabel = NSTextField(labelWithString: "Quick terminal (⌃`) opens as")
+        quickTermLabel.font = .systemFont(ofSize: 13)
+        let quickTermRow = NSStackView(views: [quickTermLabel, quickTermSeg])
+        quickTermRow.orientation = .horizontal; quickTermRow.spacing = 8
+
         let argsLabel = NSTextField(labelWithString: "Default Claude args")
         argsLabel.font = .systemFont(ofSize: 13)
         argsField = NSTextField(string: settings.defaultClaudeArgs)
@@ -136,7 +147,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         argsStack.alignment = .leading
         argsStack.spacing = 8
 
-        let stack = NSStackView(views: [autoLaunch, expand, sound, notify, notifyStatus, restore, monitor, menuBar, fontRow, argsStack])
+        let stack = NSStackView(views: [autoLaunch, expand, sound, notify, notifyStatus, restore, monitor, menuBar, fontRow, quickTermRow, argsStack])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -340,6 +351,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         fontLabel.stringValue = "Font size: \(stepper.integerValue) pt"
     }
     @objc private func argsChanged() { settings.defaultClaudeArgs = argsField.stringValue; refreshChips() }
+    @objc private func quickTermModeChanged() {
+        let modes = Settings.QuickTermMode.allCases
+        if modes.indices.contains(quickTermSeg.selectedSegment) {
+            settings.quickTermMode = modes[quickTermSeg.selectedSegment]
+        }
+    }
 
     @objc private func chipTapped(_ sender: NSButton) {
         let flag = suggestions[sender.tag]

@@ -4,6 +4,18 @@ import Combine
 /// App settings, backed by `UserDefaults`. `@Published` so view controllers can `sink` and react;
 /// each `didSet` persists. Not a SwiftUI type — Combine is independent of SwiftUI.
 final class Settings: ObservableObject {
+    /// How the quick-access terminal (⌃`) appears.
+    enum QuickTermMode: String, CaseIterable {
+        case floating, centered, bottom
+        var label: String {
+            switch self {
+            case .floating: return "Floating window"
+            case .centered: return "Centered overlay"
+            case .bottom:   return "Bottom panel"
+            }
+        }
+    }
+
     private let d = UserDefaults.standard
 
     @Published var autoLaunchClaude: Bool { didSet { d.set(autoLaunchClaude, forKey: K.autoLaunch) } }
@@ -16,6 +28,8 @@ final class Settings: ObservableObject {
     @Published var showResourceMonitor: Bool { didSet { d.set(showResourceMonitor, forKey: K.resourceMonitor) } }
     /// Show the menu-bar attention item (aggregate session status + jump). On by default.
     @Published var showMenuBarStatus: Bool { didSet { d.set(showMenuBarStatus, forKey: K.menuBarStatus) } }
+    /// How the quick-access terminal (⌃`) opens: floating window / centered overlay / bottom panel.
+    @Published var quickTermMode: QuickTermMode { didSet { d.set(quickTermMode.rawValue, forKey: K.quickTermMode) } }
     /// Formatter ids the user has turned off (empty = all enabled).
     @Published var disabledFormatters: Set<String> { didSet { d.set(Array(disabledFormatters), forKey: K.disabledFormatters) } }
     @Published var formatOnSave: Bool { didSet { d.set(formatOnSave, forKey: K.formatOnSave) } }
@@ -39,6 +53,7 @@ final class Settings: ObservableObject {
             K.resourceMonitor: false,
             K.menuBarStatus: true,
             K.formatOnSave: false,
+            K.quickTermMode: QuickTermMode.floating.rawValue,
         ])
         // didSet does not fire for these initial assignments inside init.
         autoLaunchClaude  = d.bool(forKey: K.autoLaunch)
@@ -50,6 +65,7 @@ final class Settings: ObservableObject {
         defaultClaudeArgs = d.string(forKey: K.defaultArgs) ?? ""
         showResourceMonitor = d.bool(forKey: K.resourceMonitor)
         showMenuBarStatus = d.bool(forKey: K.menuBarStatus)
+        quickTermMode = QuickTermMode(rawValue: d.string(forKey: K.quickTermMode) ?? "") ?? .floating
         disabledFormatters = Set((d.array(forKey: K.disabledFormatters) as? [String]) ?? [])
         formatOnSave = d.bool(forKey: K.formatOnSave)
         findMatchCase = d.bool(forKey: K.findMatchCase)
@@ -75,6 +91,7 @@ final class Settings: ObservableObject {
         static let defaultArgs   = "defaultClaudeArgs"
         static let resourceMonitor = "showResourceMonitor"
         static let menuBarStatus = "showMenuBarStatus"
+        static let quickTermMode = "quickTermMode"
         static let disabledFormatters = "disabledFormatters"
         static let formatOnSave = "formatOnSave"
         static let findMatchCase = "findMatchCase"

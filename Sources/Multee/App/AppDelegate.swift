@@ -193,6 +193,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let ed = ActiveEditor.current {
                 ed.formatDocument(); return nil
             }
+            // ⌃` → toggle the quick-access terminal (VS Code parity). The focused terminal/editor would
+            // otherwise consume Control-key combos, so intercept it here before the responder chain.
+            if mods.contains(.control), !mods.contains(.command), !mods.contains(.option),
+               event.charactersIgnoringModifiers == "`" {
+                QuickTerminalHook.toggle?(); return nil
+            }
             // Cmd+/- have no menu item, so handle here. (Cmd+W is the "Close Tab" menu item.)
             guard mods.contains(.command) else { return event }
             switch key {
@@ -276,8 +282,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         findInFiles.keyEquivalentModifierMask = [.command, .shift]
         findInFiles.target = self
 
+        // View menu
+        let viewItem = NSMenuItem()
+        mainMenu.addItem(viewItem)
+        let viewMenu = NSMenu(title: "View")
+        viewItem.submenu = viewMenu
+        // The ⌃` key equivalent shows here for discoverability; the key monitor actually fires it (the
+        // focused terminal would otherwise eat Control-backtick), so this item's key never reaches the menu.
+        let term = viewMenu.addItem(withTitle: "Toggle Terminal", action: #selector(toggleQuickTerminal), keyEquivalent: "`")
+        term.keyEquivalentModifierMask = [.control]
+        term.target = self
+
         NSApp.mainMenu = mainMenu
     }
+
+    @objc private func toggleQuickTerminal() { QuickTerminalHook.toggle?() }
 
     @objc private func appBecameActive() {
         guard let s = model.activeSession else { return }

@@ -8,6 +8,10 @@ commits/PRs since the last tag. Newest first.
 ## [0.1.12] - 2026-06-16
 
 ### Added
+- **Quick terminal (⌃`)** — press **⌃`** to pop a scratch terminal and the same key to hide it (VS Code-style).
+  It's a login shell **per session**, opened in that repo's folder. Choose how it appears in **Settings → Quick
+  terminal opens as**: a **floating window**, a **centered overlay**, or a **bottom panel** docked under the editor
+  (resizable). Also on the **View → Toggle Terminal** menu.
 - **Keyboard shortcuts panel** — a keyboard icon at the right of the bottom status bar opens a panel listing
   every shortcut, grouped (General / Navigation / Editing / Find / View) with keycap chips.
 
