@@ -68,6 +68,32 @@ final class Session: ObservableObject, Identifiable {
         if activeTabID != id { activeTabID = id }
     }
 
+    // MARK: - Process exit / restart
+
+    /// The tab's process ended (typed `exit` / Claude quit) — flag it so the UI shows the "Session ended" bar.
+    func markExited(_ id: String) {
+        if let i = tabs.firstIndex(where: { $0.id == id }), !tabs[i].exited { tabs[i].exited = true }
+    }
+
+    /// Relaunch the tab's process in place (Restart). Claude resumes its conversation via the launch logic.
+    /// The terminal view is rebuilt fresh (a dead SwiftTerm view can't be restarted in place).
+    func restartTab(_ id: String) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[i].exited = false
+        TerminalLifecycle.rebuild?(id)
+    }
+
+    /// Convert a dead tab into a plain shell in place (same tab id + cwd), then relaunch it as a terminal.
+    func convertToTerminal(_ id: String) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[i].kind = .terminal
+        tabs[i].args = ""
+        tabs[i].claudeSessionId = nil
+        tabs[i].title = "Terminal"
+        tabs[i].exited = false
+        TerminalLifecycle.rebuild?(id)
+    }
+
     /// Mark a tab as shown (lazy-spawn gate flips on first view).
     func markShown(_ id: String) {
         if let i = tabs.firstIndex(where: { $0.id == id }), !tabs[i].shown { tabs[i].shown = true }

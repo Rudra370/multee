@@ -144,6 +144,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        // A tab's process exited (typed `exit`, Claude quit) → flag it so the "Session ended" bar appears.
+        TerminalStore.shared.onExit = { [weak self] tabID in
+            guard let self else { return }
+            for session in self.model.sessions where session.tabs.contains(where: { $0.id == tabID }) {
+                session.markExited(tabID)
+            }
+        }
         model.settings.$fontSize
             .sink { TerminalStore.shared.applyFont(size: $0) }
             .store(in: &cancellables)

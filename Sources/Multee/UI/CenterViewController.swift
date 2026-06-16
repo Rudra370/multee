@@ -1,6 +1,12 @@
 import AppKit
 import Combine
 
+/// Lets `Session` ask the (view-owning) CenterViewController to rebuild a tab's terminal fresh — used by
+/// Restart / convert-to-terminal, since a dead SwiftTerm view can't be restarted in place.
+enum TerminalLifecycle {
+    static var rebuild: ((String) -> Void)?   // tabID → kill the old PTY/view and respawn it
+}
+
 /// The workspace pane: a tab bar on top and the active tab's content below. Tab content views stay
 /// mounted (hidden) so terminals keep running across switches; content is lazily created the first
 /// time a tab becomes active (so a restored session only spawns its active tab).
@@ -16,6 +22,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
     /// Vertical split hosting the content area, with the quick terminal docked below it in "bottom" mode.
     private let centerSplit = NSSplitView()
     private var bottomDock: NSView?
+    private let endedOverlay = SessionEndedOverlay()          // centered card shown over a terminal that exited
     private let emptyLabel = NSTextField(labelWithString: "Open a folder to start  (⌘O)")
     private let openButton = PointerButton()
     private var emptyStack: NSView?
@@ -87,6 +94,18 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         contentArea.addSubview(emptyStack)
         self.emptyStack = emptyStack
 
+        // The "Session ended" overlay fills the content area (a dimming scrim with a centered card), hidden
+        // until a terminal exits. Brought to the front (above the active terminal) when shown.
+        endedOverlay.translatesAutoresizingMaskIntoConstraints = false
+        endedOverlay.isHidden = true
+        contentArea.addSubview(endedOverlay)
+        NSLayoutConstraint.activate([
+            endedOverlay.topAnchor.constraint(equalTo: contentArea.topAnchor),
+            endedOverlay.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
+            endedOverlay.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
+            endedOverlay.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
+        ])
+
         NSLayoutConstraint.activate([
             vstack.topAnchor.constraint(equalTo: root.topAnchor),
             vstack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -136,6 +155,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         CenterViewController.current = self
+        TerminalLifecycle.rebuild = { [weak self] tabID in self?.rebuildTerminal(tabID) }
         // Let the unsaved-changes guard save any (already-mounted) editor tab by id, without it needing
         // to know about view controllers. A dirty tab has always been viewed, so its editor exists here.
         UnsavedGuard.saveTab = { [weak self] id in (self?.contentVCs[id] as? SourceEditing)?.sourceEditor?.saveImmediately() }
@@ -179,6 +199,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             emptyLabel.stringValue = "Open a folder to start  (⌘O)"
             openButton.isHidden = false
             contentViews.values.forEach { $0.isHidden = true }
+            endedOverlay.isHidden = true
             return
         }
 
@@ -192,6 +213,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             emptyLabel.stringValue = "No tabs open"
             openButton.isHidden = true
             contentViews.values.forEach { $0.isHidden = true }
+            endedOverlay.isHidden = true
             return
         }
 
@@ -247,9 +269,36 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             DispatchQueue.main.async { svc.seed(seed.query, seed.options) }
         }
 
-        if tab.kind == .claude || tab.kind == .terminal {
+        if (tab.kind == .claude || tab.kind == .terminal), !tab.exited {
             DispatchQueue.main.async { TerminalStore.shared.focus(tab.id) }
         }
+
+        updateEndedOverlay(for: tab, session: session)
+    }
+
+    /// Show the centered "Session ended" overlay over a terminal/Claude tab whose process has exited.
+    private func updateEndedOverlay(for tab: Tab, session: Session) {
+        let show = (tab.kind == .claude || tab.kind == .terminal) && tab.exited
+        endedOverlay.isHidden = !show
+        guard show else { return }
+        endedOverlay.configure(
+            isClaude: tab.kind == .claude,
+            onRestart: { [weak session] in session?.restartTab(tab.id) },
+            onOpenTerminal: { [weak session] in session?.convertToTerminal(tab.id) },
+            onClose: { [weak session] in session?.closeTab(tab.id) })
+        contentArea.addSubview(endedOverlay)   // keep it above the (later-mounted) terminal view
+    }
+
+    /// Kill a tab's dead terminal view and drop its cache so `render()` respawns it fresh (Restart /
+    /// convert-to-terminal). A dead SwiftTerm view can't be restarted in place — `startProcess` on it
+    /// spawns a process that immediately dies — so we rebuild from scratch.
+    private func rebuildTerminal(_ tabID: String) {
+        TerminalStore.shared.close(tabID)            // terminate the old PTY + remove the old view
+        contentViews[tabID]?.removeFromSuperview()
+        contentViews[tabID] = nil
+        contentVCs[tabID] = nil
+        contentPaths[tabID] = nil
+        render()                                     // contentViews[id] == nil → spawns a fresh terminal
     }
 
     private func makeContentView(for tab: Tab, session: Session) -> NSView {
@@ -390,4 +439,111 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
     func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
         view === contentArea   // window resize grows/shrinks the content, keeps the terminal height
     }
+}
+
+/// A prominent centered card shown over a terminal whose process has exited (you typed `exit`, Claude quit),
+/// so it isn't missed: a dimming scrim + a card with an icon, title, one-line next-step text, and the
+/// actions — Restart (accent/primary), Open Terminal (turn a dead Claude tab into a shell; Claude-only), and
+/// Close. The scrim is visual only — clicks outside the card pass through so the dead terminal stays
+/// scrollable.
+final class SessionEndedOverlay: NSView {
+    private let card = NSView()
+    private let icon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "Session ended")
+    private let subtitle = NSTextField(labelWithString: "")
+    private let restartBtn = PointerButton()
+    private let terminalBtn = PointerButton()
+    private let closeBtn = PointerButton()
+    private var onRestart: (() -> Void)?
+    private var onOpenTerminal: (() -> Void)?
+    private var onClose: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(white: 0, alpha: 0.30).cgColor   // scrim → focus on the card
+
+        card.wantsLayer = true
+        card.layer?.backgroundColor = NSColor(white: 0.17, alpha: 1).cgColor
+        card.layer?.cornerRadius = 12
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = NSColor(white: 0.32, alpha: 1).cgColor
+        card.shadow = NSShadow()
+        card.layer?.shadowColor = NSColor.black.cgColor
+        card.layer?.shadowOpacity = 0.5
+        card.layer?.shadowRadius = 22
+        card.layer?.shadowOffset = .zero
+        card.translatesAutoresizingMaskIntoConstraints = false
+
+        icon.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: nil)
+        icon.contentTintColor = NSColor(white: 0.55, alpha: 1)
+        if #available(macOS 11.0, *) {
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 26, weight: .regular)
+        }
+
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.textColor = NSColor(white: 0.95, alpha: 1)
+        titleLabel.alignment = .center
+
+        subtitle.font = .systemFont(ofSize: 12)
+        subtitle.textColor = NSColor(white: 0.62, alpha: 1)
+        subtitle.alignment = .center
+
+        func style(_ b: PointerButton, _ title: String, _ sel: Selector) {
+            b.title = title
+            b.bezelStyle = .rounded
+            b.controlSize = .large
+            b.target = self
+            b.action = sel
+        }
+        style(restartBtn, "Restart", #selector(restartTapped))
+        restartBtn.bezelColor = .controlAccentColor   // primary action — accent-tinted
+        style(terminalBtn, "Open Terminal", #selector(terminalTapped))
+        style(closeBtn, "Close", #selector(closeTapped))
+
+        let buttons = NSStackView(views: [closeBtn, terminalBtn, restartBtn])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+
+        let v = NSStackView(views: [icon, titleLabel, subtitle, buttons])
+        v.orientation = .vertical
+        v.alignment = .centerX
+        v.spacing = 10
+        v.setCustomSpacing(6, after: titleLabel)
+        v.setCustomSpacing(18, after: subtitle)
+        v.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(v)
+        addSubview(card)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
+            v.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -22),
+            v.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 28),
+            v.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -28),
+            card.centerXAnchor.constraint(equalTo: centerXAnchor),
+            card.centerYAnchor.constraint(equalTo: centerYAnchor),
+            card.widthAnchor.constraint(greaterThanOrEqualToConstant: 320),
+        ])
+    }
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    /// Clicks on the scrim (anything that isn't the card or its buttons) pass through to the dead terminal,
+    /// so it stays scrollable; the card itself stays interactive.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
+    }
+
+    func configure(isClaude: Bool, onRestart: @escaping () -> Void,
+                   onOpenTerminal: @escaping () -> Void, onClose: @escaping () -> Void) {
+        self.onRestart = onRestart; self.onOpenTerminal = onOpenTerminal; self.onClose = onClose
+        titleLabel.stringValue = isClaude ? "Claude session ended" : "Session ended"
+        subtitle.stringValue = isClaude
+            ? "Restart to resume the conversation, open a terminal here, or close the tab."
+            : "Restart the shell, or close the tab."
+        terminalBtn.isHidden = !isClaude
+    }
+
+    @objc private func restartTapped() { onRestart?() }
+    @objc private func terminalTapped() { onOpenTerminal?() }
+    @objc private func closeTapped() { onClose?() }
 }

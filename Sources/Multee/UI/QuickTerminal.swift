@@ -81,6 +81,14 @@ final class QuickTerminalController: NSObject, NSWindowDelegate {
         present(view, mode: shownMode ?? model.settings.quickTermMode)
     }
 
+    /// The quick shell ended (you typed `exit`). Drop its PTY so reopening spawns fresh, and if it's the one
+    /// currently on screen, close the panel.
+    func handleShellExit(sessionID: String) {
+        let wasShowing = isShown && model.activeSessionID == sessionID
+        TerminalStore.shared.closeQuick(sessionID)
+        if wasShowing { hide() }
+    }
+
     private func modeChanged() {
         guard isShown, let view = resolveView() else { return }
         present(view, mode: model.settings.quickTermMode)

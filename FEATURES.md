@@ -22,7 +22,19 @@ JSON snapshot in UserDefaults, debounce-saved; restore drops repos whose folder 
 `TerminalStore` caches one SwiftTerm PTY view per tab id (process survives tab/session switches).
 Login-shell PATH via `Env.bootstrap`. Claude launches with `--settings <hooks>` + env; a shared
 scroll monitor routes wheel/trackpad events (incl. alt-buffer SGR forwarding) to the terminal under
-the cursor. Claude `--resume <cid>` only when its transcript still exists on disk.
+the cursor. Claude `--resume <cid>` only when its transcript still exists on disk. The launch exe/args/env
+live in one `launchSpec(for:)` shared by spawn and rebuild.
+
+**Session end.** Every spawned terminal sets `TerminalStore` as its SwiftTerm `processDelegate`; on
+`processTerminated` it maps the view → id and fires `onExit(tabID)` (AppDelegate → `Session.markExited`,
+which flags the tab) or `onQuickExit(sessionID)` for the ⌃` shell (closes the panel). A flagged tab shows
+the **`SessionEndedOverlay`** (`UI/CenterViewController`) — a prominent centered card (dimming scrim +
+shadow, so it isn't missed; scrim clicks pass through via `hitTest` so the dead terminal stays scrollable)
+with an icon, title, next-step text, and **Restart** (accent/primary — `Session.restartTab`), **Open
+Terminal** (`convertToTerminal`, flips kind → `.terminal`; Claude-only), and **Close**. Restart/convert **rebuild a fresh view** via the `TerminalLifecycle.rebuild` hook
+(`CenterViewController.rebuildTerminal`: close the old PTY, drop the cached content view, re-`render`) —
+re-running `startProcess` on a dead SwiftTerm view spawns a process that immediately dies, so it can't be
+restarted in place.
 
 ## File tree & Changes — `UI/FileTree`, `UI/Changes`, `UI/RepoStore`, `Backend/Git`
 `NSOutlineView` tree with git-status colors, collapsed gitignored dirs (expand toggle), reloads only

@@ -55,6 +55,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // ⌃` quick terminal: the centered-overlay mode also mounts into root.
         quickTerm.attach(root: root)
         QuickTerminalHook.toggle = { [weak quickTerm] in quickTerm?.toggle() }
+        TerminalStore.shared.onQuickExit = { [weak quickTerm] sid in quickTerm?.handleShellExit(sessionID: sid) }
     }
 
     @available(*, unavailable)

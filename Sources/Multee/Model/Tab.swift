@@ -19,6 +19,7 @@ struct Tab: Identifiable, Equatable {
     var claudeSessionId: String?  // captured from hooks → used to `claude --resume` after a restart
     var dirty: Bool               // unsaved edits (for .file)
     var shown: Bool               // lazy-spawn gate: process isn't started until first viewed
+    var exited: Bool              // transient: the terminal process ended (→ "Session ended" bar); not persisted
 
     init(id: String = UUID().uuidString,
          kind: TabKind,
@@ -27,7 +28,8 @@ struct Tab: Identifiable, Equatable {
          path: String? = nil,
          claudeSessionId: String? = nil,
          dirty: Bool = false,
-         shown: Bool = false) {
+         shown: Bool = false,
+         exited: Bool = false) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -36,5 +38,6 @@ struct Tab: Identifiable, Equatable {
         self.claudeSessionId = claudeSessionId
         self.dirty = dirty
         self.shown = shown
+        self.exited = exited
     }
 }

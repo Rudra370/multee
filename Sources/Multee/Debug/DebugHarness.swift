@@ -42,6 +42,8 @@ enum DebugAction {
         case "closeActiveTab": if let s = model.activeSession { s.closeTab(s.activeTabID) }
         case "activateTab":    if let s = model.activeSession, let i = Int(arg), s.tabs.indices.contains(i) { s.activate(s.tabs[i].id) }
         case "renderAttentionMenu": AttentionMenu.debugRender(to: arg.isEmpty ? "/tmp/attention-menu.png" : arg)
+        case "tabRestart":      if let s = model.activeSession { s.restartTab(s.activeTabID) }   // "Session ended" bar → Restart
+        case "tabToTerminal":   if let s = model.activeSession { s.convertToTerminal(s.activeTabID) }  // → Open Terminal
         case "quickToggle":     QuickTerminalHook.toggle?()                                   // ⌃` quick terminal
         case "quickMode":       model.settings.quickTermMode = Settings.QuickTermMode(rawValue: arg) ?? .floating
         case "quickSend":       if let s = model.activeSession { TerminalStore.shared.send(TerminalStore.quickID(s.id), arg) }
@@ -158,11 +160,11 @@ enum DebugState {
         if let s = model.activeSession {
             root["tabs"] = s.tabs.map { t in
                 ["kind": t.kind.rawValue, "title": t.title, "active": t.id == s.activeTabID,
-                 "status": (s.tabStatus[t.id] ?? .idle).rawValue]
+                 "status": (s.tabStatus[t.id] ?? .idle).rawValue, "exited": t.exited]
             }
             if let t = s.activeTab {
                 var at: [String: Any] = ["kind": t.kind.rawValue, "title": t.title,
-                                         "status": (s.tabStatus[t.id] ?? .idle).rawValue]
+                                         "status": (s.tabStatus[t.id] ?? .idle).rawValue, "exited": t.exited]
                 if t.kind == .claude || t.kind == .terminal,
                    let ts = TerminalStore.shared.debugState(t.id) {
                     at["terminal"] = ts

@@ -10,6 +10,12 @@ final class TerminalStore {
     /// Current shared font size (seeded from Settings); new terminals use it.
     var fontSize: Double = 13
 
+    /// A tab's process exited (typed `exit` / Claude quit) — argument is the tab id. Wired by AppDelegate to
+    /// flag the tab so the UI shows the "Session ended" bar. `onQuickExit` is the quick-terminal equivalent
+    /// (argument is the session id).
+    var onExit: ((String) -> Void)?
+    var onQuickExit: ((String) -> Void)?
+
     /// One app-wide scroll-wheel monitor shared by every terminal (installed lazily on first
     /// terminal). It routes each event to the single terminal under the cursor via window
     /// hit-testing — instead of each terminal installing its own monitor and racing to claim events
@@ -54,22 +60,12 @@ final class TerminalStore {
         }
     }
 
-    /// Get (or lazily spawn) the terminal view for a tab. `cwd` is the session's repo root.
-    func view(for tab: Tab, cwd: String) -> MulteeTerminalView {
-        installScrollMonitorIfNeeded()
-        if let v = views[tab.id] { return v }
-
-        let tv = MulteeTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
-        tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        tv.nativeBackgroundColor = NSColor(calibratedWhite: 0.118, alpha: 1)
-        tv.nativeForegroundColor = NSColor(calibratedWhite: 0.83, alpha: 1)
-
-        let exe: String
-        let args: [String]
-        var extraEnv: [String: String] = [:]
+    /// The shell/args/env to launch a tab's process — shared by initial spawn and `restart`, so a Restart
+    /// (or convert-to-terminal) re-derives from the tab's CURRENT kind/args.
+    private func launchSpec(for tab: Tab) -> (exe: String, args: [String], env: [String]) {
         switch tab.kind {
         case .claude:
-            exe = Env.resolve("claude")
+            let exe = Env.resolve("claude")
             // Resume the saved conversation only if Claude's transcript for it still exists; else
             // start fresh (a wrong guess just means "fresh", never a dead tab).
             let userArgs = tab.args.split(separator: " ").map(String.init)
@@ -79,26 +75,43 @@ final class TerminalStore {
             } else {
                 base = userArgs
             }
-            args = base + ["--settings", Hooks.json]
-            extraEnv["MULTEE_SESSION_ID"] = tab.id
-            extraEnv["MULTEE_HOOK_PORT"] = String(HookServer.shared.port)
+            let env = Env.array(extra: ["MULTEE_SESSION_ID": tab.id,
+                                        "MULTEE_HOOK_PORT": String(HookServer.shared.port)])
+            return (exe, base + ["--settings", Hooks.json], env)
         case .terminal, .file, .diff, .search:   // only .terminal reaches here (file/diff/search use their own views)
-            exe = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            let exe = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
             // A terminal tab created with an initial command (e.g. "Install" a formatter) runs it, then
             // drops to an interactive login shell so its output stays visible.
-            args = tab.args.isEmpty ? ["-l"] : ["-l", "-c", "\(tab.args); exec \(exe) -l"]
+            let args = tab.args.isEmpty ? ["-l"] : ["-l", "-c", "\(tab.args); exec \(exe) -l"]
+            return (exe, args, Env.array())
         }
-        tv.startProcess(executable: exe, args: args, environment: Env.array(extra: extraEnv),
+    }
+
+    /// Get (or lazily spawn) the terminal view for a tab. `cwd` is the session's repo root.
+    func view(for tab: Tab, cwd: String) -> MulteeTerminalView {
+        installScrollMonitorIfNeeded()
+        if let v = views[tab.id] { return v }
+
+        let tv = MulteeTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        tv.nativeBackgroundColor = NSColor(calibratedWhite: 0.118, alpha: 1)
+        tv.nativeForegroundColor = NSColor(calibratedWhite: 0.83, alpha: 1)
+        tv.processDelegate = self   // get notified when the process exits (you type `exit`, Claude quits)
+
+        let spec = launchSpec(for: tab)
+        tv.startProcess(executable: spec.exe, args: spec.args, environment: spec.env,
                         execName: nil, currentDirectory: cwd)
         views[tab.id] = tv
         return tv
     }
 
+
     // MARK: Quick terminal (one per session, never a tab)
 
     /// Reserved id for a session's quick-access terminal (the ⌃` shell). Distinct from any tab id so it
     /// lives alongside the session's tab PTYs without colliding.
-    static func quickID(_ sessionID: String) -> String { "__quick__" + sessionID }
+    static let quickPrefix = "__quick__"
+    static func quickID(_ sessionID: String) -> String { quickPrefix + sessionID }
 
     /// Get (or lazily spawn) the quick-terminal shell for a session, opened in its repo root. A plain
     /// interactive login shell — no Claude, no hooks; just a scratch terminal you pop with ⌃`.
@@ -111,6 +124,7 @@ final class TerminalStore {
         tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         tv.nativeBackgroundColor = QuickTerminalController.backgroundColor   // distinct tint vs tab terminals
         tv.nativeForegroundColor = NSColor(calibratedWhite: 0.83, alpha: 1)
+        tv.processDelegate = self
         let exe = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         tv.startProcess(executable: exe, args: ["-l"], environment: Env.array(),
                         execName: nil, currentDirectory: cwd)
@@ -173,6 +187,28 @@ final class TerminalStore {
             "cols": t.cols,
             "repaints": v.repaintCount,
         ]
+    }
+}
+
+// MARK: - Process termination
+
+/// `processDelegate` for every spawned terminal. The size/title/cwd callbacks are no-ops (SwiftTerm's own
+/// `TerminalView` delegate already does the load-bearing work, e.g. SIGWINCH); we only care about exit.
+extension TerminalStore: LocalProcessTerminalViewDelegate {
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+
+    func processTerminated(source: TerminalView, exitCode: Int32?) {
+        // May arrive off the main thread; do the (main-only) `views` lookup + notify on main.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let id = self.views.first(where: { $0.value === source })?.key else { return }
+            if id.hasPrefix(Self.quickPrefix) {
+                self.onQuickExit?(String(id.dropFirst(Self.quickPrefix.count)))
+            } else {
+                self.onExit?(id)
+            }
+        }
     }
 }
 

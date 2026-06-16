@@ -51,7 +51,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "searchOpenFirst", "searchOpenAsTab", "openSearchTab", "projectSearchTab:foo",
               "openAt:file.md|3", "setStatus:done", "hookStatus:0:idle", "activateTab:1",
               "renderAttentionMenu:/tmp/x.png", "showShortcuts", "renderShortcuts:/tmp/x.png",
-              "quickToggle", "quickMode:floating|centered|bottom", "quickSend:echo hi"] }
+              "quickToggle", "quickMode:floating|centered|bottom", "quickSend:echo hi",
+              "tabRestart", "tabToTerminal"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via

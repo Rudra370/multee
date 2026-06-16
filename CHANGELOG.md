@@ -8,6 +8,10 @@ commits/PRs since the last tag. Newest first.
 ## [0.1.12] - 2026-06-16
 
 ### Added
+- **"Session ended" prompt** — when a Claude session or terminal exits (you type `exit`, or Claude quits),
+  the tab no longer leaves a dead, unresponsive terminal. A clear centered card appears with **Restart**
+  (relaunch in place — Claude resumes its conversation), **Open Terminal** (turn an ended Claude tab into a
+  plain shell), and **Close**.
 - **Quick terminal (⌃`)** — press **⌃`** to pop a scratch terminal and the same key to hide it (VS Code-style).
   It's a login shell **per session**, opened in that repo's folder. Choose how it appears in **Settings → Quick
   terminal opens as**: a **floating window**, a **centered overlay**, or a **bottom panel** docked under the editor
