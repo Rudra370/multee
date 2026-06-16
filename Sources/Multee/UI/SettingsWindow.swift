@@ -157,7 +157,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func buildFormattersPane() -> NSView {
         let intro = NSTextField(wrappingLabelWithString:
-            "Multee formats the active file with the matching tool installed on your machine (⌘⇧F). " +
+            "Multee formats the active file with the matching tool installed on your machine (⇧⌥F). " +
             "Turn one off to skip it, or install a missing one.")
         intro.font = .systemFont(ofSize: 11)
         intro.textColor = NSColor(white: 0.6, alpha: 1)

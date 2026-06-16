@@ -5,6 +5,16 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.12] - 2026-06-16
+
+### Added
+- **Keyboard shortcuts panel** — a keyboard icon at the right of the bottom status bar opens a panel listing
+  every shortcut, grouped (General / Navigation / Editing / Find / View) with keycap chips.
+
+### Fixed
+- **Format Document (⇧⌥F)** now formats the file instead of typing a character — the shortcut is handled
+  directly so macOS no longer swallows it as text input.
+
 ## [0.1.11] - 2026-06-16
 
 ### Added

@@ -42,6 +42,8 @@ enum DebugAction {
         case "closeActiveTab": if let s = model.activeSession { s.closeTab(s.activeTabID) }
         case "activateTab":    if let s = model.activeSession, let i = Int(arg), s.tabs.indices.contains(i) { s.activate(s.tabs[i].id) }
         case "renderAttentionMenu": AttentionMenu.debugRender(to: arg.isEmpty ? "/tmp/attention-menu.png" : arg)
+        case "showShortcuts":   ShortcutsWindowController.shared.show()
+        case "renderShortcuts": ShortcutsWindowController.shared.debugRender(to: arg.isEmpty ? "/tmp/shortcuts.png" : arg)
         case "unsavedResp":   // canned answer for the close/quit guard (modal can't be clicked in harness)
             switch arg { case "save": UnsavedGuard.debugResponse = .save
                          case "dontSave", "discard": UnsavedGuard.debugResponse = .dontSave

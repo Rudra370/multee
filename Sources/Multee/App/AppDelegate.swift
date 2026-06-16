@@ -183,17 +183,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.modifierFlags.contains(.command) else { return event }
-            switch event.charactersIgnoringModifiers {
-            // Cmd+W is the "Close Tab" menu item. Cmd+/- have no menu item yet, so handle here.
-            case "=", "+":
-                self.model.settings.bumpFont(1); return nil
-            case "-", "_":
-                self.model.settings.bumpFont(-1); return nil
-            default:
-                break
+            guard let self else { return event }
+            let mods = event.modifierFlags
+            let key = event.charactersIgnoringModifiers?.lowercased()
+            // ⇧⌥F → Format Document. AppKit won't fire a non-Command menu shortcut over the editor: Option is
+            // the "compose a special character" modifier, so the keystroke is eaten as text input ("ï") before
+            // the menu sees it. Intercept it here (only when an editor is focused, so terminals keep the key).
+            if mods.contains(.option), mods.contains(.shift), !mods.contains(.command), key == "f",
+               let ed = ActiveEditor.current {
+                ed.formatDocument(); return nil
             }
-            return event
+            // Cmd+/- have no menu item, so handle here. (Cmd+W is the "Close Tab" menu item.)
+            guard mods.contains(.command) else { return event }
+            switch key {
+            case "=", "+": self.model.settings.bumpFont(1); return nil
+            case "-", "_": self.model.settings.bumpFont(-1); return nil
+            default: return event
+            }
         }
     }
 

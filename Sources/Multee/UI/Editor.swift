@@ -576,7 +576,7 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
 
     private static let formatQueue = DispatchQueue(label: "com.multee.format", qos: .userInitiated)
 
-    /// Format the current file with its configured formatter (⌘⇧F / right-click). Runs off-main; applies
+    /// Format the current file with its configured formatter (⇧⌥F / right-click). Runs off-main; applies
     /// the result preserving the cursor + a single undo, or surfaces a not-installed / error prompt.
     func formatDocument() {
         let p = path

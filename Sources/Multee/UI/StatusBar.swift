@@ -26,6 +26,7 @@ final class StatusBarView: NSView {
     private let indentButton = StatusBarView.flatButton()
     private let eolButton = StatusBarView.flatButton()
     private let langButton = StatusBarView.flatButton()
+    private let shortcutsButton = StatusBarView.flatButton()   // always-visible, far right
     private lazy var editorItems: [NSView] = [lnColButton, indentButton, eolButton, langButton]
 
     init(model: AppModel) {
@@ -43,7 +44,7 @@ final class StatusBarView: NSView {
         model.settings.$fontSize.receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.invalidateIntrinsicContentSize(); self.updateBranchIcon(); self.render()
+                self.invalidateIntrinsicContentSize(); self.updateBranchIcon(); self.updateShortcutsIcon(); self.render()
             }
             .store(in: &cancellables)
         // Resource monitor: AppDelegate pushes mem/CPU here; show/hide tracks the setting.
@@ -260,9 +261,15 @@ final class StatusBarView: NSView {
             b.target = self; b.action = sel; b.toolTip = tip
         }
 
+        updateShortcutsIcon()
+        shortcutsButton.contentTintColor = StatusBarView.fg
+        shortcutsButton.target = self; shortcutsButton.action = #selector(shortcutsClicked)
+        shortcutsButton.toolTip = "Keyboard shortcuts"
+
         let left = NSStackView(views: [branchButton, resourceLabel])
         left.spacing = 12; left.alignment = .centerY
-        let right = NSStackView(views: editorItems)
+        // Editor items (which hide for non-editor tabs) + the always-visible shortcuts icon at the far right.
+        let right = NSStackView(views: editorItems + [shortcutsButton])
         right.spacing = 14; right.alignment = .centerY
         for s in [left, right] { s.translatesAutoresizingMaskIntoConstraints = false; addSubview(s) }
 
@@ -298,6 +305,14 @@ final class StatusBarView: NSView {
     private func updateBranchIcon() {
         let cfg = NSImage.SymbolConfiguration(pointSize: statusFontSize, weight: .regular)
         branchButton.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")?
+            .withSymbolConfiguration(cfg)
+    }
+
+    @objc private func shortcutsClicked() { ShortcutsWindowController.shared.show() }
+
+    private func updateShortcutsIcon() {
+        let cfg = NSImage.SymbolConfiguration(pointSize: statusFontSize + 1, weight: .regular)
+        shortcutsButton.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Keyboard shortcuts")?
             .withSymbolConfiguration(cfg)
     }
 }

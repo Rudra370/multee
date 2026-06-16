@@ -85,7 +85,7 @@ tokenizer is ~linear but call-bound (~0.3 ms/line); huge files colour off-main w
 than instantly — a combined-regex scanner would be the next step if instant huge-file colour is needed.
 
 ## Formatting — `Backend/Formatter`, `UI/FormatterPrompt`, `UI/SettingsWindow` (Formatters tab)
-Format the active file with the user's installed CLI formatter (⌘⇧F / right-click → **Format Document**;
+Format the active file with the user's installed CLI formatter (⇧⌥F / right-click → **Format Document**;
 markdown/SVG format their Source). Formatters are **shelled out, never bundled** (zero idle cost): a
 registry maps extensions → `{ binaries, run argv, install command }` for Prettier, gofmt, rustfmt, Ruff,
 swift-format, clang-format. Detection prefers a **project-local** tool (`node_modules/.bin`, walking up
@@ -245,6 +245,16 @@ called on tab activation in `CenterViewController` and on app-foreground in `App
 transition is **debounced** (`finishDebounce` = 2.5s): Claude often stops for a beat then keeps going or pops a
 question, so the deferred finish (and its completion notification) is cancelled by any following event —
 avoiding a false "finished". `StatusDot` and the menu both color `.needs`/`.done` orange.
+
+## Keyboard shortcuts panel — `UI/ShortcutsWindow`, `UI/StatusBar`
+A keyboard icon at the far right of the bottom status bar (always visible while the bar is) opens
+`ShortcutsWindowController` — a floating, dark, scrollable panel listing every shortcut from `Shortcuts.sections`
+(General / Navigation / Editing / Find in File / View), each row a command name + **keycap chips** (one fixed-
+width rounded `KeycapView` per glyph). Esc or the close button dismisses it. The list is a hand-maintained
+mirror of `AppDelegate.buildMenu` + the ⌘+/− monitor + ⌘S — keep it in sync when adding shortcuts.
+**Format Document is ⇧⌥F** (moved off ⌘⇧F, which now opens Find in Files); because a non-Command shortcut is
+swallowed as text input over the editor (Option composes a special char), it's handled in `AppDelegate`'s key
+monitor — intercepted before the editor when one is focused — not as a menu key-equivalent.
 
 ## Settings & updates — `UI/SettingsWindow`, `UI/Updates`
 Settings window (native controls) bound to `Settings`. Update checker hits the GitHub latest-release
