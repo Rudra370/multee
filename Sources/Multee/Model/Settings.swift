@@ -14,6 +14,8 @@ final class Settings: ObservableObject {
     @Published var fontSize: Double       { didSet { d.set(fontSize, forKey: K.fontSize) } }
     @Published var defaultClaudeArgs: String { didSet { d.set(defaultClaudeArgs, forKey: K.defaultArgs) } }
     @Published var showResourceMonitor: Bool { didSet { d.set(showResourceMonitor, forKey: K.resourceMonitor) } }
+    /// Show the menu-bar attention item (aggregate session status + jump). On by default.
+    @Published var showMenuBarStatus: Bool { didSet { d.set(showMenuBarStatus, forKey: K.menuBarStatus) } }
     /// Formatter ids the user has turned off (empty = all enabled).
     @Published var disabledFormatters: Set<String> { didSet { d.set(Array(disabledFormatters), forKey: K.disabledFormatters) } }
     @Published var formatOnSave: Bool { didSet { d.set(formatOnSave, forKey: K.formatOnSave) } }
@@ -35,6 +37,7 @@ final class Settings: ObservableObject {
             K.fontSize: 13.0,
             K.defaultArgs: "",
             K.resourceMonitor: false,
+            K.menuBarStatus: true,
             K.formatOnSave: false,
         ])
         // didSet does not fire for these initial assignments inside init.
@@ -46,6 +49,7 @@ final class Settings: ObservableObject {
         fontSize          = d.double(forKey: K.fontSize)
         defaultClaudeArgs = d.string(forKey: K.defaultArgs) ?? ""
         showResourceMonitor = d.bool(forKey: K.resourceMonitor)
+        showMenuBarStatus = d.bool(forKey: K.menuBarStatus)
         disabledFormatters = Set((d.array(forKey: K.disabledFormatters) as? [String]) ?? [])
         formatOnSave = d.bool(forKey: K.formatOnSave)
         findMatchCase = d.bool(forKey: K.findMatchCase)
@@ -70,6 +74,7 @@ final class Settings: ObservableObject {
         static let fontSize      = "fontSize"
         static let defaultArgs   = "defaultClaudeArgs"
         static let resourceMonitor = "showResourceMonitor"
+        static let menuBarStatus = "showMenuBarStatus"
         static let disabledFormatters = "disabledFormatters"
         static let formatOnSave = "formatOnSave"
         static let findMatchCase = "findMatchCase"

@@ -1,7 +1,9 @@
 import Foundation
 
 /// Claude run state, surfaced as the per-tab / per-session status dot.
-enum ClaudeState: String { case idle, working, needs }
+/// `done` = finished its turn and waiting for you (an attention state, shown like `needs`) — set when a
+/// session completes while you're not looking, cleared when you open that tab.
+enum ClaudeState: String { case idle, working, needs, done }
 
 /// What a tab shows.
 enum TabKind: String, Codable { case claude, terminal, file, diff, search }

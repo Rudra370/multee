@@ -219,6 +219,33 @@ show even while Multee is frontmost. Toggle in Settings (default on); the Settin
 row with an "Open System Settings…" deep-link when macOS notifications are off for Multee (re-checked when
 the window opens or regains focus).
 
+## Menu-bar attention — `App/AttentionItem`, `App/AttentionMenu`, `App/AppDelegate`
+A persistent `NSStatusItem` (toggleable: `Settings.showMenuBarStatus`, default on) showing aggregate session
+status while Multee is in the background — complementing the transient notification banners and the in-app dots.
+The icon is the **Multee `»` mark drawn as a single-color silhouette** (rounded caps), tinted by aggregate
+state: **blue** working, **orange + a count of how many need you** when any session needs attention, else an
+adaptive template (white/black per the menu bar). It's drawn (not the two-tone app icon) so it tints cleanly —
+`button.contentTintColor` renders a template monochrome in the menu bar. **Dev builds add a small dot** in the
+top-right (gated on `Bundle.main.isDev`) so the dev `»` is distinguishable from a release Multee at a glance.
+Recompute is event-driven off the same per-session `objectWillChange` the sidebar uses — no polling.
+
+The dropdown (`AttentionMenu`) is built from **custom `NSMenuItem.view`s** so it reads like a status panel: a
+header summary ("N sessions need you", colored by urgency), then session rows — **status dot + name + a
+right-aligned colored status word** (Needs you / Working / Done / Idle), needs-first, with a rounded **hover
+highlight** (tracking-area driven; text brightens on the accent). Sessions running more than one Claude tab
+expand to indented per-tab rows. Selecting a row jumps to that session/tab (`mouseUp` → `cancelTracking` +
+`onJump`, supplied by AppDelegate: switch + `NSApp.activate` + window front). Footer actions (Settings / Open
+Multee) stay standard `NSMenuItem`s with SF Symbol icons for native highlight + action. `AttentionMenu.debugRender`
+renders a representative panel to a PNG (the menu is HID — hover/click are user-verified, the static design isn't).
+
+The **"done / waiting for you" attention state** (`ClaudeState.done`) lives in the shared status model so all
+three surfaces agree: when a turn ends (was working → idle) while you're **not** looking, the tab is flagged
+`.done` (orange, like `.needs`) instead of plain idle, cleared when you next view that tab (`Session.clearAttention`,
+called on tab activation in `CenterViewController` and on app-foreground in `AppDelegate`). The `Stop`→done
+transition is **debounced** (`finishDebounce` = 2.5s): Claude often stops for a beat then keeps going or pops a
+question, so the deferred finish (and its completion notification) is cancelled by any following event —
+avoiding a false "finished". `StatusDot` and the menu both color `.needs`/`.done` orange.
+
 ## Settings & updates — `UI/SettingsWindow`, `UI/Updates`
 Settings window (native controls) bound to `Settings`. Update checker hits the GitHub latest-release
 API; a top banner offers Homebrew self-update (runs `brew upgrade` in an in-app terminal) or Download.

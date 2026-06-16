@@ -203,6 +203,7 @@ final class CenterViewController: NSViewController {
         // focus a text editor so you can type / search / jump immediately, or focus the terminal.
         if tab.id != lastActiveTabID {
             lastActiveTabID = tab.id
+            session.clearAttention(tab.id)   // viewing a flagged tab clears its needs/done attention
             if outgoingEditor !== ActiveEditor.current { outgoingEditor?.hideFindIfShown() }   // close its floating find bar
             if let editor = contentVCs[tab.id] as? EditorViewController {
                 DispatchQueue.main.async { editor.focusText() }

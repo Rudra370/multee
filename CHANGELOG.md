@@ -5,9 +5,18 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
-## [0.1.11] - 2026-06-15
+## [0.1.11] - 2026-06-16
 
 ### Added
+- **Menu-bar attention indicator** — a `»` icon in the macOS menu bar shows session status at a glance even
+  when Multee is in the background: **blue** while working, **orange + a count** when sessions need you, neutral
+  when idle. Click it for a panel listing your sessions (and their Claude tabs) with status — click one to jump
+  straight there. Toggle it in **Settings → Show session status in the menu bar**. (The dev build's icon carries
+  a tiny dot so you can tell it apart from a release Multee.)
+- **"Waiting for you" status** — when a Claude session **finishes its turn (or asks you something) while you're
+  not looking**, its dot turns **orange** — in the sidebar, on the tab, and in the menu bar — instead of going
+  gray like an untouched session, and clears once you open it. A short delay avoids a false "finished" when
+  Claude only pauses before continuing.
 - **Project search (⌘⇧F)** — VS Code-style search across the active session's repo. **⌘⇧F** (or the command
   palette → **Find in Files…**) opens the **Search** section in the sidebar (a new third icon next to Files /
   Changes); type to search, with **Match Case**, **Whole Word**, and **Regular Expression** toggles and a live

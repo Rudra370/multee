@@ -93,6 +93,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         notifyStatus = makeNotifyStatusRow()
         let restore = checkbox("Restore sessions & tabs on launch", \.restoreOnLaunch)
         let monitor = checkbox("Show resource usage (memory / CPU) in the title bar", \.showResourceMonitor)
+        let menuBar = checkbox("Show session status in the menu bar", \.showMenuBarStatus)
 
         stepper = NSStepper()
         stepper.minValue = 9; stepper.maxValue = 24; stepper.increment = 1
@@ -135,7 +136,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         argsStack.alignment = .leading
         argsStack.spacing = 8
 
-        let stack = NSStackView(views: [autoLaunch, expand, sound, notify, notifyStatus, restore, monitor, fontRow, argsStack])
+        let stack = NSStackView(views: [autoLaunch, expand, sound, notify, notifyStatus, restore, monitor, menuBar, fontRow, argsStack])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14

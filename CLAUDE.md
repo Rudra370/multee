@@ -49,7 +49,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "paletteOpen", "paletteCommands", "paletteType:foo", "paletteDown", "paletteUp",
               "paletteEnter", "paletteClose", "sidebarMode:2", "revealSearch", "projectSearch:foo",
               "searchOpenFirst", "searchOpenAsTab", "openSearchTab", "projectSearchTab:foo",
-              "openAt:file.md|3"] }
+              "openAt:file.md|3", "setStatus:done", "hookStatus:0:idle", "activateTab:1",
+              "renderAttentionMenu:/tmp/x.png"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -113,8 +114,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   sandbox blocks synthetic mouse events (CGEvent/NSEvent) — so this class of bug needs a human to verify.
 
 ## File map (Sources/Multee/)
-- `App/` — `main.swift`, `AppDelegate.swift` (menu, key monitors, status routing, settings/update
-  wiring), `MainWindowController.swift` (window + banner + workspace).
+- `App/` — `main.swift`, `AppDelegate.swift` (menu, key monitors, status routing + the `.done`/debounce
+  attention logic, settings/update wiring), `MainWindowController.swift` (window + banner + workspace),
+  `AttentionItem`/`AttentionMenu` (menu-bar `»` status item + its custom-view dropdown).
 - `Model/` — `AppModel`, `Session`, `Tab`, `Settings` (Combine), `Persistence` (JSON snapshot).
 - `Backend/` — `Shell`/`Env`, `Git` (status + actions), `Search` (project-wide `git grep`).
 - `Terminal/` — `TerminalStore` (PTY per tab + scroll), `HookServer` (status listener), `Hooks`.

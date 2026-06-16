@@ -40,6 +40,8 @@ enum DebugAction {
         case "newClaude":      model.activeSession?.addTab(Tab(kind: .claude, title: "Claude", args: model.settings.defaultArgs))
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         case "closeActiveTab": if let s = model.activeSession { s.closeTab(s.activeTabID) }
+        case "activateTab":    if let s = model.activeSession, let i = Int(arg), s.tabs.indices.contains(i) { s.activate(s.tabs[i].id) }
+        case "renderAttentionMenu": AttentionMenu.debugRender(to: arg.isEmpty ? "/tmp/attention-menu.png" : arg)
         case "unsavedResp":   // canned answer for the close/quit guard (modal can't be clicked in harness)
             switch arg { case "save": UnsavedGuard.debugResponse = .save
                          case "dontSave", "discard": UnsavedGuard.debugResponse = .dontSave
@@ -59,7 +61,14 @@ enum DebugAction {
             if let s = model.activeSession { TerminalStore.shared.debugScroll(s.activeTabID, up: up, lines: lines) }
         case "setStatus":
             if let s = model.activeSession {
-                s.tabStatus[s.activeTabID] = arg == "working" ? .working : arg == "needs" ? .needs : .idle
+                s.tabStatus[s.activeTabID] = arg == "working" ? .working : arg == "needs" ? .needs
+                    : arg == "done" ? .done : .idle
+            }
+        case "hookStatus":   // index:state — inject a hook event through the real routing + debounce
+            let p = arg.split(separator: ":").map(String.init)
+            if p.count == 2, let i = Int(p[0]), let s = model.activeSession, s.tabs.indices.contains(i) {
+                let st: ClaudeState = p[1] == "working" ? .working : p[1] == "needs" ? .needs : .idle
+                HookServer.shared.onStatus?(s.tabs[i].id, st)
             }
         case "editorType": ActiveEditor.current?.debugAppend(arg)
         case "editorSave":  ActiveEditor.current?.save()
@@ -126,6 +135,7 @@ enum DebugState {
         if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }
         if let s = SearchViewController.current?.debugState() { root["search"] = s }
         if let s = SearchViewController.currentTab?.debugState() { root["searchTab"] = s }
+        if let a = AttentionItem.current?.debugState() { root["attention"] = a }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
         root["branch"] = model.activeSession?.gitBranch ?? NSNull()
         if let ed = ActiveEditor.current {

@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var settingsWC: SettingsWindowController?
     private let resourceMonitor = ResourceMonitor()
+    private var attentionItem: AttentionItem!
+    private var pendingFinish: [String: DispatchWorkItem] = [:]   // deferred "finished" per tab (debounce)
+    private let finishDebounce: TimeInterval = 2.5                 // wait this long before treating a Stop as "finished"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Snappier tooltips (default is ~2s). Registered so it doesn't clobber a user override.
@@ -38,6 +41,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         wireStatusRouting()
         installKeyMonitor()
+
+        // Returning to Multee clears the attention flag on the tab you're now looking at.
+        NotificationCenter.default.addObserver(self, selector: #selector(appBecameActive),
+                                               name: NSApplication.didBecomeActiveNotification, object: nil)
+
+        // Menu-bar attention item: glanceable session status + jump, even while Multee is in the background.
+        attentionItem = AttentionItem(model: model)
+        attentionItem.onJump = { [weak self] sessionID, tabID in
+            guard let self else { return }
+            if let session = self.model.sessions.first(where: { $0.id == sessionID }) {
+                self.model.activeSessionID = sessionID
+                if let tabID { session.activate(tabID) }
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            self.windowController.showWindow(nil)
+        }
+        attentionItem.start()
 
         // Live resource usage of Multee's own process, shown in the bottom status bar (the bar reads the
         // setting to show/hide; only the *running* monitor produces updates).
@@ -85,24 +105,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             for session in self.model.sessions where session.tabs.contains(where: { $0.id == tabID }) {
                 let old = session.tabStatus[tabID] ?? .idle
+                // Any new event supersedes a deferred "finished" — Claude resumed or is about to ask.
+                self.pendingFinish.removeValue(forKey: tabID)?.cancel()
+
+                // A turn ending (was working, now idle) is "finished" — but defer it (finishDebounce). Claude
+                // often stops for a beat then keeps going or pops a question (AskUserQuestion / background
+                // shells); the next event cancels this, avoiding a false "finished". The dot stays put meanwhile.
+                if state == .idle && old == .working {
+                    let sid = session.id
+                    let work = DispatchWorkItem { [weak self] in
+                        guard let self else { return }
+                        self.pendingFinish[tabID] = nil    // clear first, even if the tab/session has since closed
+                        guard let session = self.model.sessions.first(where: { $0.id == sid }),
+                              session.tabs.contains(where: { $0.id == tabID }) else { return }
+                        let viewing = self.isViewing(session: session, tabID: tabID)
+                        session.tabStatus[tabID] = viewing ? .idle : .done    // orange "done" unless you're watching
+                        self.notifyAttention(session: session, tabID: tabID, state: .idle, viewing: viewing)
+                    }
+                    self.pendingFinish[tabID] = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + self.finishDebounce, execute: work)
+                    continue
+                }
+
                 session.tabStatus[tabID] = state
-                // Surface only meaningful transitions: a session wanting input, or finishing its work.
-                guard old != state, state == .needs || (state == .idle && old == .working) else { continue }
-                let settings = self.model.settings
-                let sound = { if settings.soundEnabled { NSSound(named: state == .needs ? "Funk" : "Glass")?.play() } }
-                // You're "looking at it" only if Multee is frontmost AND this is the active tab of the
-                // active session — otherwise (backgrounded, or another session/tab) post a banner.
-                let viewingThisTab = NSApp.isActive
-                    && self.model.activeSessionID == session.id
-                    && session.activeTabID == tabID
-                if viewingThisTab {
-                    sound()
-                } else if settings.notificationsEnabled {
-                    let title = session.tabs.first(where: { $0.id == tabID })?.title ?? "Claude"
-                    Notifier.shared.post(sessionID: session.id, sessionName: session.name, tabID: tabID,
-                                         tabTitle: title, state: state, fallback: sound)
-                } else {
-                    sound()
+                // A permission prompt / question needs you now — orange + ping immediately.
+                if old != state, state == .needs {
+                    self.notifyAttention(session: session, tabID: tabID, state: .needs,
+                                         viewing: self.isViewing(session: session, tabID: tabID))
                 }
             }
         }
@@ -118,6 +147,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.settings.$fontSize
             .sink { TerminalStore.shared.applyFont(size: $0) }
             .store(in: &cancellables)
+    }
+
+    /// You're "looking at" a tab only when Multee is frontmost and it's the active tab of the active session.
+    private func isViewing(session: Session, tabID: String) -> Bool {
+        NSApp.isActive && model.activeSessionID == session.id && session.activeTabID == tabID
+    }
+
+    /// Play the attention/completion sound, or post a banner if you're not looking. `state` picks the sound
+    /// (needs → Funk, finished → Glass) and the banner text.
+    private func notifyAttention(session: Session, tabID: String, state: ClaudeState, viewing: Bool) {
+        let settings = model.settings
+        let sound = { if settings.soundEnabled { NSSound(named: state == .needs ? "Funk" : "Glass")?.play() } }
+        if viewing {
+            sound()
+        } else if settings.notificationsEnabled {
+            let title = session.tabs.first(where: { $0.id == tabID })?.title ?? "Claude"
+            Notifier.shared.post(sessionID: session.id, sessionName: session.name, tabID: tabID,
+                                 tabTitle: title, state: state, fallback: sound)
+        } else {
+            sound()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -221,6 +271,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         findInFiles.target = self
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func appBecameActive() {
+        guard let s = model.activeSession else { return }
+        s.clearAttention(s.activeTabID)
     }
 
     @objc private func openFolder() {

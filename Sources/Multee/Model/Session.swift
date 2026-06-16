@@ -21,12 +21,18 @@ final class Session: ObservableObject, Identifiable {
         self.activeTabID = activeTabID ?? tabs.first?.id ?? ""
     }
 
-    /// Rolled-up status for the session dot: needs ▸ working ▸ idle.
+    /// Rolled-up status for the session dot: needs ▸ done ▸ working ▸ idle (attention states win).
     var status: ClaudeState {
         let states = tabs.compactMap { tabStatus[$0.id] }
         if states.contains(.needs) { return .needs }
+        if states.contains(.done) { return .done }
         if states.contains(.working) { return .working }
         return .idle
+    }
+
+    /// You're now looking at this tab → clear its attention flag (needs / done) back to idle.
+    func clearAttention(_ tabID: String) {
+        if let s = tabStatus[tabID], s == .needs || s == .done { tabStatus[tabID] = .idle }
     }
 
     var activeTab: Tab? { tabs.first { $0.id == activeTabID } }

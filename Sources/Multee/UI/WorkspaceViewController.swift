@@ -532,9 +532,9 @@ final class StatusDot: NSView {
         layer?.cornerRadius = 4
         let color: NSColor
         switch state {
-        case .idle:    color = NSColor(white: 0.45, alpha: 1)
-        case .working: color = .systemBlue
-        case .needs:   color = .systemOrange
+        case .idle:           color = NSColor(white: 0.45, alpha: 1)
+        case .working:        color = .systemBlue
+        case .needs, .done:   color = .systemOrange   // both are "needs your attention"
         }
         layer?.backgroundColor = color.cgColor
         translatesAutoresizingMaskIntoConstraints = false
