@@ -20,6 +20,10 @@ commits/PRs since the last tag. Newest first.
   every shortcut, grouped (General / Navigation / Editing / Find / View) with keycap chips.
 
 ### Fixed
+- **`--continue` / `--resume` default args no longer break new projects** — if you keep e.g. `--continue` in
+  your default Claude args, opening a folder Claude has never seen used to fail with "no conversation to
+  continue." Multee now drops those flags when the folder has no Claude history, so a brand-new project just
+  starts a fresh session (and still continues when there *is* history).
 - **Format Document (⇧⌥F)** now formats the file instead of typing a character — the shortcut is handled
   directly so macOS no longer swallows it as text input.
 

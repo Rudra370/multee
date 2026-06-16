@@ -60,9 +60,28 @@ final class TerminalStore {
         }
     }
 
-    /// The shell/args/env to launch a tab's process — shared by initial spawn and `restart`, so a Restart
-    /// (or convert-to-terminal) re-derives from the tab's CURRENT kind/args.
-    private func launchSpec(for tab: Tab) -> (exe: String, args: [String], env: [String]) {
+    /// Claude's "continue / resume" flags. Passing one for a folder Claude has never seen errors out with
+    /// "no conversation to continue", so we drop them when there's nothing to continue (see `hasConversation`).
+    private static let resumeFlags: Set<String> = ["--continue", "-c", "--resume", "-r"]
+
+    /// Does Claude have any saved conversation for this working directory (so `--continue` would succeed)?
+    /// Claude keys transcripts by an encoded cwd — every non-alphanumeric char becomes `-`
+    /// (`/Users/rudra/Claude/multee` → `-Users-rudra-Claude-multee`). If that project dir has any `.jsonl`,
+    /// there's something to continue. A wrong guess only ever means "launch fresh", never a dead tab.
+    private static func hasConversation(forCwd cwd: String) -> Bool {
+        func isAlnum(_ c: Character) -> Bool {
+            (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9")
+        }
+        let encoded = String(cwd.map { isAlnum($0) ? $0 : "-" })
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects").appendingPathComponent(encoded)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return false }
+        return files.contains { $0.hasSuffix(".jsonl") }
+    }
+
+    /// The shell/args/env to launch a tab's process. Re-derived from the tab's CURRENT kind/args on every
+    /// `view(for:)`, so a rebuild (Restart / convert-to-terminal) picks up flag/kind changes.
+    private func launchSpec(for tab: Tab, cwd: String) -> (exe: String, args: [String], env: [String]) {
         switch tab.kind {
         case .claude:
             let exe = Env.resolve("claude")
@@ -71,7 +90,11 @@ final class TerminalStore {
             let userArgs = tab.args.split(separator: " ").map(String.init)
             let base: [String]
             if let cid = tab.claudeSessionId, Self.conversationExists(sessionId: cid) {
-                base = userArgs.filter { $0 != "--continue" && $0 != "--resume" } + ["--resume", cid]
+                base = userArgs.filter { !Self.resumeFlags.contains($0) } + ["--resume", cid]
+            } else if userArgs.contains(where: Self.resumeFlags.contains), !Self.hasConversation(forCwd: cwd) {
+                // A default like `--continue` would fail on a folder Claude has never seen ("no conversation
+                // to continue") and kill the tab. Drop it so a brand-new project just starts fresh.
+                base = userArgs.filter { !Self.resumeFlags.contains($0) }
             } else {
                 base = userArgs
             }
@@ -98,7 +121,7 @@ final class TerminalStore {
         tv.nativeForegroundColor = NSColor(calibratedWhite: 0.83, alpha: 1)
         tv.processDelegate = self   // get notified when the process exits (you type `exit`, Claude quits)
 
-        let spec = launchSpec(for: tab)
+        let spec = launchSpec(for: tab, cwd: cwd)
         tv.startProcess(executable: spec.exe, args: spec.args, environment: spec.env,
                         execName: nil, currentDirectory: cwd)
         views[tab.id] = tv

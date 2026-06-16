@@ -23,7 +23,10 @@ JSON snapshot in UserDefaults, debounce-saved; restore drops repos whose folder 
 Login-shell PATH via `Env.bootstrap`. Claude launches with `--settings <hooks>` + env; a shared
 scroll monitor routes wheel/trackpad events (incl. alt-buffer SGR forwarding) to the terminal under
 the cursor. Claude `--resume <cid>` only when its transcript still exists on disk. The launch exe/args/env
-live in one `launchSpec(for:)` shared by spawn and rebuild.
+live in one `launchSpec(for:cwd:)`. **Continue/resume flags are dropped for folders Claude has never seen**
+(`hasConversation(forCwd:)` checks `~/.claude/projects/<encoded cwd>` for any `.jsonl`) so a default like
+`--continue` starts a *fresh* session on a brand-new project instead of failing with "no conversation to
+continue"; it's kept when the folder has history. A wrong encoding guess only ever means "launch fresh".
 
 **Session end.** Every spawned terminal sets `TerminalStore` as its SwiftTerm `processDelegate`; on
 `processTerminated` it maps the view → id and fires `onExit(tabID)` (AppDelegate → `Session.markExited`,
