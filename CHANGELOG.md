@@ -8,6 +8,9 @@ commits/PRs since the last tag. Newest first.
 ## [0.1.12] - 2026-06-16
 
 ### Added
+- **New Project** — create a folder and open it as a session (before, you could only open existing folders).
+  **⌘⇧N** — or File → New Project…, the empty-state button, or the SESSIONS header's folder icon — prompts for
+  a name + location, with an optional **"Initialize a Git repository"** checkbox (off by default).
 - **"Session ended" prompt** — when a Claude session or terminal exits (you type `exit`, or Claude quits),
   the tab no longer leaves a dead, unresponsive terminal. A clear centered card appears with **Restart**
   (relaunch in place — Claude resumes its conversation), **Open Terminal** (turn an ended Claude tab into a

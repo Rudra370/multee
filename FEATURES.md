@@ -10,7 +10,11 @@ views by hand. **Why AppKit:** the prior SwiftUI build had recurring cursor/tool
 and a release-only file-open crash, all rooted in the SwiftUI↔AppKit seam; AppKit owns those natively.
 
 ## Sessions & tabs — `Model/`, `UI/WorkspaceViewController`, `UI/CenterViewController`, `UI/TabBarView`
-Multi-repo sessions (dedup by path); tabs for Claude / shell / file / diff. Tabs stay mounted across
+Multi-repo sessions (dedup by path); tabs for Claude / shell / file / diff. Open an existing folder (⌘O), or
+**New Project** (`UI/NewProject`, ⌘⇧N / empty-state button / SESSIONS-header folder icon): an `NSSavePanel`
+with an optional "Initialize a Git repository" checkbox (off by default) creates the folder, optionally
+`git init`s it (`Git.initRepo`), and opens it. A non-git project still lists files (the tree falls back to
+`Git.repoFiles` → `fsFiles`); only Changes/branch are git-only. Tabs stay mounted across
 switches; restored tabs **spawn lazily** (only when first viewed). Claude arg presets via the +menu.
 Cmd+W closes the active tab. Closing a tab/folder or quitting with **unsaved editor edits** prompts
 first (`UI/UnsavedGuard`: Save / Don't Save / Cancel for one, Save All / Discard / Cancel for many) —

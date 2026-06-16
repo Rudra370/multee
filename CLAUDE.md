@@ -52,7 +52,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "openAt:file.md|3", "setStatus:done", "hookStatus:0:idle", "activateTab:1",
               "renderAttentionMenu:/tmp/x.png", "showShortcuts", "renderShortcuts:/tmp/x.png",
               "quickToggle", "quickMode:floating|centered|bottom", "quickSend:echo hi",
-              "tabRestart", "tabToTerminal"] }
+              "tabRestart", "tabToTerminal", "newProject:/tmp/x|git"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -136,6 +136,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   bottom-bar keyboard-icon panel listing all shortcuts (`Shortcuts` table + keycap chips). `QuickTerminal`
   (`QuickTerminalController` + `QuickTerminalHook`) is the ⌃` quick terminal — one per-session shell shown as a
   floating panel / centered overlay / bottom dock (the dock is a vertical `NSSplitView` inside `CenterViewController`).
+  `NewProject` is the ⌘⇧N "New Project" save panel (name + optional `git init` checkbox → create folder → open).
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
   and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).

@@ -25,6 +25,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
     private let endedOverlay = SessionEndedOverlay()          // centered card shown over a terminal that exited
     private let emptyLabel = NSTextField(labelWithString: "Open a folder to start  (⌘O)")
     private let openButton = PointerButton()
+    private let newProjectButton = PointerButton()
     private var emptyStack: NSView?
     private var contentViews: [String: NSView] = [:]
     private var contentVCs: [String: NSViewController] = [:]   // VC-backed content (editor, diff)
@@ -86,7 +87,15 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         openButton.target = self
         openButton.action = #selector(openFolderTapped)
         openButton.toolTip = "Open a folder (⌘O)"
-        let emptyStack = NSStackView(views: [emptyLabel, openButton])
+        newProjectButton.title = "New Project…"
+        newProjectButton.bezelStyle = .rounded
+        newProjectButton.target = self
+        newProjectButton.action = #selector(newProjectTapped)
+        newProjectButton.toolTip = "Create a new project (⌘⇧N)"
+        let buttonsRow = NSStackView(views: [openButton, newProjectButton])
+        buttonsRow.orientation = .horizontal
+        buttonsRow.spacing = 10
+        let emptyStack = NSStackView(views: [emptyLabel, buttonsRow])
         emptyStack.orientation = .vertical
         emptyStack.alignment = .centerX
         emptyStack.spacing = 12
@@ -152,6 +161,8 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         if panel.runModal() == .OK, let url = panel.url { model.openRepo(url.path) }
     }
 
+    @objc private func newProjectTapped() { NewProject.present(model: model) }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         CenterViewController.current = self
@@ -198,6 +209,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             emptyStack?.isHidden = false
             emptyLabel.stringValue = "Open a folder to start  (⌘O)"
             openButton.isHidden = false
+            newProjectButton.isHidden = false
             contentViews.values.forEach { $0.isHidden = true }
             endedOverlay.isHidden = true
             return
@@ -212,6 +224,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             emptyStack?.isHidden = false
             emptyLabel.stringValue = "No tabs open"
             openButton.isHidden = true
+            newProjectButton.isHidden = true
             contentViews.values.forEach { $0.isHidden = true }
             endedOverlay.isHidden = true
             return

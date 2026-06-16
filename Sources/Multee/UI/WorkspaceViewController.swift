@@ -340,15 +340,20 @@ final class SidebarViewController: NSViewController {
 
         let gear = ClosureButton(symbol: "gearshape") { [weak self] in self?.model.showSettings = true }
         gear.toolTip = "Settings"
+        let newProj = ClosureButton(symbol: "folder.badge.plus") { [weak self] in
+            guard let self else { return }
+            NewProject.present(model: self.model)
+        }
+        newProj.toolTip = "New project…"
         let add = ClosureButton(symbol: "plus") { [weak self] in self?.openRepo() }
-        add.toolTip = "Open a repo"
+        add.toolTip = "Open an existing folder"
         let chevron = ClosureButton(symbol: sessionsCollapsed ? "chevron.up" : "chevron.down") { [weak self] in
             self?.toggleSessionsCollapsed()
         }
         chevron.toolTip = "Collapse / expand"
         collapseChevron = chevron
 
-        let header = NSStackView(views: [sessionsHeaderLabel, NSView(), gear, add, chevron])
+        let header = NSStackView(views: [sessionsHeaderLabel, NSView(), gear, newProj, add, chevron])
         header.orientation = .horizontal
         header.spacing = 6
 

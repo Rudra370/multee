@@ -39,6 +39,9 @@ enum DebugAction {
         case "openDiff":       model.activeSession?.openDiff(arg)
         case "newClaude":      model.activeSession?.addTab(Tab(kind: .claude, title: "Claude", args: model.settings.defaultArgs))
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
+        case "newProject":   // path|git — create a folder (optionally git init) + open it (skips the HID save panel)
+            let p = arg.split(separator: "|", maxSplits: 1).map(String.init)
+            NewProject.create(at: p.first ?? "", initGit: p.count > 1 && p[1] == "git", model: model)
         case "closeActiveTab": if let s = model.activeSession { s.closeTab(s.activeTabID) }
         case "activateTab":    if let s = model.activeSession, let i = Int(arg), s.tabs.indices.contains(i) { s.activate(s.tabs[i].id) }
         case "renderAttentionMenu": AttentionMenu.debugRender(to: arg.isEmpty ? "/tmp/attention-menu.png" : arg)

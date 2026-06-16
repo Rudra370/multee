@@ -172,6 +172,14 @@ enum Git {
         return r.code == 0 ? nil : (r.err.isEmpty ? r.out : r.err)
     }
 
+    /// `git init` a freshly-created folder (for "New Project"). Returns nil on success, else an error message.
+    @discardableResult
+    static func initRepo(_ repo: String) -> String? {
+        let r = Shell.runFull(git, ["-C", repo, "init"])
+        isRepoLock.lock(); isRepoCache[repo] = (r.code == 0); isRepoLock.unlock()   // refresh the isRepo cache
+        return r.code == 0 ? nil : (r.err.isEmpty ? r.out : r.err)
+    }
+
     /// Whether `branch` is fully merged into HEAD (an ancestor of the current commit). Lets the caller
     /// word the delete confirmation appropriately and pick `-d` vs `-D`.
     static func isMerged(_ repo: String, _ branch: String) -> Bool {

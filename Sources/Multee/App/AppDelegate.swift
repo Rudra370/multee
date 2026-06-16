@@ -241,6 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(fileItem)
         let fileMenu = NSMenu(title: "File")
         fileItem.submenu = fileMenu
+        let newProj = fileMenu.addItem(withTitle: "New Project…", action: #selector(newProject), keyEquivalent: "n")
+        newProj.keyEquivalentModifierMask = [.command, .shift]
+        newProj.target = self
         let open = fileMenu.addItem(withTitle: "Open Folder…", action: #selector(openFolder), keyEquivalent: "o")
         open.target = self
         let goToFile = fileMenu.addItem(withTitle: "Go to File…", action: #selector(goToFile), keyEquivalent: "p")
@@ -318,6 +321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.prompt = "Open"
         if panel.runModal() == .OK, let url = panel.url { model.openRepo(url.path) }
     }
+
+    @objc private func newProject() { NewProject.present(model: model) }
 
     @objc private func openSettings() { model.showSettings = true }
 
