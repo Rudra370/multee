@@ -49,7 +49,11 @@ enum DebugAction {
         case "tabToTerminal":   if let s = model.activeSession { s.convertToTerminal(s.activeTabID) }  // → Open Terminal
         case "quickToggle":     QuickTerminalHook.toggle?()                                   // ⌃` quick terminal
         case "quickMode":       model.settings.quickTermMode = Settings.QuickTermMode(rawValue: arg) ?? .floating
-        case "quickSend":       if let s = model.activeSession { TerminalStore.shared.send(TerminalStore.quickID(s.id), arg) }
+        case "quickSend":       if let id = QuickTerminalController.current?.debugActiveID { TerminalStore.shared.send(id, arg) }
+        case "quickNew":        QuickTerminalController.current?.debugNewTerminal()           // + (spawn another shell)
+        case "quickActivate":   QuickTerminalController.current?.debugSelect((Int(arg) ?? 1) - 1)  // 1-based chip index
+        case "quickClose":      QuickTerminalController.current?.debugClose((Int(arg) ?? 1) - 1)   // 1-based chip index
+        case "quickOpenAsTab":  QuickTerminalController.current?.debugOpenAsTab()             // ↗ promote active shell
         case "showShortcuts":   ShortcutsWindowController.shared.show()
         case "renderShortcuts": ShortcutsWindowController.shared.debugRender(to: arg.isEmpty ? "/tmp/shortcuts.png" : arg)
         case "unsavedResp":   // canned answer for the close/quit guard (modal can't be clicked in harness)

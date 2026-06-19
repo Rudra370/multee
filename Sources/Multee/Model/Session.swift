@@ -60,7 +60,7 @@ final class Session: ObservableObject, Identifiable {
     /// Kill every PTY this session owns (called when the session itself closes).
     func killTerminals() {
         for tab in tabs { TerminalStore.shared.close(tab.id) }
-        TerminalStore.shared.closeQuick(id)   // and its quick-access shell, if one was opened
+        TerminalStore.shared.closeAllQuick(sessionID: id)   // and its quick-access shells, if any were opened
     }
 
     func activate(_ id: String) {

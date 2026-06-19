@@ -276,23 +276,38 @@ swallowed as text input over the editor (Option composes a special char), it's h
 monitor — intercepted before the editor when one is focused — not as a menu key-equivalent.
 
 ## Quick terminal (⌃`) — `UI/QuickTerminal`, `Terminal/TerminalStore`, `UI/CenterViewController`, `UI/SettingsWindow`
-A VS Code-style quick-access terminal: **⌃`** pops a per-session login shell and the same key hides it
+A VS Code-style quick-access terminal: **⌃`** pops per-session login shells and the same key hides them
 (`QuickTerminalController.toggle`, reached via `QuickTerminalHook` from `AppDelegate`'s key monitor +
-the View ▸ Toggle Terminal menu item). The shell is **one PTY per session** (cwd = its repo),
-spawned lazily by `TerminalStore.quickView(sessionID:cwd:)` under a reserved id (`__quick__<sid>`,
-never a tab; killed in `Session.killTerminals`). Switching session swaps which shell is shown; each
-session keeps its own buffer. It appears in one of **three modes** (Settings ▸ "Quick terminal opens
-as", persisted as `Settings.quickTermMode`): **floating** (a key-able `NSPanel`; close button just
-hides), **centered** (an in-window dimmed scrim + rounded box, click-outside to dismiss — what we
-call the non-blocking "modal"), or **bottom** (a VS Code-style dock under the content, via a vertical
-`NSSplitView` in `CenterViewController` with a draggable divider). The controller owns one terminal
-view and re-parents it between the three containers, so changing mode or session never restarts the
-shell. ⌃` is intercepted in the key monitor (like ⇧⌥F) because a focused terminal would otherwise
-eat Control-backtick. Closing restores first-responder to the active tab's content
-(`CenterViewController.focusActiveContent` from `hide()`), so focus returns to your session/file.
+the View ▸ Toggle Terminal menu item). A session can hold **several shells**; each is a PTY (cwd = its
+repo) owned by `TerminalStore` under a reserved id (`__quick__<sid>::<n>`, never a tab). The controller
+keeps a per-session ordered list + active selection (`lists`, ephemeral — not persisted); `ensureList`
+spawns the first lazily, `newQuickView` adds more, `closeAllQuick(sessionID:)` kills them all in
+`Session.killTerminals`. Switching session swaps the whole set; each shell keeps its own buffer.
+
+**Shared chrome (`QuickTerminalPanel`).** All three modes mount the *same* composite view — a header
+strip above the active terminal — so the controller re-parents one `chrome` between containers (the
+terminal lives inside it and never re-parents on its own). The header carries the three affordances:
+a **chip strip** (one `QuickTermChip` per shell, numbered by position — click to switch, ✕ to close,
+`+` to add), an **↗ "Open as tab"** button (`promoteQuick` re-keys the live PTY to a new `.terminal`
+tab id so the running process + scrollback move into the workspace; the shell drops out of the list),
+and a **`⌃\` to hide` keycap hint** so users learn the shortcut also dismisses. Closing the last shell
+(or it `exit`ing) hides the panel; `onQuickExit` now hands back the **full** quick id so the controller
+can map it to a session + list.
+
+It appears in one of **three modes** (Settings ▸ "Quick terminal opens as", persisted as
+`Settings.quickTermMode`): **floating** (a key-able `NSPanel`; close button just hides), **centered**
+(an in-window dimmed scrim + rounded box, click-outside to dismiss — what we call the non-blocking
+"modal"), or **bottom** (a VS Code-style dock under the content, via a vertical `NSSplitView` in
+`CenterViewController` with a draggable divider). ⌃` is intercepted in the key monitor (like ⇧⌥F)
+because a focused terminal would otherwise eat Control-backtick. Closing restores first-responder to the
+active tab's content (`CenterViewController.focusActiveContent` from `hide()`), so focus returns to your
+session/file.
 **Verification:** the harness can't synthesize ⌃` (sandbox) and the floating panel's terminal doesn't
-screenshot, so the keystroke is user-verified; the rest is driven via `quickToggle` / `quickMode` /
-`quickSend` harness actions + `quickTerminal` state (the shell buffer).
+screenshot, so the keystroke is user-verified; the chip strip / hint / buttons *are* standard AppKit and
+self-screenshot. The rest is driven via `quickToggle` / `quickMode` / `quickSend` / `quickNew` /
+`quickActivate:<n>` / `quickClose:<n>` / `quickOpenAsTab` harness actions + `quickTerminal` state
+(`count`, `activeIndex`, the active shell's buffer); promotion is verified by the promoted tab's
+`terminalText` still carrying the pre-move scrollback.
 
 **Known issue — bottom-dock repaint gap (PARKED, unresolved).** In **bottom** mode only, after you close
 the dock the Claude TUI stays top-anchored with blank space below until you type in it; it then snaps to

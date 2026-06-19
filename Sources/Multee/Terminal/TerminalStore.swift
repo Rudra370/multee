@@ -12,7 +12,7 @@ final class TerminalStore {
 
     /// A tab's process exited (typed `exit` / Claude quit) — argument is the tab id. Wired by AppDelegate to
     /// flag the tab so the UI shows the "Session ended" bar. `onQuickExit` is the quick-terminal equivalent
-    /// (argument is the session id).
+    /// (argument is the full quick-terminal id, `__quick__<sid>::<n>`).
     var onExit: ((String) -> Void)?
     var onQuickExit: ((String) -> Void)?
 
@@ -129,20 +129,34 @@ final class TerminalStore {
     }
 
 
-    // MARK: Quick terminal (one per session, never a tab)
+    // MARK: Quick terminals (one or more per session, never tabs)
 
-    /// Reserved id for a session's quick-access terminal (the ⌃` shell). Distinct from any tab id so it
-    /// lives alongside the session's tab PTYs without colliding.
+    /// Reserved id prefix for a session's quick-access terminals (the ⌃` shells). Distinct from any tab
+    /// id so they live alongside the session's tab PTYs without colliding. A session can hold several;
+    /// each id is `__quick__<sessionID>::<n>`. `QuickTerminalController` owns the per-session list +
+    /// active selection; this store just owns the PTYs.
     static let quickPrefix = "__quick__"
-    static func quickID(_ sessionID: String) -> String { quickPrefix + sessionID }
+    private static let quickSep = "::"
 
-    /// Get (or lazily spawn) the quick-terminal shell for a session, opened in its repo root. A plain
-    /// interactive login shell — no Claude, no hooks; just a scratch terminal you pop with ⌃`.
-    func quickView(sessionID: String, cwd: String) -> MulteeTerminalView {
-        installScrollMonitorIfNeeded()
-        let id = Self.quickID(sessionID)
+    private var quickCounters: [String: Int] = [:]   // sessionID → next suffix (monotonic, never reused)
+
+    /// Spawn a brand-new quick shell for a session (opened in its repo root); returns its id + view.
+    /// A plain interactive login shell — no Claude, no hooks; just a scratch terminal you pop with ⌃`.
+    func newQuickView(sessionID: String, cwd: String) -> (id: String, view: MulteeTerminalView) {
+        let n = (quickCounters[sessionID] ?? 0) + 1
+        quickCounters[sessionID] = n
+        let id = "\(Self.quickPrefix)\(sessionID)\(Self.quickSep)\(n)"
+        return (id, spawnQuick(id: id, cwd: cwd))
+    }
+
+    /// Get (or lazily re-spawn) a quick shell by its explicit id.
+    func quickView(id: String, cwd: String) -> MulteeTerminalView {
         if let v = views[id] { return v }
+        return spawnQuick(id: id, cwd: cwd)
+    }
 
+    private func spawnQuick(id: String, cwd: String) -> MulteeTerminalView {
+        installScrollMonitorIfNeeded()
         let tv = MulteeTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 420))
         tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         tv.nativeBackgroundColor = QuickTerminalController.backgroundColor   // distinct tint vs tab terminals
@@ -155,10 +169,23 @@ final class TerminalStore {
         return tv
     }
 
-    func closeQuick(_ sessionID: String) { close(Self.quickID(sessionID)) }
+    /// Kill every quick shell a session owns (called from `Session.killTerminals`).
+    func closeAllQuick(sessionID: String) {
+        let prefix = "\(Self.quickPrefix)\(sessionID)\(Self.quickSep)"
+        for id in views.keys where id.hasPrefix(prefix) { close(id) }
+        quickCounters[sessionID] = nil
+    }
 
-    /// The quick shell's visible buffer (harness can't see the terminal in a screenshot).
-    func debugQuickText(_ sessionID: String) -> String? { debugText(Self.quickID(sessionID)) }
+    /// Promote a quick shell into a tab: re-key its live PTY under the new tab id (running process +
+    /// scrollback survive) and restyle to the tab-terminal tint. The caller then adds a `.terminal` Tab
+    /// with `tabID`, which `CenterViewController` renders by reusing this view instead of spawning fresh.
+    func promoteQuick(quickID: String, tabID: String) {
+        guard let v = views[quickID] else { return }
+        views[quickID] = nil
+        v.removeFromSuperview()
+        v.nativeBackgroundColor = NSColor(calibratedWhite: 0.118, alpha: 1)   // match tab terminals
+        views[tabID] = v
+    }
 
     func has(_ id: String) -> Bool { views[id] != nil }
 
@@ -227,7 +254,7 @@ extension TerminalStore: LocalProcessTerminalViewDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self, let id = self.views.first(where: { $0.value === source })?.key else { return }
             if id.hasPrefix(Self.quickPrefix) {
-                self.onQuickExit?(String(id.dropFirst(Self.quickPrefix.count)))
+                self.onQuickExit?(id)   // full quick id; the controller maps it back to a session + list
             } else {
                 self.onExit?(id)
             }

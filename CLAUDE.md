@@ -52,6 +52,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "openAt:file.md|3", "setStatus:done", "hookStatus:0:idle", "activateTab:1",
               "renderAttentionMenu:/tmp/x.png", "showShortcuts", "renderShortcuts:/tmp/x.png",
               "quickToggle", "quickMode:floating|centered|bottom", "quickSend:echo hi",
+              "quickNew", "quickActivate:1", "quickClose:1", "quickOpenAsTab",
               "tabRestart", "tabToTerminal", "newProject:/tmp/x|git"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
@@ -134,8 +135,11 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   source toggle), `MarkdownViewController` + `MarkdownRenderer` (rendered preview — code blocks reuse the
   TextMate engine, tables via NSTextTable, inline images), else the text `Editor`. `ShortcutsWindow` is the
   bottom-bar keyboard-icon panel listing all shortcuts (`Shortcuts` table + keycap chips). `QuickTerminal`
-  (`QuickTerminalController` + `QuickTerminalHook`) is the ⌃` quick terminal — one per-session shell shown as a
-  floating panel / centered overlay / bottom dock (the dock is a vertical `NSSplitView` inside `CenterViewController`).
+  (`QuickTerminalController` + `QuickTerminalHook` + `QuickTerminalPanel`) is the ⌃` quick terminal — **multiple
+  per-session shells** (a chip strip + `+` to add, `↗` open-as-tab, and a `⌃\`` hide-hint live in a shared header)
+  shown as a floating panel / centered overlay / bottom dock (the dock is a vertical `NSSplitView` inside
+  `CenterViewController`). The header (`QuickTerminalPanel`) is one composite the controller re-parents between the
+  three containers; `TerminalStore` owns the shell PTYs (`__quick__<sid>::<n>`) and `promoteQuick` for open-as-tab.
   `NewProject` is the ⌘⇧N "New Project" save panel (name + optional `git init` checkbox → create folder → open).
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
   and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).

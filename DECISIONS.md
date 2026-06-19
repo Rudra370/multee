@@ -178,6 +178,21 @@ the dependable path. Applied to file-tree rows via `PointerOutlineView`.
 I-beam bled under it. Legacy scrollers are persistent and get their own gutter, so the bar is always
 visible and the scroller area shows the normal arrow cursor.
 
+### D20 — Quick terminal: one shared chrome, multiple shells per session
+**Decision:** The quick terminal (⌃`) supports several shells per session, surfaced by a chip strip in
+a single composite header (`QuickTerminalPanel` = header + terminal content). The controller re-parents
+*that one chrome* between the floating / centered / bottom containers; the active terminal lives inside
+the chrome and never re-parents on its own. Shells are `__quick__<sid>::<n>` PTYs in `TerminalStore`;
+the per-session list + active selection is ephemeral UI state in the controller, not persisted.
+"Open as tab" re-keys the live PTY to a `.terminal` tab id (`promoteQuick`) so the running process and
+scrollback move intact.
+**Why:** The three asks (manage multiple terminals, a shortcut hint, open-as-tab) all needed shared
+chrome the original raw-terminal mount had nowhere to put. Building one composite and moving *it* (not
+the terminal) makes the chrome identical across all three modes for free, and means mode/session/shell
+switches still never restart a process — the property the original single-view design was built around.
+Quick shells stay ephemeral (scratch terminals); persisting them would conflate them with tabs, which
+they explicitly are not.
+
 ---
 
 ## How we work (process)
