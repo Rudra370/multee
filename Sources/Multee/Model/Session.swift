@@ -46,6 +46,29 @@ final class Session: ObservableObject, Identifiable {
         return tab
     }
 
+    /// Open a new blank, unsaved editor tab (VS Code's "New File"). It's a `.file` tab with no path; the
+    /// editor prompts for a location on first save, after which `fileSavedAs` turns it into a real file.
+    /// The title reuses the **lowest free** `Untitled-N` among open untitled tabs (VS Code-style), so
+    /// closing them all brings the next one back to `Untitled-1` instead of a counter that only climbs.
+    func newUntitled() {
+        let prefix = "Untitled-"
+        let used = Set(tabs.compactMap { tab -> Int? in
+            guard tab.kind == .file, tab.path == nil, tab.title.hasPrefix(prefix) else { return nil }
+            return Int(tab.title.dropFirst(prefix.count))
+        })
+        var n = 1
+        while used.contains(n) { n += 1 }
+        addTab(Tab(kind: .file, title: "\(prefix)\(n)", path: nil))
+    }
+
+    /// An untitled tab was saved to `path` — adopt it as a real file (path + filename title). The editor
+    /// already redirected its own saves; this keeps the model/tab chip in sync.
+    func fileSavedAs(_ id: String, path: String) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[i].path = path
+        tabs[i].title = (path as NSString).lastPathComponent
+    }
+
     func closeTab(_ id: String) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         TerminalStore.shared.close(id)   // kill the PTY if this tab had one

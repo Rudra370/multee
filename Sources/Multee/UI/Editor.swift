@@ -48,7 +48,12 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     /// Current editor text (live, including unsaved edits) — used by preview re-render on toggle.
     var text: String { textView?.string ?? "" }
 
-    private(set) var path: String   // absolute file path (mutable: a rename retargets it in place)
+    /// Config for an unsaved "New File" tab: where to default the save panel, the suggested name, and a
+    /// callback to run once it's saved (so the session/tab adopts the chosen path). Nil for real files.
+    struct UntitledFile { let suggestedName: String; let directory: String; let onSavedAs: (String) -> Void }
+
+    private(set) var path: String   // absolute file path (mutable: a rename retargets it in place; "" while untitled)
+    private var untitled: UntitledFile?   // non-nil until a blank "New File" tab is first saved
     private(set) var lineEnding = "LF"     // status bar — detected on load
     private(set) var indentStyle = "Spaces: 4"
     private var languageOverride: String?  // status-bar language picker (nil = auto-detect from extension)
@@ -69,8 +74,9 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     /// serialises access to the shared (per-language) highlighter, whose regexes compile lazily.
     private static let highlightQueue = DispatchQueue(label: "com.multee.highlight", qos: .userInitiated)
 
-    init(path: String, settings: Settings, onDirty: @escaping (Bool) -> Void) {
+    init(path: String, settings: Settings, onDirty: @escaping (Bool) -> Void, untitled: UntitledFile? = nil) {
         self.path = path
+        self.untitled = untitled
         self.settings = settings
         self.onDirty = onDirty
         self.lastFontSize = settings.fontSize
@@ -264,6 +270,8 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     }
 
     func save() {
+        // A blank "New File" tab has no path yet → ask where to save (VS Code's untitled-save flow).
+        if untitled != nil { _ = saveAs(); return }
         // Format-on-save: if enabled and this file has an enabled formatter, format first, then write.
         // Never block the save — formatter errors / not-installed just save the unformatted text (no prompt).
         if settings.formatOnSave, let spec = Formatter.spec(forPath: path), settings.formatterEnabled(spec.id) {
@@ -292,8 +300,43 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
 
     /// Synchronous, unconditional write — used by the unsaved-changes guard so "Save & Close" / quit always
     /// persists *now*, before the tab or app closes. (format-on-save's async path could otherwise run after
-    /// this editor is torn down and silently drop the edits.)
-    func saveImmediately() { writeToDisk() }
+    /// this editor is torn down and silently drop the edits.) Returns `false` if a blank tab's save panel was
+    /// cancelled, so the guard can abort the close instead of discarding the text.
+    @discardableResult
+    func saveImmediately() -> Bool {
+        if untitled != nil { return saveAs() }
+        writeToDisk()
+        return true
+    }
+
+    /// Prompt for a location for a blank "New File" tab, then adopt it as a real file. Returns `false` if the
+    /// panel was cancelled (the tab stays blank and dirty).
+    @discardableResult
+    private func saveAs() -> Bool {
+        guard let cfg = untitled else { writeToDisk(); return true }
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.directoryURL = URL(fileURLWithPath: cfg.directory)
+        panel.nameFieldStringValue = cfg.suggestedName
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        performSaveAs(to: url)
+        return true
+    }
+
+    /// Adopt `url` as this editor's file: redirect saves there, re-pick the grammar for the new extension,
+    /// write the current text, refresh the status bar, and tell the session (so the tab gets the new path +
+    /// filename title). Shared by the save panel and the dev harness.
+    private func performSaveAs(to url: URL) {
+        let onSavedAs = untitled?.onSavedAs
+        untitled = nil               // it's a real file from here on (so `save()` writes directly next time)
+        retarget(to: url.path)       // sets `path` + re-derives highlighter/language for the new extension
+        writeToDisk()                // persist the current text to the chosen path
+        EditorStatus.onChange?()     // refresh the status bar (language indicator)
+        onSavedAs?(url.path)
+    }
+
+    /// DEV harness: run the save-as transition with a fixed path (the real `NSSavePanel` is modal/HID).
+    func debugSaveAs(_ path: String) { performSaveAs(to: URL(fileURLWithPath: path)) }
 
     /// Make the text view first responder — called when its tab becomes active so you can type / search /
     /// jump without clicking into it first.

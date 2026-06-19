@@ -6,8 +6,9 @@ import AppKit
 /// Dialogs are app-modal (`runModal`) so the control flow stays synchronous — important for the quit
 /// path (`applicationShouldTerminate` must answer right away).
 enum UnsavedGuard {
-    /// Set by `CenterViewController`: write a tab's editor to disk by id (no-op if it isn't an editor).
-    static var saveTab: ((String) -> Void)?
+    /// Set by `CenterViewController`: write a tab's editor to disk by id (returns `true` if it isn't an
+    /// editor or the write succeeded; `false` if a blank "New File" tab's save panel was cancelled).
+    static var saveTab: ((String) -> Bool)?
 
     enum Response { case save, dontSave, cancel }
 
@@ -53,7 +54,11 @@ enum UnsavedGuard {
     /// Carry out the chosen response; returns whether the caller should proceed to close.
     private static func apply(_ r: Response, to tabs: [Tab]) -> Bool {
         switch r {
-        case .save:     tabs.forEach { saveTab?($0.id) }; return true
+        case .save:
+            // Save every tab (don't short-circuit, so all that can be saved are), but if any blank-tab
+            // save panel was cancelled, abort the close so its text isn't lost.
+            let saved = tabs.map { saveTab?($0.id) ?? true }
+            return !saved.contains(false)
         case .dontSave: return true     // discard edits
         case .cancel:   return false
         }

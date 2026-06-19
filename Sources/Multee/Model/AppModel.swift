@@ -75,9 +75,10 @@ final class AppModel: ObservableObject {
         guard settings.restoreOnLaunch else { return }   // stateless when restore is off
         let state = PersistedState(
             sessions: sessions.map { s in
-                // Search tabs are transient tools, not documents — don't persist them. Index the active
-                // tab against the *persisted* list so the selection stays correct after the filter.
-                let persistable = s.tabs.filter { $0.kind != .search }
+                // Search tabs are transient tools, and unsaved "New File" tabs (a .file with no path) have
+                // no content on disk to restore — don't persist either. Index the active tab against the
+                // *persisted* list so the selection stays correct after the filter.
+                let persistable = s.tabs.filter { $0.kind != .search && !($0.kind == .file && $0.path == nil) }
                 return PersistedSession(
                     url: s.url,
                     tabs: persistable.map {

@@ -7,6 +7,15 @@ extension Bundle {
     var isDev: Bool { (bundleIdentifier ?? "").hasSuffix(".dev") }
 }
 
+/// The "new Claude / new terminal" actions, shared by the menu items, the key monitor (⌃⇧`), and the
+/// debug harness so one implementation backs all three. Populated by `AppDelegate` at launch.
+enum NewItemHook {
+    static var newFile: (() -> Void)?             // new blank untitled editor tab (⌘N)
+    static var newClaude: (() -> Void)?           // new Claude tab, default args (⌘⇧C)
+    static var newClaudeWithArgs: (() -> Void)?   // pop the args preset menu (⌘⌥C)
+    static var newTerminal: (() -> Void)?         // ⌃⇧`: quick shell if the panel is open, else a terminal tab
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var windowController: MainWindowController!
@@ -41,6 +50,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         wireStatusRouting()
         installKeyMonitor()
+
+        // New File / New Claude / New Terminal actions — shared by the menu, the ⌃⇧` monitor, and the harness.
+        NewItemHook.newFile = { [weak self] in self?.model.activeSession?.newUntitled() }
+        NewItemHook.newClaude = { [weak self] in
+            guard let self, let s = self.model.activeSession else { return }
+            s.addTab(Tab(kind: .claude, title: "Claude", args: self.model.settings.defaultArgs))
+        }
+        NewItemHook.newClaudeWithArgs = { [weak self] in
+            guard self?.model.activeSession != nil else { return }   // no repo → no tab bar to anchor the menu
+            TabBarHook.popClaudeArgsMenu?()
+        }
+        NewItemHook.newTerminal = { [weak self] in
+            guard let self else { return }
+            if QuickTerminalController.current?.isShown == true {
+                QuickTerminalController.current?.addShell()        // panel open → add a shell to it
+            } else {
+                self.model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))   // else a tab
+            }
+        }
 
         // Returning to Multee clears the attention flag on the tab you're now looking at.
         NotificationCenter.default.addObserver(self, selector: #selector(appBecameActive),
@@ -200,11 +228,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let ed = ActiveEditor.current {
                 ed.formatDocument(); return nil
             }
-            // ⌃` → toggle the quick-access terminal (VS Code parity). The focused terminal/editor would
-            // otherwise consume Control-key combos, so intercept it here before the responder chain.
-            if mods.contains(.control), !mods.contains(.command), !mods.contains(.option),
-               event.charactersIgnoringModifiers == "`" {
-                QuickTerminalHook.toggle?(); return nil
+            // ⌃` toggles the quick terminal; ⌃⇧` opens a new terminal (a shell in the panel if it's open,
+            // else a terminal tab). Both are intercepted here — a focused terminal would otherwise eat the
+            // Control-backtick before the responder chain/menu. (keyCode 50 = the grave/` key, so Shift's
+            // remap of `→~ doesn't matter.)
+            if mods.contains(.control), !mods.contains(.command), !mods.contains(.option), event.keyCode == 50 {
+                if mods.contains(.shift) { NewItemHook.newTerminal?() } else { QuickTerminalHook.toggle?() }
+                return nil
             }
             // Cmd+/- have no menu item, so handle here. (Cmd+W is the "Close Tab" menu item.)
             guard mods.contains(.command) else { return event }
@@ -246,6 +276,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         newProj.target = self
         let open = fileMenu.addItem(withTitle: "Open Folder…", action: #selector(openFolder), keyEquivalent: "o")
         open.target = self
+        fileMenu.addItem(.separator())
+        let newFile = fileMenu.addItem(withTitle: "New File", action: #selector(newFileItem), keyEquivalent: "n")
+        newFile.target = self
+        // New Claude / New Terminal. The ⌃⇧` key shows for discoverability but the key monitor fires it
+        // (a focused terminal would otherwise eat Control-backtick), like Toggle Terminal in View.
+        let newClaude = fileMenu.addItem(withTitle: "New Claude Session", action: #selector(newClaudeSession), keyEquivalent: "c")
+        newClaude.keyEquivalentModifierMask = [.command, .shift]
+        newClaude.target = self
+        let newClaudeArgs = fileMenu.addItem(withTitle: "New Claude with Args…", action: #selector(newClaudeWithArgs), keyEquivalent: "c")
+        newClaudeArgs.keyEquivalentModifierMask = [.command, .option]
+        newClaudeArgs.target = self
+        let newTerm = fileMenu.addItem(withTitle: "New Terminal", action: #selector(newTerminalItem), keyEquivalent: "`")
+        newTerm.keyEquivalentModifierMask = [.control, .shift]
+        newTerm.target = self
+        fileMenu.addItem(.separator())
         let goToFile = fileMenu.addItem(withTitle: "Go to File…", action: #selector(goToFile), keyEquivalent: "p")
         goToFile.target = self
         let cmdPalette = fileMenu.addItem(withTitle: "Command Palette…", action: #selector(commandPalette), keyEquivalent: "p")
@@ -307,6 +352,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleQuickTerminal() { QuickTerminalHook.toggle?() }
+    @objc private func newFileItem() { NewItemHook.newFile?() }
+    @objc private func newClaudeSession() { NewItemHook.newClaude?() }
+    @objc private func newClaudeWithArgs() { NewItemHook.newClaudeWithArgs?() }
+    @objc private func newTerminalItem() { NewItemHook.newTerminal?() }
 
     @objc private func appBecameActive() {
         guard let s = model.activeSession else { return }

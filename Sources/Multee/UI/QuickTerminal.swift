@@ -84,6 +84,10 @@ final class QuickTerminalController: NSObject, NSWindowDelegate {
 
     func toggle() { isShown ? hide() : show() }
 
+    /// Add a shell to the open panel (the ⌃⇧` "New Terminal" shortcut routes here when the quick
+    /// terminal is showing; otherwise it opens a terminal tab). No-op if the panel isn't open.
+    func addShell() { guard isShown else { return }; addTerminal() }
+
     func show() {
         guard model.activeSession != nil else { return }   // no repo open → nothing to run in
         ensureList()

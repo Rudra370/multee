@@ -75,7 +75,18 @@ precompiled on load, making `spans(for:)` a pure read safe to run on any thread;
 synchronously on open (no flash), large files and edits colour asynchronously. Edits coalesce via a
 **150 ms debounce** and recolour only (text/selection/undo untouched), with a sequence guard dropping
 any pass a newer edit superseded. Cmd+S saves; edits flag the tab dirty (chip dot). Shared font size
-live-applies with in-place run resize. **⌘F find / replace** is a custom VS Code-style bar (`UI/FindBar`)
+live-applies with in-place run resize.
+**New File (⌘N).** `Session.newUntitled` opens a blank editor tab — a `.file` tab with `path == nil`,
+titled `Untitled-N` where N is the **lowest free** number among open untitled tabs (VS Code-style, so
+closing them all brings the next back to `Untitled-1` rather than a counter that only climbs) — reusing
+all the editor plumbing. The editor starts in
+"untitled" mode (`EditorViewController.UntitledFile`): the first ⌘S (or "Save & Close" from the unsaved
+guard) runs an `NSSavePanel` (default dir = repo root, suggested name = the tab title); on confirm it
+`retarget`s to the chosen path (adopting the file + re-deriving the grammar/language), writes, and fires
+`onSavedAs` so the session adopts the path + filename title and `CenterViewController` updates its path
+cache (so the rename-detector doesn't rebuild the editor). `saveImmediately` returns `false` when the
+panel is cancelled, so the guard **aborts the close** instead of losing the text. Untitled tabs are
+ephemeral — skipped in the persisted snapshot (no on-disk content to restore). **⌘F find / replace** is a custom VS Code-style bar (`UI/FindBar`)
 floating at the editor's **top-right** in its own borderless child window (`FindPanel`, added via
 `addChildWindow`, pinned by converting the editor view's top-right to screen coords and repositioned on
 window move/resize + editor relayout). **Why a separate window:** an earlier same-window overlay *subview*
@@ -268,12 +279,22 @@ avoiding a false "finished". `StatusDot` and the menu both color `.needs`/`.done
 ## Keyboard shortcuts panel — `UI/ShortcutsWindow`, `UI/StatusBar`
 A keyboard icon at the far right of the bottom status bar (always visible while the bar is) opens
 `ShortcutsWindowController` — a floating, dark, scrollable panel listing every shortcut from `Shortcuts.sections`
-(General / Navigation / Editing / Find in File / View), each row a command name + **keycap chips** (one fixed-
-width rounded `KeycapView` per glyph). Esc or the close button dismisses it. The list is a hand-maintained
+(General / Navigation / Tabs / Editing / Find in File / View), each row a command name + **keycap chips** (one
+fixed-width rounded `KeycapView` per glyph). Esc or the close button dismisses it. The list is a hand-maintained
 mirror of `AppDelegate.buildMenu` + the ⌘+/− monitor + ⌘S — keep it in sync when adding shortcuts.
 **Format Document is ⇧⌥F** (moved off ⌘⇧F, which now opens Find in Files); because a non-Command shortcut is
 swallowed as text input over the editor (Option composes a special char), it's handled in `AppDelegate`'s key
 monitor — intercepted before the editor when one is focused — not as a menu key-equivalent.
+
+**New Claude / New Terminal shortcuts (`NewItemHook`).** Three File-menu commands, backed by one hook enum so
+the menu items, the key monitor, and the harness share an implementation: **New Claude Session (⌘⇧C)** opens a
+Claude tab with the default args; **New Claude with Args… (⌘⌥C)** pops the tab bar's existing preset menu
+(Default / `--continue` / `--resume` / `--dangerously-skip-permissions`) via `TabBarHook.popClaudeArgsMenu` —
+one source of presets, anchored to the ▾ button; **New Terminal (⌃⇧`)** is context-aware — it adds a shell to
+the quick terminal when that panel is open (`QuickTerminalController.addShell`), otherwise opens a terminal tab.
+⌃⇧` is intercepted in the key monitor next to ⌃` (matched by `keyCode == 50`, the grave key, so Shift's `→~
+remap is irrelevant); the ⌘-based Claude shortcuts work as plain menu key-equivalents. The args menu is gated on
+an open repo (its anchor button lives in the otherwise-hidden tab bar).
 
 ## Quick terminal (⌃`) — `UI/QuickTerminal`, `Terminal/TerminalStore`, `UI/CenterViewController`, `UI/SettingsWindow`
 A VS Code-style quick-access terminal: **⌃`** pops per-session login shells and the same key hides them

@@ -18,6 +18,12 @@ enum Shortcuts {
             Item(name: "Command Palette…", keys: "⌘⇧P"),
             Item(name: "Find in Files…", keys: "⌘⇧F"),
         ]),
+        Section(title: "Tabs", items: [
+            Item(name: "New File", keys: "⌘N"),
+            Item(name: "New Claude Session", keys: "⌘⇧C"),
+            Item(name: "New Claude with Args…", keys: "⌘⌥C"),
+            Item(name: "New Terminal", keys: "⌃⇧`"),
+        ]),
         Section(title: "Editing", items: [
             Item(name: "Save", keys: "⌘S"),
             Item(name: "Format Document", keys: "⇧⌥F"),

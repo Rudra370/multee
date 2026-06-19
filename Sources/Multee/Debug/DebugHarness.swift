@@ -54,6 +54,10 @@ enum DebugAction {
         case "quickActivate":   QuickTerminalController.current?.debugSelect((Int(arg) ?? 1) - 1)  // 1-based chip index
         case "quickClose":      QuickTerminalController.current?.debugClose((Int(arg) ?? 1) - 1)   // 1-based chip index
         case "quickOpenAsTab":  QuickTerminalController.current?.debugOpenAsTab()             // ↗ promote active shell
+        case "newTermShortcut": NewItemHook.newTerminal?()        // ⌃⇧`: quick shell if panel open, else terminal tab
+        case "newClaudeShortcut": NewItemHook.newClaude?()        // ⌘⇧C: new Claude tab (default args)
+        case "newFile":         NewItemHook.newFile?()           // ⌘N: new blank untitled editor tab
+        case "editorSaveAs":    ActiveEditor.current?.debugSaveAs(arg)   // save the untitled tab to a path (panel is HID)
         case "showShortcuts":   ShortcutsWindowController.shared.show()
         case "renderShortcuts": ShortcutsWindowController.shared.debugRender(to: arg.isEmpty ? "/tmp/shortcuts.png" : arg)
         case "unsavedResp":   // canned answer for the close/quit guard (modal can't be clicked in harness)

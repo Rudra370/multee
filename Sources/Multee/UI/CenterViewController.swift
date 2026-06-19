@@ -169,7 +169,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         TerminalLifecycle.rebuild = { [weak self] tabID in self?.rebuildTerminal(tabID) }
         // Let the unsaved-changes guard save any (already-mounted) editor tab by id, without it needing
         // to know about view controllers. A dirty tab has always been viewed, so its editor exists here.
-        UnsavedGuard.saveTab = { [weak self] id in (self?.contentVCs[id] as? SourceEditing)?.sourceEditor?.saveImmediately() }
+        UnsavedGuard.saveTab = { [weak self] id in (self?.contentVCs[id] as? SourceEditing)?.sourceEditor?.saveImmediately() ?? true }
         // "Install formatter" → open a Terminal tab that runs the command (then drops to an interactive shell).
         FormatterInstall.run = { [weak self] command in
             self?.model.activeSession?.addTab(Tab(kind: .terminal, title: "Install", args: command))
@@ -335,7 +335,17 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
                 contentVCs[tab.id] = vc
                 return vc.view
             }
-            let vc = EditorViewController(path: tab.path ?? "", settings: model.settings, onDirty: onDirty)
+            // A blank "New File" tab (no path) saves via a panel; once saved, adopt the path on the tab +
+            // our path cache so render() doesn't treat it as a rename and rebuild the editor.
+            let untitled: EditorViewController.UntitledFile? = tab.path == nil
+                ? EditorViewController.UntitledFile(
+                    suggestedName: tab.title, directory: session.url,
+                    onSavedAs: { [weak self, weak session] newPath in
+                        self?.contentPaths[tab.id] = newPath
+                        session?.fileSavedAs(tab.id, path: newPath)
+                    })
+                : nil
+            let vc = EditorViewController(path: tab.path ?? "", settings: model.settings, onDirty: onDirty, untitled: untitled)
             addChild(vc)
             contentVCs[tab.id] = vc
             return vc.view

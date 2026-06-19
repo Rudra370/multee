@@ -53,6 +53,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "renderAttentionMenu:/tmp/x.png", "showShortcuts", "renderShortcuts:/tmp/x.png",
               "quickToggle", "quickMode:floating|centered|bottom", "quickSend:echo hi",
               "quickNew", "quickActivate:1", "quickClose:1", "quickOpenAsTab",
+              "newTermShortcut", "newClaudeShortcut", "newFile", "editorSaveAs:/tmp/x.md",
               "tabRestart", "tabToTerminal", "newProject:/tmp/x|git"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures

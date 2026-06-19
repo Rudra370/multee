@@ -4,6 +4,12 @@ extension NSPasteboard.PasteboardType {
     static let multeeTab = NSPasteboard.PasteboardType("com.multee.tab")
 }
 
+/// Lets a keyboard shortcut (`AppDelegate`, ⌘⌥C) pop the tab bar's "New Claude with arguments" preset
+/// menu — the same menu the ▾ button shows, so there's one source of presets.
+enum TabBarHook {
+    static var popClaudeArgsMenu: (() -> Void)?
+}
+
 /// The tab strip above the workspace content: tab chips on the left, and new-Claude (✦) + args menu
 /// (▾) + new-terminal buttons on the right. Rebuilt from the active session on change. Chips are
 /// drag-reorderable (intra-strip) — the drop reorders via `Session.moveTab`.
@@ -17,6 +23,7 @@ final class TabBarView: NSView {
 
     private let chips = NSStackView()
     private let dropIndicator = NSView()   // vertical insertion line shown while dragging a chip
+    private weak var argsButton: NSButton?   // the ▾ button — anchor for the keyboard-triggered args menu
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -27,9 +34,10 @@ final class TabBarView: NSView {
         chips.spacing = 4
         chips.alignment = .centerY
 
-        let newClaude = iconButton("sparkles", "New Claude session", #selector(newClaudeDefault))
-        let argsMenu = iconButton("chevron.down", "New Claude with arguments…", #selector(argsMenuTapped), size: 9)
-        let newTerm = iconButton("terminal", "New terminal", #selector(newTerminal))
+        let newClaude = iconButton("sparkles", "New Claude session (⌘⇧C)", #selector(newClaudeDefault))
+        let argsMenu = iconButton("chevron.down", "New Claude with arguments… (⌘⌥C)", #selector(argsMenuTapped), size: 9)
+        argsButton = argsMenu
+        let newTerm = iconButton("terminal", "New terminal (⌃⇧`)", #selector(newTerminal))
         let rightButtons = NSStackView(views: [newClaude, argsMenu, newTerm])
         rightButtons.orientation = .horizontal
         rightButtons.spacing = 4
@@ -66,6 +74,8 @@ final class TabBarView: NSView {
         dropIndicator.isHidden = true
         addSubview(dropIndicator)   // floats above the chips while dragging
         registerForDraggedTypes([.multeeTab])
+
+        TabBarHook.popClaudeArgsMenu = { [weak self] in self?.popArgsMenu() }
     }
 
     @available(*, unavailable)
@@ -116,7 +126,15 @@ final class TabBarView: NSView {
     @objc private func newClaudeDefault() { onNewClaude?("") }
     @objc private func newTerminal() { onNewTerminal?() }
 
-    @objc private func argsMenuTapped(_ sender: NSButton) {
+    @objc private func argsMenuTapped(_ sender: NSButton) { popArgsMenu(from: sender) }
+
+    /// Drop the Claude-args preset menu below `anchor` (the ▾ button, or the keyboard-shortcut's anchor).
+    func popArgsMenu(from anchor: NSView? = nil) {
+        let view = anchor ?? argsButton ?? self
+        makeArgsMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 2), in: view)
+    }
+
+    private func makeArgsMenu() -> NSMenu {
         let menu = NSMenu()
         let presets: [(String, String)] = [
             ("Default", ""),
@@ -130,7 +148,7 @@ final class TabBarView: NSView {
             item.representedObject = args
             menu.addItem(item)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 2), in: sender)
+        return menu
     }
     @objc private func newClaudeArgs(_ sender: NSMenuItem) { onNewClaude?(sender.representedObject as? String ?? "") }
 
