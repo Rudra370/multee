@@ -5,6 +5,24 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.14] - 2026-06-19
+
+### Added
+- **New File (⌘N)** — open a blank editor tab and just start writing. On the first **⌘S**, Multee asks
+  where to save it and the tab turns into a real file (with the right syntax highlighting). Blank tabs are
+  named **Untitled-1, Untitled-2…** (reusing the lowest free number). Closing a blank tab with unsaved text
+  prompts you to save first — and cancelling the save dialog keeps your text instead of losing it.
+- **New Claude / New Terminal shortcuts** — **⌘⇧C** opens a new Claude session; **⌘⌥C** opens one with a
+  choice of arguments (Continue / Resume / Skip permissions); **⌃⇧`** opens a new terminal — as a tab, or as
+  another shell inside the quick terminal when it's already open. They're in the File menu and the shortcuts
+  panel.
+
+### Changed
+- **The quick terminal (⌃`) now holds multiple shells** — a header strip lets you **add (＋), switch, and
+  close** several terminals per session. **↗ Open as tab** moves a running shell — with its scrollback and
+  any running process — into a normal workspace tab, and a **⌃` to hide** hint reminds you the same key
+  dismisses it. Works in all three layouts (floating window / centered overlay / bottom panel).
+
 ## [0.1.13] - 2026-06-16
 
 ### Changed
