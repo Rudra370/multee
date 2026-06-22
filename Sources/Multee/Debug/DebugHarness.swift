@@ -58,6 +58,15 @@ enum DebugAction {
         case "newClaudeShortcut": NewItemHook.newClaude?()        // ⌘⇧C: new Claude tab (default args)
         case "newFile":         NewItemHook.newFile?()           // ⌘N: new blank untitled editor tab
         case "editorSaveAs":    ActiveEditor.current?.debugSaveAs(arg)   // save the untitled tab to a path (panel is HID)
+        case "editorLineColors":   // from-to → dump applied fg colour per line (highlighter-desync diagnosis)
+            let p = arg.split(separator: "-").compactMap { Int($0) }
+            if p.count == 2, let lines = ActiveEditor.current?.debugLineColors(p[0], p[1]) {
+                try? lines.joined(separator: "\n").write(toFile: "/tmp/multee-colordump.txt", atomically: true, encoding: .utf8)
+            }
+        case "editorColorRuns":   // comma-separated line numbers → per-char colour runs (string-open diagnosis)
+            let lines = arg.split(separator: ",").compactMap { Int($0) }
+            let dump = lines.map { "L\($0): " + (ActiveEditor.current?.debugColorRuns($0) ?? "?") }.joined(separator: "\n")
+            try? dump.write(toFile: "/tmp/multee-colorruns.txt", atomically: true, encoding: .utf8)
         case "showShortcuts":   ShortcutsWindowController.shared.show()
         case "renderShortcuts": ShortcutsWindowController.shared.debugRender(to: arg.isEmpty ? "/tmp/shortcuts.png" : arg)
         case "unsavedResp":   // canned answer for the close/quit guard (modal can't be clicked in harness)

@@ -43,6 +43,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "scroll:up:10", "setStatus:needs", "editorType:x", "editorSave", "setFont:16",
               "editorFind:foo", "editorFindToggle:case|word|regex", "editorFindNext",
               "editorEol:CRLF", "editorIndent:Tabs", "editorLang:markdown", "paletteLineJump",
+              "editorLineColors:1-100", "editorColorRuns:80,848",
               "gitCheckout:branch", "gitBranchNew:name", "gitBranchDel:name",
               "treeNewFile:a.txt", "treeNewFolder:dir", "treeBeginFile", "treeExpandAll",
               "treeCollapseAll", "treeRename:old.txt|new.txt", "treeDelete:path",
@@ -101,6 +102,15 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - **`NSTextBlock`/`NSTextTable` collapse to ~0 width in an auto-resizing text view** (text wraps one
   char per line). Fix: `block.setContentWidth(100, type: .percentageValueType)` *and* give the text view
   a real initial frame width (a `.zero` frame collapses block layout). See `MarkdownRenderer`/`MarkdownViewController`.
+- **TextMate `end` patterns can backreference the `begin` match** (`end: "(\3)…"` = "close on the same
+  quote that opened the string"). A correct engine **re-resolves `end` per region**, substituting `\1`…`\9`
+  with the begin's captured text; a *static* compile leaves `\3` dangling → it matches empty (strings close
+  zero-width, bodies render as code) and `"rb"`/`"b…"`/`"f…"` get re-read as raw/byte/f-string prefixes,
+  opening a region that never closes → **the rest of the file paints string-green** (a one-line file
+  `x = "rb"` reproduces it, no size needed). Fix in `TextMateHighlighter` (`resolvedEnd`/`substituteBackrefs`,
+  gated by `TMRule.endHasBackref` so backref-free rules keep the static `endRe`); resolved patterns are
+  cached per tokenize pass. Verify highlighter scope bugs with the `editorLineColors` / `editorColorRuns`
+  harness actions (dump the applied fg colour per line / per char — colours can't be read from a screenshot).
 - **Self-screenshot needs layer-backed standard views** to capture; the terminal is the exception
   (see harness note above).
 - **Two cursor mechanisms that don't compose (custom cursors).** AppKit resolves a view's cursor via

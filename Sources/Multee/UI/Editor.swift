@@ -338,6 +338,57 @@ final class EditorViewController: NSViewController, NSTextViewDelegate, SourceEd
     /// DEV harness: run the save-as transition with a fixed path (the real `NSSavePanel` is modal/HID).
     func debugSaveAs(_ path: String) { performSaveAs(to: URL(fileURLWithPath: path)) }
 
+    /// DEV: dump the applied foreground colour (hex) at the first non-blank char of each 1-based line in
+    /// [from,to] — to diagnose highlighter scope desync (e.g. identifiers turning string-green).
+    func debugLineColors(_ from: Int, _ to: Int) -> [String] {
+        let ns = textView.string as NSString
+        var out: [String] = []
+        var lineNo = 0
+        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length), options: [.byLines]) { sub, range, _, stop in
+            lineNo += 1
+            guard lineNo >= from else { return }
+            if lineNo > to { stop.pointee = true; return }
+            let line = sub ?? ""
+            let lead = line.prefix { $0 == " " || $0 == "\t" }.count
+            let loc = range.location + lead
+            var hex = "(blank)"
+            if loc < range.location + range.length,
+               let col = self.textStorage.attribute(.foregroundColor, at: loc, effectiveRange: nil) as? NSColor,
+               let s = col.usingColorSpace(.sRGB) {
+                hex = String(format: "#%02X%02X%02X", Int(round(s.redComponent*255)),
+                             Int(round(s.greenComponent*255)), Int(round(s.blueComponent*255)))
+            }
+            out.append("\(lineNo) \(hex)  \(line.trimmingCharacters(in: .whitespaces).prefix(34))")
+        }
+        return out
+    }
+
+    /// DEV: per-character colour runs for one 1-based line ("text⟦#hex⟧ …") — to see where a string opens.
+    func debugColorRuns(_ line1: Int) -> String {
+        let ns = textView.string as NSString
+        var lineNo = 0, lineRange = NSRange(location: 0, length: 0)
+        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length), options: [.byLines]) { _, r, _, stop in
+            lineNo += 1
+            if lineNo == line1 { lineRange = r; stop.pointee = true }
+        }
+        guard lineRange.length > 0 else { return "(no line \(line1))" }
+        var runs: [String] = []
+        var i = lineRange.location
+        let end = NSMaxRange(lineRange)
+        while i < end {
+            var eff = NSRange()
+            let col = textStorage.attribute(.foregroundColor, at: i, effectiveRange: &eff) as? NSColor
+            let runEnd = min(NSMaxRange(eff), end)
+            let txt = ns.substring(with: NSRange(location: i, length: runEnd - i))
+            let hex = col.flatMap { $0.usingColorSpace(.sRGB) }.map {
+                String(format: "#%02X%02X%02X", Int(round($0.redComponent*255)), Int(round($0.greenComponent*255)), Int(round($0.blueComponent*255)))
+            } ?? "none"
+            runs.append("⟦\(txt)|\(hex)⟧")
+            i = runEnd
+        }
+        return runs.joined()
+    }
+
     /// Make the text view first responder — called when its tab becomes active so you can type / search /
     /// jump without clicking into it first.
     func focusText() { textView?.window?.makeFirstResponder(textView) }

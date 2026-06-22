@@ -5,6 +5,15 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.15] - 2026-06-22
+
+### Fixed
+- **Syntax highlighting no longer "runs away" after certain strings** — a string whose text looks like a
+  string prefix, such as `"rb"` in `open(path, "rb")`, used to turn **every line after it green** (most
+  visible in larger Python files). Strings now close correctly, and string/docstring **bodies are properly
+  coloured** everywhere (previously only the quotes were). The cause was engine-wide, so this improves
+  highlighting across all languages, not just Python.
+
 ## [0.1.14] - 2026-06-19
 
 ### Added

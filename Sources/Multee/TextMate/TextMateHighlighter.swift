@@ -51,10 +51,29 @@ final class TMRule: Decodable {
     lazy var matchRe = TMRule.compile(match)
     lazy var beginRe = TMRule.compile(begin)
     lazy var endRe = TMRule.compile(end)
+    /// Does `end` reference a begin capture (`\1`…`\9`)? Such an `end` can't be compiled statically — it
+    /// must be re-resolved per region with the begin match's text (e.g. a string's end `(\3)` = its opening
+    /// quote). When false (the common case), `endRe` is used directly.
+    lazy var endHasBackref = TMRule.hasNumericBackref(end)
 
     static func compile(_ pattern: String?) -> NSRegularExpression? {
         guard let pattern else { return nil }
         return try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
+    }
+
+    /// True if `pattern` contains a `\N` (N=1…9) backreference — skipping escaped backslashes (`\\`) so a
+    /// literal `\\3` isn't mistaken for one.
+    static func hasNumericBackref(_ pattern: String?) -> Bool {
+        guard let pattern else { return false }
+        let c = Array(pattern); var i = 0
+        while i < c.count {
+            if c[i] == "\\", i + 1 < c.count {
+                if let d = c[i + 1].wholeNumberValue, d >= 1, d <= 9 { return true }
+                i += 2; continue   // escaped pair (\\, \n, \., …) — skip both
+            }
+            i += 1
+        }
+        return false
     }
 }
 
@@ -151,7 +170,7 @@ final class TextMateHighlighter {
 
     private func precompile(_ rules: [TMRule]) {
         for rule in rules {
-            _ = rule.matchRe; _ = rule.beginRe; _ = rule.endRe
+            _ = rule.matchRe; _ = rule.beginRe; _ = rule.endRe; _ = rule.endHasBackref
             if let nested = rule.patterns { precompile(nested) }
         }
     }
@@ -261,9 +280,49 @@ final class TextMateHighlighter {
         var out: [(NSRange, NSColor)] = []
         var stack = [Frame(rule: nil, endRegex: nil,
                            patterns: expand(grammar.patterns, visited: []), contentColor: nil)]
+        // Per-region resolved `end` regexes (backref-substituted), keyed by the resolved pattern so the
+        // handful of distinct shapes (one per quote char, etc.) compile once. Local to this call → no
+        // cross-thread sharing with another editor's tokenize pass.
+        var endCache: [String: NSRegularExpression] = [:]
         ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length),
                                options: [.byLines, .substringNotRequired]) { _, lineRange, _, _ in
-            self.tokenizeLine(lineRange, text: text, stack: &stack, out: &out)
+            self.tokenizeLine(lineRange, text: text, ns: ns, stack: &stack, out: &out, endCache: &endCache)
+        }
+        return out
+    }
+
+    /// Resolve a begin/end rule's `end` regex for a region just opened by `match`. Rules whose `end` has
+    /// no backref use the static `endRe`; rules like the string rule (`end: (\3)…`) get `\1`…`\9` replaced
+    /// with the regex-escaped text the begin captured, then compiled (cached by resolved pattern).
+    private func resolvedEnd(_ rule: TMRule, match: NSTextCheckingResult, ns: NSString,
+                             cache: inout [String: NSRegularExpression]) -> NSRegularExpression? {
+        guard rule.endHasBackref, let end = rule.end else { return rule.endRe }
+        let resolved = Self.substituteBackrefs(end, match: match, in: ns)
+        if let cached = cache[resolved] { return cached }
+        guard let re = TMRule.compile(resolved) else { return nil }
+        cache[resolved] = re
+        return re
+    }
+
+    /// Replace each `\1`…`\9` in `pattern` with the regex-escaped text `match` captured for that group
+    /// (empty if the group didn't participate). Escaped pairs (`\\`, `\n`, …) are copied verbatim so a
+    /// literal `\\3` isn't treated as a backref.
+    private static func substituteBackrefs(_ pattern: String, match: NSTextCheckingResult, in ns: NSString) -> String {
+        let c = Array(pattern); var out = ""; out.reserveCapacity(pattern.count); var i = 0
+        while i < c.count {
+            if c[i] == "\\", i + 1 < c.count {
+                if let d = c[i + 1].wholeNumberValue, d >= 1, d <= 9 {
+                    if d < match.numberOfRanges {
+                        let r = match.range(at: d)
+                        if r.location != NSNotFound {
+                            out += NSRegularExpression.escapedPattern(for: ns.substring(with: r))
+                        }
+                    }
+                    i += 2; continue
+                }
+                out.append(c[i]); out.append(c[i + 1]); i += 2; continue
+            }
+            out.append(c[i]); i += 1
         }
         return out
     }
@@ -293,8 +352,9 @@ final class TextMateHighlighter {
 
     /// Tokenize one line, mutating the carried `stack` and appending colour spans. All regex searches
     /// are confined to `[pos, lineEnd)`; per-rule next-matches are cached for the duration of the line.
-    private func tokenizeLine(_ lineRange: NSRange, text: String,
-                              stack: inout [Frame], out: inout [(NSRange, NSColor)]) {
+    private func tokenizeLine(_ lineRange: NSRange, text: String, ns: NSString,
+                              stack: inout [Frame], out: inout [(NSRange, NSColor)],
+                              endCache: inout [String: NSRegularExpression]) {
         let lineEnd = lineRange.location + lineRange.length
         var pos = lineRange.location
         var nextMatch = [ObjectIdentifier: NSTextCheckingResult?]()   // per-rule cache, this line only
@@ -336,7 +396,7 @@ final class TextMateHighlighter {
             } else if let rule = bestRule, let match = best {
                 paint(pos, match.range.location, top.contentColor, &out)
                 if let name = rule.name, let color = TMTheme.color(for: name) { out.append((match.range, color)) }
-                if rule.begin != nil, let endRegex = rule.endRe {
+                if rule.begin != nil, let endRegex = resolvedEnd(rule, match: match, ns: ns, cache: &endCache) {
                     // A begin can match **zero-width** (a lookahead — e.g. a function-call "argument value"
                     // region opens with `(?=\S)`). Advance by the match's *real* length so the region's
                     // content starts exactly here. Forcing +1 (as a plain match does) would skip the next
