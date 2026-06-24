@@ -51,18 +51,101 @@ brew uninstall --cask multee
 - **Run many projects side by side** — each project is a session; switch between them instantly.
 - **Tabs for everything** — Claude sessions, terminals, file viewers, and diffs, together in one window.
 - **Know what needs you** — a colored dot per session shows whether Claude is working, waiting on you, or
-  idle, with an optional sound when it finishes or needs attention.
-- **Browse your code** — a file tree with git-status colors and a syntax-highlighted viewer (~30 languages).
-- **Open any file** — images and icons (PNG/JPG/SVG/`.icns`) with zoom &amp; pan, and Markdown files render as
-  a formatted **preview** (headings, code with highlighting, tables, inline images) with a source toggle.
-- **Review changes** — stage, commit, discard, and view diffs without leaving the app.
+  idle, with an optional sound and a menu-bar indicator when it finishes or needs attention.
+- **Find & jump fast** — go to any file (⌘P), run any command (⌘⇧P), or search the whole project.
+- **Browse & edit your code** — a git-aware file tree and a syntax-highlighted editor (~30 languages),
+  with find/replace and format-on-save.
+- **A terminal when you need one** — a quick terminal (⌃\`) with multiple shells, plus full terminal tabs.
+- **Open any file** — images and icons (PNG/JPG/SVG/`.icns`) with zoom &amp; pan, and Markdown rendered as a
+  formatted **preview** (headings, highlighted code, tables, inline images) with a source toggle.
+- **Review &amp; ship** — stage, commit, discard, view diffs, and switch branches without leaving the app.
 - **Pick up where you left off** — sessions, tabs, and Claude conversations come back when you reopen Multee.
-- **Make it yours** — drag tabs to reorder, set default Claude arguments, font size, and more.
+
+## See it in action
+
+### Many projects, one glance
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/sessions.png" alt="Sessions sidebar with a colored status dot per project"></td>
+    <td width="50%"><img src="assets/attention.png" alt="Menu-bar dropdown showing which session is working or waiting"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Each project is a session — a dot shows working / waiting / idle</b></td>
+    <td align="center"><b>The menu bar tells you who needs you, and jumps you there</b></td>
+  </tr>
+</table>
+
+### Every kind of tab, in one window
 
 <p align="center">
-  <img src="assets/markdown.png" width="820" alt="Markdown rendered preview with headings, a highlighted code block, and a table"><br>
-  <b>Markdown, rendered</b>
+  <img src="assets/editor.png" width="880" alt="Editor with several tabs — Claude sessions, files — and a git-aware file tree"><br>
+  <b>Claude sessions, terminals, files, and diffs together — syntax highlighting for ~30 languages</b>
 </p>
+
+### A terminal, your way
+
+A quick terminal (⌃\`) with multiple shells you can add, switch, and pop out into a full tab — opened
+however suits the moment.
+
+<table>
+  <tr>
+    <td width="33%"><img src="assets/quick-floating.png" alt="Quick terminal as a floating window"></td>
+    <td width="33%"><img src="assets/quick-centered.png" alt="Quick terminal as a centered overlay"></td>
+    <td width="33%"><img src="assets/quick-bottom.png" alt="Quick terminal docked at the bottom of the editor"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Floating window</b></td>
+    <td align="center"><b>Centered overlay</b></td>
+    <td align="center"><b>Bottom dock</b></td>
+  </tr>
+</table>
+
+### Jump anywhere, fast
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/palette.png" alt="Go to File quick-open, searching files by name"></td>
+    <td width="50%"><img src="assets/commands.png" alt="Command palette listing actions like New Claude Session"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Go to File — ⌘P</b></td>
+    <td align="center"><b>Command Palette — ⌘⇧P</b></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="assets/search.png" width="880" alt="Project-wide search results grouped by file"><br>
+  <b>Search the whole project — with match-case, whole-word, and regex</b>
+</p>
+
+### From the status bar
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/shortcuts.png" alt="Built-in keyboard shortcuts panel"></td>
+    <td width="50%"><img src="assets/branch.png" alt="Branch menu: switch, create, or delete branches"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Every shortcut, one keystroke away</b></td>
+    <td align="center"><b>Create, switch &amp; delete git branches</b></td>
+  </tr>
+</table>
+
+### Open any file
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/markdown.png" alt="Markdown rendered preview with headings, a highlighted code block, and a table"></td>
+    <td width="50%"><img src="assets/image-viewer.png" alt="Image viewer showing an icon with zoom and pan"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Markdown, rendered</b></td>
+    <td align="center"><b>Images, icons &amp; SVG — zoom &amp; pan</b></td>
+  </tr>
+</table>
+
+### Review &amp; commit
 
 <table>
   <tr>
@@ -70,8 +153,21 @@ brew uninstall --cask multee
     <td width="50%"><img src="assets/diff.png" alt="Side-by-side diff view"></td>
   </tr>
   <tr>
-    <td align="center"><b>Review &amp; commit changes</b></td>
+    <td align="center"><b>Stage, commit &amp; discard</b></td>
     <td align="center"><b>Side-by-side diffs</b></td>
+  </tr>
+</table>
+
+### Make it yours
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/settings.png" alt="Settings: auto-launch Claude, default args, font size, quick-terminal placement"></td>
+    <td width="50%"><img src="assets/formatters.png" alt="Formatters settings: format on save with Prettier, gofmt, rustfmt, Ruff, and more"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Auto-launch, default args, font, quick-terminal placement</b></td>
+    <td align="center"><b>Format on save with the tools you already use</b></td>
   </tr>
 </table>
 
