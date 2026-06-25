@@ -120,6 +120,10 @@ final class TerminalStore {
     /// it lives in CLI flags, not in any view the screenshot can capture). See `dumpLaunchArgs` action.
     func debugLaunchArgs(for tab: Tab, cwd: String) -> [String] { launchSpec(for: tab, cwd: cwd).args }
 
+    /// Does Claude still have a forkable transcript for this conversation id? (Quick Ask uses this to decide
+    /// whether a Context fork is possible, or it must fall back to Blank.)
+    func canFork(sessionId: String) -> Bool { Self.conversationExists(sessionId: sessionId) }
+
     /// Get (or lazily spawn) the terminal view for a tab. `cwd` is the session's repo root.
     func view(for tab: Tab, cwd: String) -> MulteeTerminalView {
         installScrollMonitorIfNeeded()
@@ -211,6 +215,10 @@ final class TerminalStore {
     }
 
     func send(_ id: String, _ txt: String) { views[id]?.send(txt: txt) }
+
+    /// The terminal's visible grid as text (production read — Quick Ask uses it to spot Claude's
+    /// large-session "Resume from summary / full" menu and auto-pick "full").
+    func screenText(_ id: String) -> String? { debugText(id) }
 
     // MARK: Debug harness (DEV only)
 

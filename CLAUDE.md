@@ -57,7 +57,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "newTermShortcut", "newClaudeShortcut", "newFile", "editorSaveAs:/tmp/x.md",
               "tabRestart", "tabToTerminal", "newProject:/tmp/x|git",
               "forkClaude", "setClaudeId:<cid>", "dumpLaunchArgs:/tmp/x.txt", "applyTitle",
-              "dumpCid:/tmp/x.txt"] }
+              "dumpCid:/tmp/x.txt", "quickAskShow", "quickAskHide", "quickAskNew", "quickAskMode:context|blank",
+              "quickAskSend:<q>", "quickAskOpenAsTab", "dumpQuickAsk:/tmp/x.txt"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -164,6 +165,11 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `CenterViewController`). The header (`QuickTerminalPanel`) is one composite the controller re-parents between the
   three containers; `TerminalStore` owns the shell PTYs (`__quick__<sid>::<n>`) and `promoteQuick` for open-as-tab.
   `NewProject` is the ⌘⇧N "New Project" save panel (name + optional `git init` checkbox → create folder → open).
+  `QuickAsk` (`QuickAskController` + `QuickAskPanel`) is the ⌘/ Quick Ask — a centered overlay hosting a **real
+  interactive fork** (`claude --resume <activeCid> --fork-session`) of the active chat so a side question reuses
+  its warm prompt cache (fast); Context/Blank toggle, New, Open as Tab (the fork PTY is keyed by a real tab id,
+  so promotion is just `addTab`). It reuses `TerminalStore.view(for:)` + the Fork feature's `launchSpec`; see
+  DECISIONS.md D23 for why this replaced a headless `claude -p` build.
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
   and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).

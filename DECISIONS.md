@@ -220,6 +220,34 @@ no file dependency. The transcript path still earns its keep for restored tabs a
 and stays bounded (fixed-size tail/head) because transcripts reach tens of MB. We name from the *first*
 prompt (only while the label is still default) so it identifies the conversation and doesn't churn.
 
+### D23 — Quick Ask: embed a real interactive fork (rejected: headless `claude -p`)
+**Decision:** Quick Ask hosts a **real interactive** `claude --resume <cid> --fork-session` inside a centered
+panel (a SwiftTerm PTY keyed by a real tab id, so "Open as Tab" is just `session.addTab` — the live PTY +
+conversation carry over). A `Context | Blank` toggle forks the active chat vs starts a fresh session. It
+reuses the committed Fork feature's `launchSpec` flags and the SessionStart hook; no bespoke streaming code.
+**Why:** The "ask a side question without dirtying the chat" goal is just a fork shown in a panel instead of
+a tab. Forking **in interactive mode reuses the chat's warm prompt cache**, so the first answer is as fast
+as the ongoing chat (measured in production via the ⑂ fork button: ~3–4 s).
+**Rejected — headless `claude -p` with a custom rendered panel (the first build):** it was always slow
+(~1 min on a big chat) and we proved why. A `-p` fork sends a **different request prefix** (print mode's
+system prompt/tools) than the interactive session, and the prompt cache is **prefix-matched** — so a headless
+fork *cannot* read the live chat's warm cache and cold-prefills the whole context. Hard data: a `-p` fork of
+a `-p`-**warm** parent is a *full* hit (≈237 k read / ~5 s), but of an interactive-warm parent it misses; the
+only variable is the mode. (An earlier "752 k cold" reading was *also* confounded by the ~5-min cache TTL — a
+separate trap.) Pre-warming on panel-open (fork + throwaway prompt while the user types) hid *some* of the
+cold prefill but couldn't beat it when the user asks fast or the parent is cold, and it littered a large
+fork transcript per open. The embedded interactive fork is faster (warm-cache reuse), natively smooth (it
+*is* the CLI, so Esc interrupts, streaming/markdown are free), and *less* code. Cost: it's Claude's terminal
+UI, not a styled Q&A panel. Forking a large/old chat shows Claude's native "Resume from summary/full" menu;
+Quick Ask **auto-picks "full"** (full reuses the warm cache — a summary is freshly generated, so cold + lossy)
+by watching the fork's screen and sending the option's **number** when the menu text appears. Subtlety: send
+the digit *only* — the digit auto-confirms, and a trailing Enter would land on the input box and accept Claude's
+ghost history suggestion, running a stray past command (we hit exactly that with `/compact`). Disk: each fork duplicates the
+conversation on disk (~chat size) and Claude only auto-prunes after `cleanupPeriodDays` (default 30) — **open**:
+delete an abandoned fork's transcript on New/close (not one promoted via Open as Tab). Verified by harness
+(`dumpQuickAsk` → launch args + terminal text): Context → `--resume <cid> --fork-session`; Blank → no
+`--resume`; Open as Tab → fork handed off to a real tab.
+
 ---
 
 ## How we work (process)

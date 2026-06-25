@@ -5,11 +5,13 @@ import AppKit
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let palette: CommandPaletteController
     private let quickTerm: QuickTerminalController
+    private let quickAsk: QuickAskController
 
     init(model: AppModel) {
         let workspace = WorkspaceViewController(model: model)
         self.palette = CommandPaletteController(model: model)
         self.quickTerm = QuickTerminalController(model: model)
+        self.quickAsk = QuickAskController(model: model)
 
         // Root container: update banner (top, collapses to 0 height when hidden) + workspace. The status
         // bar lives at the bottom of the workspace's *center* pane (CenterViewController), not here, so it
@@ -56,6 +58,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         quickTerm.attach(root: root)
         QuickTerminalHook.toggle = { [weak quickTerm] in quickTerm?.toggle() }
         TerminalStore.shared.onQuickExit = { [weak quickTerm] quickID in quickTerm?.handleShellExit(quickID: quickID) }
+
+        // ⌘/ quick ask: a centered overlay (embedded interactive fork) over the same root.
+        quickAsk.attach(root: root)
+        QuickAskHook.toggle = { [weak quickAsk] in quickAsk?.toggle() }
     }
 
     @available(*, unavailable)

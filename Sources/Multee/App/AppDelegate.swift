@@ -368,6 +368,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let newTerm = fileMenu.addItem(withTitle: "New Terminal", action: #selector(newTerminalItem), keyEquivalent: "`")
         newTerm.keyEquivalentModifierMask = [.control, .shift]
         newTerm.target = self
+        let quickAsk = fileMenu.addItem(withTitle: "Quick Ask…", action: #selector(quickAskItem), keyEquivalent: "/")
+        quickAsk.target = self
         fileMenu.addItem(.separator())
         let goToFile = fileMenu.addItem(withTitle: "Go to File…", action: #selector(goToFile), keyEquivalent: "p")
         goToFile.target = self
@@ -430,6 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleQuickTerminal() { QuickTerminalHook.toggle?() }
+    @objc private func quickAskItem() { QuickAskHook.toggle?() }
     @objc private func newFileItem() { NewItemHook.newFile?() }
     @objc private func newClaudeSession() { NewItemHook.newClaude?() }
     @objc private func newClaudeWithArgs() { NewItemHook.newClaudeWithArgs?() }

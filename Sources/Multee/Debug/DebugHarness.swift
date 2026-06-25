@@ -62,6 +62,15 @@ enum DebugAction {
                let cid = s.tabs[i].claudeSessionId, let t = ClaudeTranscript.title(forSessionId: cid) {
                 s.tabs[i].title = t.count > 80 ? String(t.prefix(79)) + "…" : t
             }
+        case "quickAskShow":   QuickAskController.current?.show()           // ⌘/ open the embedded Quick Ask panel
+        case "quickAskHide":   QuickAskController.current?.hide()           // hide the panel (the fork PTY persists)
+        case "quickAskNew":    QuickAskController.current?.newThread()      // "New" — drop the fork, start a fresh one
+        case "quickAskMode":   QuickAskController.current?.debugMode(arg == "context")   // Context|Blank toggle
+        case "quickAskSend":   QuickAskController.current?.debugSend(arg)   // type a question into the embedded terminal
+        case "quickAskOpenAsTab": QuickAskController.current?.openAsTab()   // ↗ promote the fork to a real Claude tab
+        case "dumpQuickAsk":   // panel state + launch args (proves fork flags) + the terminal's rendered text
+            let dump = QuickAskController.current?.debugDump() ?? "<no quick ask>"
+            try? dump.write(toFile: arg.isEmpty ? "/tmp/multee-quickask.txt" : arg, atomically: true, encoding: .utf8)
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         case "newProject":   // path|git — create a folder (optionally git init) + open it (skips the HID save panel)
             let p = arg.split(separator: "|", maxSplits: 1).map(String.init)

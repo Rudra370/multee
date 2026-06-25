@@ -51,6 +51,24 @@ yet stays "Claude"; a fork starts "Claude (fork)" and names itself from its firs
 `SessionStart` reports the id too (so a tab resumed at launch is named without a prompt) — status-neutral,
 skipping brand-new "startup" sessions and the parent id a fork reports. Harness: `dumpCid`, `applyTitle`.
 
+**Quick Ask (⌘/).** Ask the active Claude chat a side question *without touching its history*. A centered
+overlay (`UI/QuickAsk` — `QuickAskController` + `QuickAskPanel`) hosts a **real interactive fork** of the
+chat (`claude --resume <activeCid> --fork-session`) in a SwiftTerm PTY. Forking *in interactive mode* reuses
+the chat's warm prompt cache, so the first answer is as fast as the ongoing chat (~3–4 s) — the key reason
+it's a real terminal, not a headless `claude -p` panel, which sends a different request prefix and so cold-
+prefills the whole context (~1 min); see DECISIONS.md D23. A **Context | Blank** toggle forks the chat vs
+starts a fresh context-free session (Blank-only when no forkable chat is active). **New** drops the fork and
+starts another; **Open as Tab** promotes the live fork into a real Claude tab — the PTY is keyed by a real
+tab id, so promotion is just `session.addTab` (process + scrollback survive) and it then behaves like any
+forked tab (`forkParentId` restart semantics). The fork PTY persists across hide (reopen continues), and is
+dropped when you switch sessions or start a New thread. It reuses `TerminalStore.view(for:)` + `launchSpec`
+(the committed Fork feature's flags). Harness: `quickAskShow`/`Hide`/`New`/`Mode:context|blank`/`Send`/
+`OpenAsTab`, `dumpQuickAsk` (launch args + terminal text). Forking a large/old chat makes Claude show a
+"Resume from summary/full" menu; Quick Ask **auto-picks "full"** (warm-cache reuse) by watching the fork's
+screen (`TerminalStore.screenText`) and sending the option's number — digit only, since a trailing Enter
+would accept Claude's ghost history suggestion and run a stray command. Each fork duplicates the conversation
+on disk (Claude prunes after `cleanupPeriodDays`, default 30).
+
 ## Terminal — `Terminal/`
 `TerminalStore` caches one SwiftTerm PTY view per tab id (process survives tab/session switches).
 Login-shell PATH via `Env.bootstrap`. Claude launches with `--settings <hooks>` + env; a shared
