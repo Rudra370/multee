@@ -17,6 +17,8 @@ struct Tab: Identifiable, Equatable {
     var args: String              // claude launch args (for .claude)
     var path: String?             // absolute file path (for .file / .diff)
     var claudeSessionId: String?  // captured from hooks → used to `claude --resume` after a restart
+    var forkParentId: String?     // transient: a fork's source conversation id → launch `--resume <id> --fork-session`
+                                  // once, until this tab captures its own claudeSessionId; not persisted
     var dirty: Bool               // unsaved edits (for .file)
     var shown: Bool               // lazy-spawn gate: process isn't started until first viewed
     var exited: Bool              // transient: the terminal process ended (→ "Session ended" bar); not persisted
@@ -27,6 +29,7 @@ struct Tab: Identifiable, Equatable {
          args: String = "",
          path: String? = nil,
          claudeSessionId: String? = nil,
+         forkParentId: String? = nil,
          dirty: Bool = false,
          shown: Bool = false,
          exited: Bool = false) {
@@ -36,6 +39,7 @@ struct Tab: Identifiable, Equatable {
         self.args = args
         self.path = path
         self.claudeSessionId = claudeSessionId
+        self.forkParentId = forkParentId
         self.dirty = dirty
         self.shown = shown
         self.exited = exited

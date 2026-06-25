@@ -38,6 +38,17 @@ enum DebugAction {
         case "openFile":       model.activeSession?.openFile(arg)
         case "openDiff":       model.activeSession?.openDiff(arg)
         case "newClaude":      model.activeSession?.addTab(Tab(kind: .claude, title: "Claude", args: model.settings.defaultArgs))
+        case "forkClaude":     if let s = model.activeSession { s.forkTab(s.activeTabID) }   // ⑂ fork the active Claude tab
+        case "setClaudeId":    // simulate the hook capturing a conversation id on the active tab (cid must be a real on-disk transcript)
+            if let s = model.activeSession, let i = s.tabs.firstIndex(where: { $0.id == s.activeTabID }) {
+                s.tabs[i].claudeSessionId = arg
+            }
+        case "dumpLaunchArgs":  // write the active tab's computed launch args (resume/fork flags are otherwise invisible)
+            if let s = model.activeSession, let t = s.activeTab {
+                let args = TerminalStore.shared.debugLaunchArgs(for: t, cwd: s.url)
+                try? args.joined(separator: " ").write(toFile: arg.isEmpty ? "/tmp/multee-launchargs.txt" : arg,
+                                                        atomically: true, encoding: .utf8)
+            }
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         case "newProject":   // path|git — create a folder (optionally git init) + open it (skips the HID save panel)
             let p = arg.split(separator: "|", maxSplits: 1).map(String.init)

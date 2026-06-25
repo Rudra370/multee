@@ -61,6 +61,25 @@ final class Session: ObservableObject, Identifiable {
         addTab(Tab(kind: .file, title: "\(prefix)\(n)", path: nil))
     }
 
+    /// Fork a Claude tab into a new, independent session that starts with a copy of the same
+    /// conversation (Claude's `--resume <cid> --fork-session`). Only possible once the source tab has
+    /// captured its conversation id from the hooks — before any real activity there's nothing to fork,
+    /// so this is a no-op then. Carries the source's launch flags (model/permissions) to the fork.
+    /// Returns the new tab's id, or nil if the source isn't a forkable Claude tab yet.
+    @discardableResult
+    func forkTab(_ id: String) -> String? {
+        guard let src = tabs.first(where: { $0.id == id }),
+              src.kind == .claude, let cid = src.claudeSessionId else { return nil }
+        let new = addTab(Tab(kind: .claude, title: "Claude (fork)", args: src.args, forkParentId: cid))
+        return new.id
+    }
+
+    /// Can this tab be forked right now (a Claude tab that has captured a conversation id)?
+    func canFork(_ id: String) -> Bool {
+        guard let t = tabs.first(where: { $0.id == id }) else { return false }
+        return t.kind == .claude && t.claudeSessionId != nil
+    }
+
     /// An untitled tab was saved to `path` — adopt it as a real file (path + filename title). The editor
     /// already redirected its own saves; this keeps the model/tab chip in sync.
     func fileSavedAs(_ id: String, path: String) {

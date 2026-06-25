@@ -193,6 +193,20 @@ switches still never restart a process — the property the original single-view
 Quick shells stay ephemeral (scratch terminals); persisting them would conflate them with tabs, which
 they explicitly are not.
 
+### D21 — Fork a Claude session via `--fork-session`, as a one-shot launch flag
+**Decision:** "Fork session" reuses Claude Code's native `--resume <cid> --fork-session` rather than any
+transcript copying of our own. The fork is encoded as a **transient** `Tab.forkParentId` (the source
+conversation id), and `launchSpec` emits `--fork-session` **only while `claudeSessionId == nil`** — i.e.
+exactly once, on the fork's first launch. Once the hooks report the fork's own id, the normal
+`--resume <ownId>` path takes over, so a Restart resumes the fork in place instead of forking it again.
+`forkParentId` is not persisted.
+**Why:** Claude already owns conversation storage and forking semantics; duplicating that (copying
+`.jsonl`, rewriting ids) would be fragile and could corrupt Claude's own state. A one-shot flag keyed on
+"has this fork captured its own id yet?" is the minimal correct trigger — it can't double-fork on
+restart, and the only lost case (fork, then quit before the fork's first activity) harmlessly restores a
+fresh tab. The flag construction is invisible in the UI, so it's pinned by deterministic harness actions
+(`forkClaude`/`setClaudeId`/`dumpLaunchArgs` → `TerminalStore.debugLaunchArgs`) rather than a screenshot.
+
 ---
 
 ## How we work (process)

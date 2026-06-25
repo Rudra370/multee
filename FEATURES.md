@@ -22,6 +22,19 @@ the red close button is funnelled through quit so it's covered too; saving route
 `CenterViewController` registers (the model owns the dirty flag, the view owns `save()`). Persistence:
 JSON snapshot in UserDefaults, debounce-saved; restore drops repos whose folder is gone.
 
+**Fork a Claude session.** A Claude tab can be forked into a new, independent session that starts with
+a *copy* of the same conversation — Claude Code's `--resume <cid> --fork-session` (new session id, no
+effect on the original). The surface is a small **`⑂` icon on each Claude chip** (`TabChipView`), shown
+only on **forkable** tabs (a Claude tab that's captured a conversation id); a fresh Claude tab or a
+just-created fork that hasn't earned its own id yet shows none. It's a `PointerButton` routed through
+the chip's `hitTest` alongside the close button. `Session.forkTab` adds a `.claude` tab titled
+"Claude (fork)" carrying the source's launch flags and a transient `Tab.forkParentId` (the source `cid`).
+`launchSpec` turns that into `--resume <parent> --fork-session` *once* — guarded by `claudeSessionId ==
+nil`, so the moment the fork's own id is captured from the hooks a Restart resumes the fork in place (no
+double-fork). `forkParentId` isn't persisted: forking before the fork's first activity (the only window
+it matters) then quitting just restores a fresh tab. Verify the (invisible) flag construction with the
+`forkClaude` / `setClaudeId` / `dumpLaunchArgs` harness actions (`TerminalStore.debugLaunchArgs`).
+
 ## Terminal — `Terminal/`
 `TerminalStore` caches one SwiftTerm PTY view per tab id (process survives tab/session switches).
 Login-shell PATH via `Env.bootstrap`. Claude launches with `--settings <hooks>` + env; a shared

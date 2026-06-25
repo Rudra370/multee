@@ -146,6 +146,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         tabBar.onNewTerminal = { [weak self] in
             self?.model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         }
+        tabBar.onFork        = { [weak self] id in self?.model.activeSession?.forkTab(id) }
         tabBar.onReorder     = { [weak self] dragged, beforeID in
             guard let session = self?.model.activeSession else { return }
             if let beforeID { session.moveTab(dragged, before: beforeID) } else { session.moveTabToEnd(dragged) }

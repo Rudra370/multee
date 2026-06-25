@@ -18,6 +18,7 @@ final class TabBarView: NSView {
     var onClose: ((String) -> Void)?
     var onNewClaude: ((String) -> Void)?   // arg string ("" / "--continue" / …)
     var onNewTerminal: (() -> Void)?
+    var onFork: ((String) -> Void)?        // chip ⑂ icon → fork that specific Claude tab
     /// Reorder: move `dragged` to just before `beforeID` (nil = move to the end).
     var onReorder: ((_ dragged: String, _ beforeID: String?) -> Void)?
 
@@ -99,6 +100,7 @@ final class TabBarView: NSView {
         chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard let session else { return }
         for tab in session.tabs {
+            let canFork = tab.kind == .claude && session.canFork(tab.id)
             let chip = TabChipView(
                 tabID: tab.id,
                 title: tab.title,
@@ -108,7 +110,8 @@ final class TabBarView: NSView {
                 isActive: tab.id == activeTabID,
                 copyPaths: Self.copyPaths(for: tab, repo: session.url),
                 onSelect: { [weak self] in self?.onSelect?(tab.id) },
-                onClose: { [weak self] in self?.onClose?(tab.id) }
+                onClose: { [weak self] in self?.onClose?(tab.id) },
+                onFork: canFork ? { [weak self] in self?.onFork?(tab.id) } : nil
             )
             chips.addArrangedSubview(chip)
         }
@@ -193,17 +196,21 @@ final class TabChipView: PointerView, NSDraggingSource {
     let tabID: String
     private let onSelect: () -> Void
     private let onClose: () -> Void
+    private let onFork: (() -> Void)?                              // forkable claude tabs only → ⑂ icon on the chip
     private let copyPaths: (absolute: String, relative: String)?   // file tabs only → right-click copy
     private let closeButton = PointerButton()
+    private let forkButton = PointerButton()
     private var mouseDownAt: NSPoint = .zero
     private var didDrag = false
 
     init(tabID: String, title: String, kind: TabKind, status: ClaudeState, dirty: Bool, isActive: Bool,
          copyPaths: (absolute: String, relative: String)? = nil,
-         onSelect: @escaping () -> Void, onClose: @escaping () -> Void) {
+         onSelect: @escaping () -> Void, onClose: @escaping () -> Void,
+         onFork: (() -> Void)? = nil) {
         self.tabID = tabID
         self.onSelect = onSelect
         self.onClose = onClose
+        self.onFork = onFork
         self.copyPaths = copyPaths
         super.init(frame: .zero)
 
@@ -239,7 +246,22 @@ final class TabChipView: PointerView, NSDraggingSource {
         closeButton.action = #selector(closeTapped)
         closeButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let stack = NSStackView(views: [indicator, titleLabel, closeButton])
+        // A ⑂ fork icon, only on forkable Claude tabs (the source must have a captured conversation id).
+        var trailing = [closeButton]
+        if onFork != nil {
+            forkButton.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
+            forkButton.isBordered = false
+            forkButton.bezelStyle = .inline
+            forkButton.contentTintColor = .tertiaryLabelColor
+            forkButton.toolTip = "Fork this Claude session"
+            forkButton.target = self
+            forkButton.action = #selector(forkTapped)
+            forkButton.setContentHuggingPriority(.required, for: .horizontal)
+            trailing.insert(forkButton, at: 0)   // ⑂ before ✕
+        }
+
+        let stack = NSStackView(views: [indicator, titleLabel] + trailing)
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 6
@@ -271,7 +293,7 @@ final class TabChipView: PointerView, NSDraggingSource {
     /// Route all clicks/drags to the chip itself, except the close button.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let hit = super.hitTest(point) else { return nil }
-        return hit === closeButton ? closeButton : self
+        return (hit === closeButton || hit === forkButton) ? hit : self
     }
 
     // Click = select; drag past a small threshold = begin a reorder drag.
@@ -307,7 +329,7 @@ final class TabChipView: PointerView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
 
-    // Right-click on a file tab → copy its path. Other tab kinds have no menu (yet).
+    // Right-click on a file tab → copy its path. (Claude tabs fork via the ⑂ icon on the chip.)
     override func menu(for event: NSEvent) -> NSMenu? {
         guard copyPaths != nil else { return nil }
         let menu = NSMenu()
@@ -318,6 +340,7 @@ final class TabChipView: PointerView, NSDraggingSource {
         }
         return menu
     }
+    @objc private func forkTapped() { onFork?() }
     @objc private func copyAbsolute() { if let p = copyPaths?.absolute { Clipboard.copy(p) } }
     @objc private func copyRelative() { if let p = copyPaths?.relative { Clipboard.copy(p) } }
 

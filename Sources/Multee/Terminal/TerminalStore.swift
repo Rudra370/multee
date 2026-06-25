@@ -89,7 +89,12 @@ final class TerminalStore {
             // start fresh (a wrong guess just means "fresh", never a dead tab).
             let userArgs = tab.args.split(separator: " ").map(String.init)
             let base: [String]
-            if let cid = tab.claudeSessionId, Self.conversationExists(sessionId: cid) {
+            if let parent = tab.forkParentId, tab.claudeSessionId == nil, Self.conversationExists(sessionId: parent) {
+                // A freshly-forked tab that hasn't captured its own id yet → resume the source conversation
+                // as a NEW session (`--fork-session`). Once the hook reports this fork's own id, the branch
+                // above takes over and a Restart resumes the fork in place (no second fork).
+                base = userArgs.filter { !Self.resumeFlags.contains($0) } + ["--resume", parent, "--fork-session"]
+            } else if let cid = tab.claudeSessionId, Self.conversationExists(sessionId: cid) {
                 base = userArgs.filter { !Self.resumeFlags.contains($0) } + ["--resume", cid]
             } else if userArgs.contains(where: Self.resumeFlags.contains), !Self.hasConversation(forCwd: cwd) {
                 // A default like `--continue` would fail on a folder Claude has never seen ("no conversation
@@ -109,6 +114,11 @@ final class TerminalStore {
             return (exe, args, Env.array())
         }
     }
+
+    /// Dev-only: the exact args `claude`/the shell would launch with for this tab, without spawning it.
+    /// Used by the debug harness to verify fork/resume flag construction (which is otherwise invisible —
+    /// it lives in CLI flags, not in any view the screenshot can capture). See `dumpLaunchArgs` action.
+    func debugLaunchArgs(for tab: Tab, cwd: String) -> [String] { launchSpec(for: tab, cwd: cwd).args }
 
     /// Get (or lazily spawn) the terminal view for a tab. `cwd` is the session's repo root.
     func view(for tab: Tab, cwd: String) -> MulteeTerminalView {
