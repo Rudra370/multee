@@ -5,6 +5,22 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.16] - 2026-06-25
+
+### Added
+- **Quick Ask (⌘/)** — ask the active Claude chat a quick side question *without dirtying its history*. It
+  pops a small panel with a live, **forked** copy of the conversation, so the answer is context-aware **and
+  as fast as the ongoing chat**. Throw it away when you're done, or **Open as Tab** to keep going. A
+  **Context / Blank** toggle picks whether to include the chat's context or ask a fresh, context-free
+  question; forking a large chat keeps the full context automatically.
+- **Fork a Claude session** — a **⑂** icon on each Claude tab forks the conversation into a new, independent
+  session that starts from a copy of the same history, leaving the original untouched.
+
+### Changed
+- **Claude tabs are named after their conversation** — instead of every tab just reading "Claude", each
+  shows its conversation's name (taken from your first message, and upgraded to Claude's own title once
+  it's available).
+
 ## [0.1.15] - 2026-06-22
 
 ### Fixed
