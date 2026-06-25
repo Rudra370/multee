@@ -207,6 +207,19 @@ restart, and the only lost case (fork, then quit before the fork's first activit
 fresh tab. The flag construction is invisible in the UI, so it's pinned by deterministic harness actions
 (`forkClaude`/`setClaudeId`/`dumpLaunchArgs` → `TerminalStore.debugLaunchArgs`) rather than a screenshot.
 
+### D22 — Name Claude tabs from the live hook prompt, with the transcript as a secondary upgrade
+**Decision:** A Claude tab's name comes **primarily from the first prompt, captured live from the
+`UserPromptSubmit` hook** (`HookServer.onPrompt`). The transcript (`ClaudeTranscript`, read by tailing
+256 KB for `ai-title` / heading 256 KB for the first prompt, off-main, debounced) is a *secondary* path
+that upgrades to Claude's `ai-title` when the file exists (established/restored sessions).
+**Why:** The obvious design — just read the transcript's `ai-title` — **doesn't work for a live tab**:
+Claude doesn't persist the `.jsonl` while a pure-text session runs (only after tool work), so a freshly
+prompted tab has no file to read (verified: id captured, `file=<no file on disk>`). The hook already has
+the prompt text in hand, so shipping it through (base64url, capped) names the tab immediately and reliably,
+no file dependency. The transcript path still earns its keep for restored tabs and the nicer `ai-title`,
+and stays bounded (fixed-size tail/head) because transcripts reach tens of MB. We name from the *first*
+prompt (only while the label is still default) so it identifies the conversation and doesn't churn.
+
 ---
 
 ## How we work (process)

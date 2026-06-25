@@ -56,7 +56,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "quickNew", "quickActivate:1", "quickClose:1", "quickOpenAsTab",
               "newTermShortcut", "newClaudeShortcut", "newFile", "editorSaveAs:/tmp/x.md",
               "tabRestart", "tabToTerminal", "newProject:/tmp/x|git",
-              "forkClaude", "setClaudeId:<cid>", "dumpLaunchArgs:/tmp/x.txt"] }
+              "forkClaude", "setClaudeId:<cid>", "dumpLaunchArgs:/tmp/x.txt", "applyTitle",
+              "dumpCid:/tmp/x.txt"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -103,6 +104,16 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - **`NSTextBlock`/`NSTextTable` collapse to ~0 width in an auto-resizing text view** (text wraps one
   char per line). Fix: `block.setContentWidth(100, type: .percentageValueType)` *and* give the text view
   a real initial frame width (a `.zero` frame collapses block layout). See `MarkdownRenderer`/`MarkdownViewController`.
+- **Claude doesn't persist a session's `.jsonl` transcript while it runs** — a *pure-text* session that
+  hasn't done tool work has only a `~/.claude/session-env/<id>` dir, no `~/.claude/projects/<enc>/<id>.jsonl`
+  (verified: id captured from the hook but `ClaudeTranscript.file` finds nothing). So you **cannot reliably
+  read the transcript to name/inspect a live tab** — read what you need from the *hook payload* instead.
+  The `UserPromptSubmit` payload carries `prompt`, `transcript_path`, `session_id`, `cwd`; we ship the
+  `prompt` to name the tab (`Hooks.swift` → `HookServer.onPrompt`). The transcript read (`ClaudeTranscript`)
+  is only a *fallback/upgrade* for established or restored sessions (those have a file). Corollary for
+  **forking**: a fork is `claude --resume <parent> --fork-session`, which needs the parent transcript on
+  disk — so forking a brand-new pure-text session can degrade to a fresh session until it's done tool work.
+  Also: **`find … && echo EXISTS` lies** — `find` exits 0 even with no match; check stdout, not `$?`.
 - **TextMate `end` patterns can backreference the `begin` match** (`end: "(\3)…"` = "close on the same
   quote that opened the string"). A correct engine **re-resolves `end` per region**, substituting `\1`…`\9`
   with the begin's captured text; a *static* compile leaves `\3` dangling → it matches empty (strings close

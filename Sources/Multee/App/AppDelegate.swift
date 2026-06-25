@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var attentionItem: AttentionItem!
     private var pendingFinish: [String: DispatchWorkItem] = [:]   // deferred "finished" per tab (debounce)
     private let finishDebounce: TimeInterval = 2.5                 // wait this long before treating a Stop as "finished"
+    private var titleWork: [String: DispatchWorkItem] = [:]       // deferred Claude-title refresh per tab (debounce)
+    private let titleQueue = DispatchQueue(label: "com.multee.claude-title", qos: .utility)   // off-main transcript reads
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Snappier tooltips (default is ~2s). Registered so it doesn't clobber a user override.
@@ -49,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         wireStatusRouting()
+        refreshAllClaudeTitles()        // name restored Claude tabs that already have a saved conversation id
         installKeyMonitor()
 
         // New File / New Claude / New Terminal actions — shared by the menu, the ⌃⇧` monitor, and the harness.
@@ -135,6 +138,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let old = session.tabStatus[tabID] ?? .idle
                 // Any new event supersedes a deferred "finished" — Claude resumed or is about to ask.
                 self.pendingFinish.removeValue(forKey: tabID)?.cancel()
+                // Keep the tab's title in sync with Claude's own session name (debounced; fires at turn ends).
+                self.scheduleTitleRefresh(tabID: tabID, sessionID: session.id)
 
                 // A turn ending (was working, now idle) is "finished" — but defer it (finishDebounce). Claude
                 // often stops for a beat then keeps going or pops a question (AskUserQuestion / background
@@ -166,10 +171,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HookServer.shared.onClaudeId = { [weak self] tabID, cid in
             guard let self else { return }
             for session in self.model.sessions {
-                if let i = session.tabs.firstIndex(where: { $0.id == tabID }),
-                   session.tabs[i].claudeSessionId != cid {
+                guard let i = session.tabs.firstIndex(where: { $0.id == tabID }) else { continue }
+                // A fork's SessionStart reports the PARENT's id — ignore it, else we'd adopt the parent id
+                // and a Restart would resume the parent in place instead of re-forking (breaks fork-once).
+                // The fork's own id arrives later, on its first prompt.
+                if cid == session.tabs[i].forkParentId { return }
+                if session.tabs[i].claudeSessionId != cid {
                     session.tabs[i].claudeSessionId = cid   // triggers debounced auto-save
                 }
+                self.scheduleTitleRefresh(tabID: tabID, sessionID: session.id)   // (re)load the session's name
+                return
+            }
+        }
+        // Name a Claude tab after its first prompt — captured live from the hook because Claude doesn't write
+        // the session transcript to disk yet. Only while the tab still shows the default label, so the name
+        // reflects the conversation's first message and doesn't churn each turn (the transcript-read upgrade
+        // to Claude's `ai-title`, when one exists, may still replace it later).
+        HookServer.shared.onPrompt = { [weak self] tabID, prompt in
+            guard let self else { return }
+            for session in self.model.sessions {
+                guard let i = session.tabs.firstIndex(where: { $0.id == tabID }) else { continue }
+                if session.tabs[i].kind == .claude, Self.isDefaultClaudeTitle(session.tabs[i].title) {
+                    session.tabs[i].title = Self.cappedName(prompt)
+                }
+                return
             }
         }
         // A tab's process exited (typed `exit`, Claude quit) → flag it so the "Session ended" bar appears.
@@ -182,6 +207,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.settings.$fontSize
             .sink { TerminalStore.shared.applyFont(size: $0) }
             .store(in: &cancellables)
+    }
+
+    /// The placeholder titles a Claude tab carries before it's named after its conversation.
+    private static func isDefaultClaudeTitle(_ s: String) -> Bool { s == "Claude" || s == "Claude (fork)" }
+
+    /// Tidy a raw prompt / transcript title into a one-line tab label, capped so chips don't grow unbounded
+    /// (the chip truncates visually too, and shows the full text in its tooltip).
+    static func cappedName(_ raw: String) -> String {
+        let t = raw
+            .replacingOccurrences(of: "\\n", with: " ").replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.count > 80 ? String(t.prefix(79)) + "…" : t
+    }
+
+    /// On launch, name any restored Claude tab that already has a saved conversation id. The live hooks
+    /// only fire for *running* tabs, so without this a tab restored idle (never reopened) would keep
+    /// showing "Claude" until you interacted with it. Each call is debounced inside `scheduleTitleRefresh`.
+    private func refreshAllClaudeTitles() {
+        for session in model.sessions {
+            for tab in session.tabs where tab.kind == .claude && tab.claudeSessionId != nil {
+                scheduleTitleRefresh(tabID: tab.id, sessionID: session.id)
+            }
+        }
+    }
+
+    /// Refresh a Claude tab's title from its session's name (Claude's `ai-title`), debounced per tab so a
+    /// burst of status pings during a turn collapses to one transcript read ~1.2s after the last one — i.e.
+    /// roughly once per turn end. The read itself is bounded (tail-only) and runs off-main.
+    private func scheduleTitleRefresh(tabID: String, sessionID: String) {
+        titleWork[tabID]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.titleWork[tabID] = nil
+            // Read the id at fire time (it may have been captured after this was scheduled).
+            guard let session = self.model.sessions.first(where: { $0.id == sessionID }),
+                  let i = session.tabs.firstIndex(where: { $0.id == tabID }),
+                  session.tabs[i].kind == .claude,
+                  let cid = session.tabs[i].claudeSessionId else { return }
+            self.titleQueue.async {
+                guard let title = ClaudeTranscript.title(forSessionId: cid) else { return }
+                DispatchQueue.main.async {
+                    // Re-resolve on main and confirm the tab still tracks this same conversation.
+                    guard let session = self.model.sessions.first(where: { $0.id == sessionID }),
+                          let i = session.tabs.firstIndex(where: { $0.id == tabID }),
+                          session.tabs[i].claudeSessionId == cid else { return }
+                    let capped = Self.cappedName(title)
+                    if session.tabs[i].title != capped { session.tabs[i].title = capped }
+                }
+            }
+        }
+        titleWork[tabID] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
     }
 
     /// You're "looking at" a tab only when Multee is frontmost and it's the active tab of the active session.

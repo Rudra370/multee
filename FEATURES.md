@@ -35,6 +35,22 @@ double-fork). `forkParentId` isn't persisted: forking before the fork's first ac
 it matters) then quitting just restores a fresh tab. Verify the (invisible) flag construction with the
 `forkClaude` / `setClaudeId` / `dumpLaunchArgs` harness actions (`TerminalStore.debugLaunchArgs`).
 
+**Claude tabs are named after the session.** Instead of every Claude tab reading "Claude", each shows the
+conversation's name. The **primary, reliable source is the first prompt, captured live from the hook** —
+the `UserPromptSubmit` hook ships the prompt text (base64url, capped) to `HookServer.onPrompt`, and
+`AppDelegate` names the tab from it *while it still shows the default label* (so the name is the first
+message and doesn't churn each turn). This is necessary because **Claude doesn't write the session
+transcript to disk while a (pure-text) session runs** — only after it does tool work — so reading the file
+isn't reliable for a live tab (see the gotcha). As a secondary path, `Backend/ClaudeTranscript` reads the
+transcript when it *does* exist (restored tabs, established sessions) and upgrades the label to Claude's
+own `ai-title` (the `--resume` title), falling back to the first prompt; it **tails 256 KB** for `ai-title`
+and **heads 256 KB** for the first prompt (bounded reads — transcripts reach tens of MB), debounced per tab
+in `scheduleTitleRefresh`, plus a `refreshAllClaudeTitles` pass at launch for restored tabs. The chip
+truncates a long name to a max width with "…" and shows the full text in its tooltip. A tab with no prompt
+yet stays "Claude"; a fork starts "Claude (fork)" and names itself from its first prompt. Captured ids:
+`SessionStart` reports the id too (so a tab resumed at launch is named without a prompt) — status-neutral,
+skipping brand-new "startup" sessions and the parent id a fork reports. Harness: `dumpCid`, `applyTitle`.
+
 ## Terminal — `Terminal/`
 `TerminalStore` caches one SwiftTerm PTY view per tab id (process survives tab/session switches).
 Login-shell PATH via `Env.bootstrap`. Claude launches with `--settings <hooks>` + env; a shared

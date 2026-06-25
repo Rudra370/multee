@@ -49,6 +49,19 @@ enum DebugAction {
                 try? args.joined(separator: " ").write(toFile: arg.isEmpty ? "/tmp/multee-launchargs.txt" : arg,
                                                         atomically: true, encoding: .utf8)
             }
+        case "dumpCid":        // diagnose naming: dump the active tab's captured id + what the title reader sees
+            if let s = model.activeSession, let t = s.activeTab {
+                let cid = t.claudeSessionId
+                let file = cid.flatMap { ClaudeTranscript.file(forSessionId: $0) } ?? "<no file on disk>"
+                let title = cid.flatMap { ClaudeTranscript.title(forSessionId: $0) } ?? "<nil>"
+                let out = "tabTitle=\(t.title)\nkind=\(t.kind)\ncid=\(cid ?? "<nil — hook never captured>")\nforkParent=\(t.forkParentId ?? "-")\nfile=\(file)\nreadTitle=\(title)\n"
+                try? out.write(toFile: arg.isEmpty ? "/tmp/multee-cid.txt" : arg, atomically: true, encoding: .utf8)
+            }
+        case "applyTitle":     // read the active tab's Claude session name (ai-title) from disk + set it as the title
+            if let s = model.activeSession, let i = s.tabs.firstIndex(where: { $0.id == s.activeTabID }),
+               let cid = s.tabs[i].claudeSessionId, let t = ClaudeTranscript.title(forSessionId: cid) {
+                s.tabs[i].title = t.count > 80 ? String(t.prefix(79)) + "…" : t
+            }
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         case "newProject":   // path|git — create a folder (optionally git init) + open it (skips the HID save panel)
             let p = arg.split(separator: "|", maxSplits: 1).map(String.init)
