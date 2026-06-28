@@ -19,6 +19,7 @@ final class StatusBarView: NSView {
     private var cancellables = Set<AnyCancellable>()
     private var sessionObserver: AnyCancellable?
 
+    private let dockerButton = StatusBarView.flatButton()           // left of the branch; visible only when Docker is up
     private let branchButton = StatusBarView.flatButton()
     private let resourceLabel = NSTextField(labelWithString: "")   // mem · CPU (when enabled in settings)
     private var lastMem = 0.0, lastCpu = 0.0
@@ -44,7 +45,7 @@ final class StatusBarView: NSView {
         model.settings.$fontSize.receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.invalidateIntrinsicContentSize(); self.updateBranchIcon(); self.updateShortcutsIcon(); self.render()
+                self.invalidateIntrinsicContentSize(); self.updateBranchIcon(); self.updateDockerIcon(); self.updateShortcutsIcon(); self.render()
             }
             .store(in: &cancellables)
         // Resource monitor: AppDelegate pushes mem/CPU here; show/hide tracks the setting.
@@ -73,6 +74,8 @@ final class StatusBarView: NSView {
 
     private func render() {
         isHidden = model.activeSession == nil
+
+        dockerButton.isHidden = !model.dockerAvailable   // hidden entirely when the daemon isn't reachable
 
         let branch = model.activeSession?.gitBranch
         setTitle(branchButton, branch ?? "")
@@ -247,6 +250,12 @@ final class StatusBarView: NSView {
         border.translatesAutoresizingMaskIntoConstraints = false
         addSubview(border)
 
+        updateDockerIcon()
+        dockerButton.imagePosition = .imageOnly
+        dockerButton.contentTintColor = StatusBarView.fg
+        dockerButton.target = self; dockerButton.action = #selector(dockerClicked)
+        dockerButton.toolTip = "Docker"
+
         updateBranchIcon()
         branchButton.imagePosition = .imageLeading
         branchButton.contentTintColor = StatusBarView.fg
@@ -266,7 +275,7 @@ final class StatusBarView: NSView {
         shortcutsButton.target = self; shortcutsButton.action = #selector(shortcutsClicked)
         shortcutsButton.toolTip = "Keyboard shortcuts"
 
-        let left = NSStackView(views: [branchButton, resourceLabel])
+        let left = NSStackView(views: [dockerButton, branchButton, resourceLabel])
         left.spacing = 12; left.alignment = .centerY
         // Editor items (which hide for non-editor tabs) + the always-visible shortcuts icon at the far right.
         let right = NSStackView(views: editorItems + [shortcutsButton])
@@ -305,6 +314,14 @@ final class StatusBarView: NSView {
     private func updateBranchIcon() {
         let cfg = NSImage.SymbolConfiguration(pointSize: statusFontSize, weight: .regular)
         branchButton.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")?
+            .withSymbolConfiguration(cfg)
+    }
+
+    @objc private func dockerClicked() { DockerHook.toggle?() }
+
+    private func updateDockerIcon() {
+        let cfg = NSImage.SymbolConfiguration(pointSize: statusFontSize + 1, weight: .regular)
+        dockerButton.image = NSImage(systemSymbolName: "shippingbox", accessibilityDescription: "Docker")?
             .withSymbolConfiguration(cfg)
     }
 

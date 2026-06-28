@@ -7,6 +7,10 @@ final class AppModel: ObservableObject {
     @Published var sessions: [Session] = []
     @Published var activeSessionID: String? = nil
     @Published var showSettings: Bool = false
+    /// Whether the Docker daemon is reachable — set by `DockerPanelController`'s availability poll and
+    /// observed by `StatusBarView` to show/hide the bottom-bar Docker icon. The whole feature is hidden
+    /// when false.
+    @Published var dockerAvailable: Bool = false
 
     let settings = Settings()
 

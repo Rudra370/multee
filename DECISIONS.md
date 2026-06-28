@@ -250,6 +250,63 @@ delete an abandoned fork's transcript on New/close (not one promoted via Open as
 
 ---
 
+## Docker
+
+### D24 — Docker panel is the shared bottom dock, not its own window
+**Decision:** The Docker manager mounts into the **same bottom-dock container the quick terminal uses**
+(`CenterViewController.showBottomDock`), and the two **share it** — opening one closes/vacates the other
+(`DockerPanelController.show` ↔ `QuickTerminalController` `vacateDock`). Entry is a status-bar shippingbox
+icon shown only when the daemon is reachable.
+**Why:** A resizable dock under the editor is exactly the surface a service/volume table wants, and it
+already existed. A separate window would duplicate the split/resize/focus plumbing and let Docker + the
+quick terminal fight over screen space. "Share it" was explicitly fine for v1.
+**Rejected:** a standalone Docker window; a sidebar segment (too narrow for a table with actions).
+
+### D25 — Services come from `compose config`, and compose files are user-picked & persisted
+**Decision:** The service list is whatever `docker compose config` defines for the **selected** compose
+file(s) — never derived from `docker ps`. The user picks which compose files are active (a checklist +
+"Add compose file…"), and the selection is saved per-repo in UserDefaults (default = base + auto-override).
+`config --format json` yields both the names and which services have a `build:` context in one call (fallback
+to `config --services`).
+**Why (config not ps):** falling back to `ps` to list services surfaced **leftover/orphan containers** from a
+previous compose revision as phantom services (the "phantom api" bug) — `config` is the source of truth for
+what the project *defines*. **Why user-picked files:** real projects keep several root compose files (dev vs
+prod env overrides); hard-coding "the" compose file works for no one. Saving the pick is just convenience —
+the user attaches once and can switch later. **Why one JSON config call:** it gives names + build-context
+together, so Build/Pull affordances can be gated (below) without a second subprocess.
+**Rejected:** auto-merging every compose file in the root (wrong for prod/dev variants); listing services from
+running containers (phantoms); a second `config` call just for build detection (perf).
+
+### D26 — Live updates via the `docker events` stream; availability re-checked on activate — zero idle polling
+**Decision:** While the panel is open, a single `docker events` subprocess (`DockerEvents`) pushes
+container-state changes (debounced into one `ps`), filtered to the current project; it's **stopped on hide/
+quit** so a closed panel does no work, and **auto-reconnects + re-snapshots** on a daemon restart. Daemon
+*availability* is one `docker info` at startup and on each app-activate — no timer.
+**Why:** Performance is the #1 bar (see the Performance section). Polling `ps` on an interval would burn CPU
+at idle for a panel that's usually closed; the event stream is the event-driven equivalent of FSEvents (D5).
+A socket drop is observable, so reconnect+re-snapshot replaces the need for a safety-net poll. App-activate is
+the natural availability re-check because you start/stop Docker in another app. The cumulative `dockerCmdCount`
+in the state dump is the guarantee's assertion handle — it must stay flat while idle.
+**Rejected:** a 15 s fallback refresh timer (the stream drop is already observable, so it's pure idle cost);
+polling availability on a timer.
+
+### D27 — Actions run in a watchable PTY; Build/Pull/port affordances are gated so they're never no-ops
+**Decision:** Every compose action runs in a real PTY (`TerminalStore.commandView`, `__cmd__` id) shown in a
+peek overlay (live build/pull output, auto-revealed on failure, promotable to a tab), rather than captured
+output. Per-service **Build/Rebuild** show only when the service has a `build:` context, **Pull** only when it
+doesn't (`!hasBuild` ⟹ it has an `image:`), and the project Build/Pull buttons + the images cluster hide when
+nothing qualifies. Published ports become **clickable links**; internal-only ports don't.
+**Why:** `docker compose up --build` / `pull` produce long streaming output a user wants to watch (and to read
+when it fails) — a PTY gives that for free and is consistent with the rest of the app. Gating means the row
+never shows a button that would silently do nothing (build on an image-only service, pull on a build-only one,
+"open" on an unpublished port) — the affordance present is always the one that applies. The per-row spinner
+(`actingService`) gives immediate feedback and blocks a double-fire while one action's PTY is in flight.
+**Rejected:** capturing action output into a styled log view (reinvents the terminal, loses streaming); showing
+Build+Pull on every row (no-op buttons confuse); a hidden modifier (⌥-click) for rebuild — the user wanted the
+options visible as buttons.
+
+---
+
 ## How we work (process)
 
 ### D17 — User tests the dev build before we ship

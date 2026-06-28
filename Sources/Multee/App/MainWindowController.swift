@@ -6,12 +6,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let palette: CommandPaletteController
     private let quickTerm: QuickTerminalController
     private let quickAsk: QuickAskController
+    private let docker: DockerPanelController
 
     init(model: AppModel) {
         let workspace = WorkspaceViewController(model: model)
         self.palette = CommandPaletteController(model: model)
         self.quickTerm = QuickTerminalController(model: model)
         self.quickAsk = QuickAskController(model: model)
+        self.docker = DockerPanelController(model: model)
 
         // Root container: update banner (top, collapses to 0 height when hidden) + workspace. The status
         // bar lives at the bottom of the workspace's *center* pane (CenterViewController), not here, so it
@@ -62,6 +64,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // ⌘/ quick ask: a centered overlay (embedded interactive fork) over the same root.
         quickAsk.attach(root: root)
         QuickAskHook.toggle = { [weak quickAsk] in quickAsk?.toggle() }
+
+        // Docker panel: a bottom-dock panel (shared with the quick terminal), toggled from the status-bar
+        // icon. The controller polls daemon availability to drive the icon's visibility; the action peek
+        // overlay mounts into the same root.
+        docker.attach(root: root)
+        DockerHook.toggle = { [weak docker] in docker?.toggle() }
     }
 
     @available(*, unavailable)

@@ -5,6 +5,19 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.17] - 2026-06-28
+
+### Added
+- **Docker** — manage a project's Docker Compose stack right inside Multee. A new **box icon** in the
+  bottom bar (it appears only when Docker is running) opens a panel under your editor listing the
+  project's **services** with their status, published **ports**, and replica counts. **Start, stop,
+  restart, build, pull,** or **rebuild & start** a single service or the whole stack; open a service's
+  **logs** or a **shell** inside its container as a tab; and **click a published port to open it in your
+  browser**. A **Volumes** tab shows each volume, what's using it, and its size on demand, and lets you
+  delete unused ones. Projects with **multiple compose files** (e.g. dev vs prod) are supported — pick
+  which file(s) to use and Multee remembers it per project. Everything updates live and event-driven, so
+  a closed or idle panel costs nothing.
+
 ## [0.1.16] - 2026-06-25
 
 ### Added

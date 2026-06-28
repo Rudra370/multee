@@ -58,7 +58,15 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "tabRestart", "tabToTerminal", "newProject:/tmp/x|git",
               "forkClaude", "setClaudeId:<cid>", "dumpLaunchArgs:/tmp/x.txt", "applyTitle",
               "dumpCid:/tmp/x.txt", "quickAskShow", "quickAskHide", "quickAskNew", "quickAskMode:context|blank",
-              "quickAskSend:<q>", "quickAskOpenAsTab", "dumpQuickAsk:/tmp/x.txt"] }
+              "quickAskSend:<q>", "quickAskOpenAsTab", "dumpQuickAsk:/tmp/x.txt",
+              "dockerToggle", "dockerForceAvailable:1|0", "dockerRefresh", "dockerPick:compose.yaml",
+              "dockerPickerShow", "dockerTab:volumes", "dockerAddFile:/path/compose.yaml",
+              "dockerStart:web", "dockerStop:web", "dockerRestart:web", "dockerSvcBuild:web",
+              "dockerStartBuild:web", "dockerSvcPull:web", "dockerLogs:web", "dockerExec:web",
+              "dockerActing:web", "dockerOpenPort:8080", "dockerUp", "dockerStopAll", "dockerRestartAll",
+              "dockerBuild", "dockerPull", "dockerDown", "dockerConfirm:ok", "dockerLogsAll",
+              "dockerOverlayShow", "dockerOverlayOpenAsTab", "dockerVolumes", "dockerVolSize:name",
+              "dockerVolRemove:name"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -145,9 +153,13 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   attention logic, settings/update wiring), `MainWindowController.swift` (window + banner + workspace),
   `AttentionItem`/`AttentionMenu` (menu-bar `»` status item + its custom-view dropdown).
 - `Model/` — `AppModel`, `Session`, `Tab`, `Settings` (Combine), `Persistence` (JSON snapshot).
-- `Backend/` — `Shell`/`Env`, `Git` (status + actions), `Search` (project-wide `git grep`).
+- `Backend/` — `Shell`/`Env`, `Git` (status + actions), `Search` (project-wide `git grep`), `Docker`
+  (shells out to the `docker` CLI — no dep: compose-file discovery, `config`/`ps`/`volume` parsing, actions,
+  and `DockerEvents` streaming `docker events`).
 - `Terminal/` — `TerminalStore` (PTY per tab + scroll; plus one **quick-terminal** PTY per session,
-  `quickView(sessionID:cwd:)` under a reserved `__quick__<sid>` id), `HookServer` (status listener), `Hooks`.
+  `quickView(sessionID:cwd:)` under a reserved `__quick__<sid>` id; and **command PTYs** under a reserved
+  `__cmd__` id for one-shot docker actions — `commandView`/`promoteCommand`/`onCommandExit`), `HookServer`
+  (status listener), `Hooks`.
 - `UI/` — `WorkspaceViewController` (split + sidebar), `CenterViewController` (tab bar + content),
   `TabBarView`, `FileTree` (virtualized tree + a toolbar row: new file / new folder / collapse-all,
   with **inline in-tree naming** like VS Code), `RepoStore` (one per-session git poller — single
@@ -165,6 +177,13 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `CenterViewController`). The header (`QuickTerminalPanel`) is one composite the controller re-parents between the
   three containers; `TerminalStore` owns the shell PTYs (`__quick__<sid>::<n>`) and `promoteQuick` for open-as-tab.
   `NewProject` is the ⌘⇧N "New Project" save panel (name + optional `git init` checkbox → create folder → open).
+  `DockerPanel` (`DockerPanelController` + `DockerPanel` + `DockerServiceRow`/`DockerVolumeRow`/
+  `DockerActionOverlay`/`ComposeFilePickerViewController`) is the **Docker bottom dock** — toggled by the
+  status-bar shippingbox icon (shown only when the daemon is up), **sharing the bottom dock with the quick
+  terminal**. Lists the selected compose file(s)' services (state dot, clickable ports, gated Build/Pull,
+  per-row spinner) and volumes; actions run in a watchable `__cmd__` PTY with a peek overlay. `HoverRow`/
+  `HoverIconButton`/`ChipButton` (in `DockerPanel.swift`) are the zebra-striped hover rows + hover-brightening
+  icons reused by both tables. See DECISIONS.md D24–D27.
   `QuickAsk` (`QuickAskController` + `QuickAskPanel`) is the ⌘/ Quick Ask — a centered overlay hosting a **real
   interactive fork** (`claude --resume <activeCid> --fork-session`) of the active chat so a side question reuses
   its warm prompt cache (fast); Context/Blank toggle, New, Open as Tab (the fork PTY is keyed by a real tab id,

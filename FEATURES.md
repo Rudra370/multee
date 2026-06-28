@@ -399,6 +399,73 @@ established before parking it:
   "nudge" (grow past then back) to force a full re-render; or a redesign that doesn't resize the Claude
   terminal (the user rejected an overlay-style bottom panel).
 
+## Docker — `Backend/Docker`, `UI/DockerPanel`, `UI/StatusBar`, `Terminal/TerminalStore`
+A VS Code-style **bottom-dock panel** to manage the active repo's Docker Compose stack — services,
+their state/ports/logs/shell, and volumes. Entry point is a **shippingbox icon** at the bottom-left of
+the status bar (`UI/StatusBar`, left of the git branch) that **only appears when the Docker daemon is
+reachable** (`AppModel.dockerAvailable`); clicking it toggles the dock (`DockerHook.toggle`). The dock is
+the **same bottom container the quick terminal uses** — only one occupies it at a time, so each yields to
+the other (`DockerPanelController.show` closes a bottom quick terminal; the quick terminal calls
+`vacateDock()`); see D24.
+
+**Availability is event-driven, not polled** (perf #1): one `docker info` off-main at startup and on every
+app-activate (you typically start/stop Docker in another app, so returning focus is the natural re-check),
+never overlapping. No idle timer.
+
+**Compose files are user-picked, persisted per-repo.** `Docker.discoverComposeFiles` scans the repo **root**
+(no subfolders) and classifies the standard names + the auto-`override` + env variants (`compose.prod.yaml`);
+a chevron picker (`ComposeFilePickerViewController`) is a checklist with an **"Add compose file…"** escape
+hatch (`NSOpenPanel` scoped to the repo — files outside are rejected) for odd-named/sub-folder files. The
+selection persists in UserDefaults per repo (`docker.compose.selection::<repo>`), defaulting to base+override.
+This handles the common multi-file case (a dev vs prod compose in one root); see D25.
+
+**Services come only from `docker compose config`, never `ps`** (a `ps` fallback surfaced leftover orphan
+containers from a previous compose version as phantom services). `Docker.services` reads `config --format json`
+for the defined service names **and** which have a `build:` context (`hasBuild`), with a fallback to
+`config --services` if the JSON won't parse; live state/ports/replica-count come from `ps -a`. Each row
+(`DockerServiceRow`) shows a **state dot** (filled green = running, **hollow ring = stopped**, yellow =
+starting — colour-blind-safe by shape too), the name, an `×N` replica badge when scaled, **ports**, and
+state-driven action buttons with **logs always rightmost** (the one button every row has → a stable column).
+Buttons: image action (**Build** if `hasBuild`, else **Pull** — gated so neither is a no-op), lifecycle
+(Start / **Rebuild&start** `up --build` when stopped+buildable / Stop / Restart), **Shell** (running only,
+`compose exec <svc> sh` → a terminal tab), Logs. **Published ports are clickable links** → open
+`http://localhost:<host-port>` (`hostPort` parses `15432->5432` and `0.0.0.0:15432->5432/tcp`); internal-only
+ports stay plain text. While a service's action runs, **its row shows a spinner** instead of buttons
+(`actingService`, cleared on the action's PTY exit) so it can't be double-fired.
+
+**Project-wide actions** sit in the header, **grouped into clusters with dividers**: lifecycle (Up · Stop ·
+Restart · Down) │ images (Build · Pull, the cluster hidden when nothing is buildable/pullable) │ All-logs.
+`down` confirms first (recoverable). The Services/Volumes segmented toggle, a spinner, the peek eye, and
+refresh are on the right.
+
+**Actions run in a watchable PTY**, not captured output — `runAction` spawns a `TerminalStore.commandView`
+(reserved `__cmd__` id) running `docker compose …`; a **peek overlay** (`DockerActionOverlay`) hosts the live
+view (build/pull output streams), auto-revealed on a **non-zero exit**, with **Open as Tab** (`promoteCommand`
+re-keys the PTY into a real terminal tab). The **event stream drives the dots** — `DockerEvents` streams
+`docker events` (NDJSON) while the panel is open (stopped on hide/quit → a closed panel does zero work),
+filters to the current project, debounces bursts into one `ps`, and auto-reconnects + re-snapshots on a
+daemon restart. Logs open as a roomy **terminal tab** (`compose logs -f`, per-service or all interleaved).
+
+**Volumes tab** (`DockerVolumeRow`): label-scoped to the project (host-wide — volumes persist across `down`),
+each row showing the name, a teal **"in use"** badge (from the `dangling=true` filter), the **service(s) that
+mount it** (`volumeUsers`, one `ps --no-trunc`), an **on-demand size** (`system df -v`, a clickable chip → the
+scan is expensive so never in the list refresh), and a **trash** that's **dimmed+disabled while in use** (kept
+in place so the size column stays aligned) and a strong confirm when removable.
+
+**Look & feel:** rows are a real table — fixed columns, **zebra striping** (`HoverRow.baseBackground`),
+**hover highlight**, column **headers** with a hairline separator, and **hover-brightening icon buttons**
+(`HoverIconButton`; disabled buttons drop the hand cursor). The `size` control is a pill **`ChipButton`** so
+it reads as tappable, not a label.
+
+**Verification:** the panel is standard AppKit so it self-screenshots (dots, ports, badges, header, stripes);
+the action PTY output is SwiftTerm so it's buffer-verified via the overlay's `screenText`, not the shot. Hover
+states and the click→browser open are user-verified (no synthetic mouse / browser launch in CI) — the port
+URL is asserted from the `links` field in the docker state dump instead. Driven by `docker*` harness actions
+(`dockerToggle`/`Refresh`/`Pick`/`Start`/`Stop`/`Build`/`Pull`/`StartBuild`/`Logs`/`Exec`/`Volumes`/`VolSize`/
+`VolRemove`/`Acting`/`OpenPort`/…, `dockerForceAvailable` to fake the daemon, `dockerConfirm:ok` to answer the
+modal) with a `docker` block in the state dump (available, services + their state/ports/links, volumes,
+`actingService`, event-stream up, cumulative `dockerCmdCount` for the no-idle-poll guarantee).
+
 ## Settings & updates — `UI/SettingsWindow`, `UI/Updates`
 Settings window (native controls) bound to `Settings`. Update checker hits the GitHub latest-release
 API; a top banner offers Homebrew self-update or Download. **Install now** runs

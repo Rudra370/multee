@@ -315,6 +315,7 @@ final class QuickTerminalController: NSObject, NSWindowDelegate {
 
     // Bottom dock
     private func presentBottom() {
+        DockerPanelController.current?.vacateDock()   // share-it: Docker yields the bottom dock to the quick terminal
         guard let container = CenterViewController.current?.showBottomDock() else { return }
         mountChrome(in: container)
     }

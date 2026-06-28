@@ -257,15 +257,23 @@ enum Git {
 
     private static func fsFiles(_ repo: String, _ expand: Bool) -> [FileEntry] {
         var out: [FileEntry] = []
-        // Resolve symlinks (e.g. /tmp -> /private/tmp) so relative-path stripping works.
-        let base = URL(fileURLWithPath: repo).resolvingSymlinksInPath()
+        // Canonicalize the base with realpath so it matches the symlink-resolved paths
+        // `contentsOfDirectory` returns. `resolvingSymlinksInPath()` is unreliable here — it leaves
+        // /tmp unresolved while the enumerated children come back under /private/tmp, so the
+        // prefix-strip would be off by "/private" and nest every file under a phantom repo-name folder.
+        let basePath: String = {
+            var buf = [Int8](repeating: 0, count: Int(PATH_MAX))
+            return realpath(repo, &buf) != nil ? String(cString: buf)
+                                               : URL(fileURLWithPath: repo).resolvingSymlinksInPath().path
+        }()
+        let base = URL(fileURLWithPath: basePath)
         func walk(_ dir: URL) {
             guard let items = try? FileManager.default.contentsOfDirectory(
                 at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: []) else { return }
             for url in items {
                 let name = url.lastPathComponent
                 if name == ".git" { continue }
-                let rel = String(url.path.dropFirst(base.path.count + 1))
+                let rel = String(url.path.dropFirst(basePath.count + 1))
                 let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                 if isDir {
                     if name == "node_modules" && !expand {

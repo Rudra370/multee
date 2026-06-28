@@ -143,6 +143,37 @@ final class TerminalStore {
     }
 
 
+    // MARK: Command terminals (one-shot docker actions, watchable + promotable to a tab)
+
+    /// Reserved id prefix for action PTYs (a `docker compose up/down/...` run shown in the peek overlay).
+    static let commandPrefix = "__cmd__"
+    /// Fires when a command PTY's process exits, with its exit code — drives auto-show-on-failure.
+    var onCommandExit: ((_ id: String, _ code: Int32?) -> Void)?
+
+    /// Spawn a PTY that runs a one-shot command (a docker compose action), keyed by `id`. Reuses a live
+    /// view for the same id. Tab-terminal tint so it looks right when promoted to a tab.
+    func commandView(id: String, exe: String, args: [String], cwd: String) -> MulteeTerminalView {
+        installScrollMonitorIfNeeded()
+        if let v = views[id] { return v }
+        let tv = MulteeTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 300))
+        tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        tv.nativeBackgroundColor = NSColor(calibratedWhite: 0.118, alpha: 1)
+        tv.nativeForegroundColor = NSColor(calibratedWhite: 0.83, alpha: 1)
+        tv.processDelegate = self
+        tv.startProcess(executable: exe, args: args, environment: Env.array(), execName: nil, currentDirectory: cwd)
+        views[id] = tv
+        return tv
+    }
+
+    /// Promote a command PTY into a tab (re-key its live view; output + scrollback survive). The caller
+    /// adds a `.terminal` Tab with `tabID`, which `CenterViewController` renders by reusing this view.
+    func promoteCommand(commandID: String, tabID: String) {
+        guard let v = views[commandID] else { return }
+        views[commandID] = nil
+        v.removeFromSuperview()
+        views[tabID] = v
+    }
+
     // MARK: Quick terminals (one or more per session, never tabs)
 
     /// Reserved id prefix for a session's quick-access terminals (the ⌃` shells). Distinct from any tab
@@ -271,7 +302,9 @@ extension TerminalStore: LocalProcessTerminalViewDelegate {
         // May arrive off the main thread; do the (main-only) `views` lookup + notify on main.
         DispatchQueue.main.async { [weak self] in
             guard let self, let id = self.views.first(where: { $0.value === source })?.key else { return }
-            if id.hasPrefix(Self.quickPrefix) {
+            if id.hasPrefix(Self.commandPrefix) {
+                self.onCommandExit?(id, exitCode)   // action PTY → auto-show overlay on non-zero
+            } else if id.hasPrefix(Self.quickPrefix) {
                 self.onQuickExit?(id)   // full quick id; the controller maps it back to a session + list
             } else {
                 self.onExit?(id)

@@ -71,6 +71,40 @@ enum DebugAction {
         case "dumpQuickAsk":   // panel state + launch args (proves fork flags) + the terminal's rendered text
             let dump = QuickAskController.current?.debugDump() ?? "<no quick ask>"
             try? dump.write(toFile: arg.isEmpty ? "/tmp/multee-quickask.txt" : arg, atomically: true, encoding: .utf8)
+        case "dockerToggle":   DockerHook.toggle?()                                 // status-bar Docker icon → bottom dock
+        case "dockerForceAvailable":   // 1|0 = force the daemon available/unavailable (test the icon show/hide path)
+            DockerPanelController.current?.debugForceAvailable(arg == "1" ? true : (arg == "0" ? false : nil))
+        case "dockerPick":     DockerPanelController.current?.togglePick(arg)       // toggle a compose file in the selection
+        case "dockerPickerShow": DockerPanelController.current?.debugShowPicker()   // open the picker popover (for the screenshot)
+        case "dockerRefresh":  DockerPanelController.current?.debugRefresh()        // reload the service list (config + ps)
+        case "dockerTab":      DockerPanelController.current?.debugSetTab(arg == "volumes" ? 1 : 0)  // Services|Volumes toggle
+        case "dockerStart":    DockerPanelController.current?.runServiceAction(arg, .start)   // per-service Start (up -d <svc>)
+        case "dockerStop":     DockerPanelController.current?.runServiceAction(arg, .stop)
+        case "dockerRestart":  DockerPanelController.current?.runServiceAction(arg, .restart)
+        case "dockerUp":       DockerPanelController.current?.runProjectAction(.up)
+        case "dockerStopAll":  DockerPanelController.current?.runProjectAction(.stop)
+        case "dockerRestartAll": DockerPanelController.current?.runProjectAction(.restart)
+        case "dockerDown":     DockerPanelController.current?.runProjectAction(.down)         // light confirm → DockerConfirm
+        case "dockerBuild":    DockerPanelController.current?.runProjectAction(.build)        // build all images (no start)
+        case "dockerSvcBuild": DockerPanelController.current?.runServiceAction(arg, .build)   // build one service (no start)
+        case "dockerStartBuild": DockerPanelController.current?.runServiceAction(arg, .startBuild)  // up -d --build <svc>
+        case "dockerPull":     DockerPanelController.current?.runProjectAction(.pull)         // pull all images
+        case "dockerSvcPull":  DockerPanelController.current?.runServiceAction(arg, .pull)    // pull one service's image
+        case "dockerActing":   DockerPanelController.current?.debugSetActing(arg.isEmpty ? nil : arg)  // force a row's spinner (screenshot)
+        case "dockerOpenPort": DockerPanelController.current?.openPort(arg)                  // open http://localhost:<host>
+        case "dockerConfirm":  DockerConfirm.debugResponse = (arg == "ok")                    // canned answer for the confirm dialog
+        case "dockerOverlayShow":   DockerPanelController.current?.debugShowOverlay()         // reveal the action peek overlay
+        case "dockerOverlayOpenAsTab": DockerPanelController.current?.debugOpenAsTab()        // promote the action PTY to a tab
+        case "dockerLogs":     DockerPanelController.current?.openLogs(service: arg)          // per-service logs → new tab
+        case "dockerLogsAll":  DockerPanelController.current?.openLogs(service: nil)          // all-services logs → new tab
+        case "dockerExec":     DockerPanelController.current?.openExec(service: arg)          // shell into a running container → new tab
+        case "dockerAddFile":  DockerPanelController.current?.addComposeFile(path: arg)       // add an odd-named compose file (bypasses the open panel)
+        case "dockerVolumes":  DockerPanelController.current?.loadVolumes()                   // (re)load the volume list
+        case "dockerVolSize":  DockerPanelController.current?.loadVolumeSize(arg)             // compute one volume's size
+        case "dockerVolRemove": DockerPanelController.current?.removeVolume(arg)              // delete a volume (strong confirm)
+        case "dumpDocker":     // availability + panel/dock state
+            let dump = DockerPanelController.current?.debugDump() ?? "<no docker>"
+            try? dump.write(toFile: arg.isEmpty ? "/tmp/multee-docker.txt" : arg, atomically: true, encoding: .utf8)
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         case "newProject":   // path|git — create a folder (optionally git init) + open it (skips the HID save panel)
             let p = arg.split(separator: "|", maxSplits: 1).map(String.init)
@@ -197,6 +231,7 @@ enum DebugState {
         if let s = SearchViewController.currentTab?.debugState() { root["searchTab"] = s }
         if let a = AttentionItem.current?.debugState() { root["attention"] = a }
         if let q = QuickTerminalController.current?.debugState() { root["quickTerminal"] = q }
+        if let d = DockerPanelController.current?.debugStateDict() { root["docker"] = d }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
         root["branch"] = model.activeSession?.gitBranch ?? NSNull()
         if let ed = ActiveEditor.current {
