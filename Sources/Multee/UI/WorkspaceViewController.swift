@@ -106,6 +106,7 @@ final class SidebarViewController: NSViewController {
     private var sessionsCollapsed = UserDefaults.standard.bool(forKey: "sessionsCollapsed")
     private var expandedDividerPos: CGFloat = 0
     private var didApplyInitialCollapse = false
+    private var collapseDriver: Timer?   // in-flight collapse/expand glide (cancelled on re-toggle)
 
     init(model: AppModel) {
         self.model = model
@@ -411,12 +412,23 @@ final class SidebarViewController: NSViewController {
         let total = split.bounds.height
         guard total > 0 else { return }
         let headerH: CGFloat = 38
+        let target: CGFloat
         if sessionsCollapsed {
             expandedDividerPos = split.subviews.first?.frame.height ?? total * 0.62
-            split.setPosition(total - headerH, ofDividerAt: 0)
+            target = total - headerH
         } else {
-            let pos = expandedDividerPos > 0 ? expandedDividerPos : total * 0.62
-            split.setPosition(pos, ofDividerAt: 0)
+            target = expandedDividerPos > 0 ? expandedDividerPos : total * 0.62
+        }
+        collapseDriver?.invalidate()
+        // Safe to drive the divider per frame here: both panes are plain AppKit (file tree + sessions
+        // list), no terminal to reflow (cf. the bottom dock, which can't — D28).
+        let current = split.subviews.first?.frame.height ?? target
+        if animated {
+            collapseDriver = Motion.drive(Motion.quick, from: current, to: target) { [weak split] pos in
+                split?.setPosition(pos, ofDividerAt: 0)
+            }
+        } else {
+            split.setPosition(target, ofDividerAt: 0)
         }
     }
 

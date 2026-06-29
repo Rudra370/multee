@@ -142,4 +142,24 @@ enum Motion {
             layer.add(a, forKey: "motion.slideY")
         }
     }
+
+    /// Eased per-frame interpolation from `from`→`to`, calling `step` each tick. The escape hatch for
+    /// things AppKit's animator can't express reliably — notably `NSSplitView.setPosition`. Use ONLY where
+    /// the per-frame work is cheap: panes of plain AppKit views are fine, but NEVER a split pane holding a
+    /// terminal (it reflows/SIGWINCHes every frame — that's why the bottom dock uses `slideY` instead; D28).
+    /// Returns the timer so a caller can cancel; jumps to `to` under Reduce Motion.
+    @discardableResult
+    static func drive(_ duration: TimeInterval = quick, from: Double, to: Double,
+                      step: @escaping (Double) -> Void, done: @escaping () -> Void = {}) -> Timer? {
+        if reduceMotion || duration <= 0 { step(to); done(); return nil }
+        let start = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { t in
+            let p = min(1, (CACurrentMediaTime() - start) / duration)
+            let eased = 1 - pow(1 - p, 3)   // cubic ease-out
+            step(from + (to - from) * eased)
+            if p >= 1 { t.invalidate(); done() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
+    }
 }

@@ -983,17 +983,26 @@ final class DockerPanel: NSView {
     }
 
     func renderServices(_ services: [Docker.ComposeService], acting: String?) {
-        servicesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (i, svc) in services.enumerated() {
-            let row = DockerServiceRow(service: svc, acting: svc.name == acting)
-            row.onAction = { [weak self] name, verb in self?.onServiceAction?(name, verb) }
-            row.onLogs = { [weak self] name in self?.onServiceLogs?(name) }
-            row.onExec = { [weak self] name in self?.onServiceExec?(name) }
-            row.onOpenPort = { [weak self] host in self?.onOpenPort?(host) }
-            row.baseBackground = (i % 2 == 1) ? DockerPanel.stripe : nil
-            row.translatesAutoresizingMaskIntoConstraints = false
-            servicesStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: servicesStack.widthAnchor).isActive = true
+        let existing = servicesStack.arrangedSubviews.compactMap { $0 as? DockerServiceRow }
+        // Fast path: same services in the same order (the usual live-event case — one service flips state).
+        // Reuse the rows in place so the status dot can crossfade; any structural change (add/remove/reorder)
+        // falls back to the full rebuild below.
+        if existing.count == services.count, !existing.isEmpty,
+           zip(existing, services).allSatisfy({ $0.serviceName == $1.name }) {
+            for (row, svc) in zip(existing, services) { row.refresh(service: svc, acting: svc.name == acting) }
+        } else {
+            servicesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            for (i, svc) in services.enumerated() {
+                let row = DockerServiceRow(service: svc, acting: svc.name == acting)
+                row.onAction = { [weak self] name, verb in self?.onServiceAction?(name, verb) }
+                row.onLogs = { [weak self] name in self?.onServiceLogs?(name) }
+                row.onExec = { [weak self] name in self?.onServiceExec?(name) }
+                row.onOpenPort = { [weak self] host in self?.onOpenPort?(host) }
+                row.baseBackground = (i % 2 == 1) ? DockerPanel.stripe : nil
+                row.translatesAutoresizingMaskIntoConstraints = false
+                servicesStack.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: servicesStack.widthAnchor).isActive = true
+            }
         }
         let active = modeSeg.selectedSegment == 0
         emptyLabel.isHidden = !active || !services.isEmpty
@@ -1193,7 +1202,9 @@ final class DockerVolumeRow: HoverRow {
 /// ports (fixed column) · state-driven action buttons (Start when stopped; Shell + Stop + Restart when
 /// up). Buttons route through `onAction(serviceName, verb)`.
 final class DockerServiceRow: HoverRow {
-    private let service: Docker.ComposeService
+    private var service: Docker.ComposeService
+    private var dot: NSView?                       // kept so `refresh` can crossfade the status dot
+    var serviceName: String { service.name }
     var onAction: ((String, ServiceVerb) -> Void)?
     var onLogs: ((String) -> Void)?
     var onExec: ((String) -> Void)?
@@ -1203,9 +1214,18 @@ final class DockerServiceRow: HoverRow {
         self.service = service
         super.init(frame: .zero)
         wantsLayer = true
+        heightAnchor.constraint(equalToConstant: 28).isActive = true
+        build(acting: acting)
+    }
+
+    /// (Re)build the row's contents for the current `service`. Called by `init` and `refresh` — the row
+    /// instance is reused across live-event re-renders so the status dot can crossfade (see `refresh`).
+    private func build(acting: Bool) {
+        subviews.forEach { $0.removeFromSuperview() }
 
         let dot = NSView()
         dot.wantsLayer = true
+        self.dot = dot
         dot.layer?.cornerRadius = 4
         let dotColor = DockerServiceRow.color(for: service.state)
         if service.state == .stopped {        // hollow ring so state reads without relying on colour alone
@@ -1303,7 +1323,6 @@ final class DockerServiceRow: HoverRow {
 
         addSubview(dot); addSubview(nameGroup); addSubview(ports); addSubview(trailing)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 28),
             dot.widthAnchor.constraint(equalToConstant: 8),
             dot.heightAnchor.constraint(equalToConstant: 8),
             dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -1318,6 +1337,38 @@ final class DockerServiceRow: HoverRow {
             trailing.centerYAnchor.constraint(equalTo: centerYAnchor),
             ports.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -12),
         ])
+    }
+
+    /// Reuse this row for an updated service (same name + position): rebuild its contents, and when the
+    /// run state changed, crossfade the status dot from its old appearance to the new one.
+    func refresh(service: Docker.ComposeService, acting: Bool) {
+        let fromColor = DockerServiceRow.color(for: self.service.state)
+        let fromRing = self.service.state == .stopped
+        let changed = self.service.state != service.state
+        self.service = service
+        build(acting: acting)                                  // fresh dot already at the NEW colour
+        if changed { crossfadeDot(fromColor: fromColor, fromRing: fromRing) }
+    }
+
+    /// Animate the freshly-built dot from its previous colour/shape to the new one (the model is already
+    /// the new value, so we only supply the `from`). Ring↔fill animates border alongside the fill.
+    private func crossfadeDot(fromColor: NSColor, fromRing: Bool) {
+        guard let layer = dot?.layer, !Motion.reduceMotion else { return }
+        let bg = CABasicAnimation(keyPath: "backgroundColor")
+        bg.fromValue = (fromRing ? NSColor.clear : fromColor).cgColor
+        bg.toValue = layer.backgroundColor
+        bg.duration = Motion.micro; bg.timingFunction = Motion.easeOut
+        layer.add(bg, forKey: "motion.dotBG")
+        let bw = CABasicAnimation(keyPath: "borderWidth")
+        bw.fromValue = fromRing ? 1.5 : 0
+        bw.toValue = layer.borderWidth
+        bw.duration = Motion.micro; bw.timingFunction = Motion.easeOut
+        layer.add(bw, forKey: "motion.dotBW")
+        let bc = CABasicAnimation(keyPath: "borderColor")
+        bc.fromValue = fromColor.cgColor
+        bc.toValue = layer.borderColor ?? NSColor.clear.cgColor
+        bc.duration = Motion.micro; bc.timingFunction = Motion.easeOut
+        layer.add(bc, forKey: "motion.dotBC")
     }
 
     @available(*, unavailable)

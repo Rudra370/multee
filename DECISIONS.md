@@ -325,6 +325,13 @@ one place. The rule it enforces: animate only GPU-composited **layer** propertie
 - **Tab bar** (`TabBarView`): a persistent `selectionPill` behind the chips slides to the active chip's frame on
   selection change (jumps on tab add/remove/reorder, since chip positions shift); the active chip goes transparent
   so the pill is its only highlight. **Docker action peek** overlay reuses `presentOverlay`/`dismissOverlay`.
+- **SESSIONS panel** collapse/expand glides the sidebar divider via `Motion.drive` (eased per-frame `setPosition`).
+  This is the *one* place a per-frame divider drive is OK — both panes are plain AppKit (file tree + sessions
+  list); the rule the dock taught us only forbids it when a pane holds a terminal.
+- **Docker status dot** crossfades on state change: `renderServices` keeps the existing `DockerServiceRow`s when the
+  service set/order is unchanged (the common live-event case) and calls `refresh` to rebuild contents + crossfade
+  the dot from its old colour/shape; any structural change falls back to the proven full rebuild. (Row insert/remove
+  animation was *not* done — it'd mean diffing the whole list, more risk than the payoff for a rare case.)
 **Why:** the first cut animated the `NSSplitView` divider per frame — every step relaid out the split and
 reflowed **both** SwiftTerm terminals (PTY `SIGWINCH` ×~24 in 200 ms), so it stuttered *and* burned CPU (the
 #1 anti-goal). Transforms are GPU-composited: zero per-frame layout, zero PTY churn. The async close then

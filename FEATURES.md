@@ -481,11 +481,13 @@ centered quick terminal) present/dismiss with a scrim fade + box scale 0.96↔1 
 **Docker rows** crossfade their hover background/icon tint; **icon buttons** (`PointerButton`) scale to 0.92 while
 pressed. **Tab bar** has a `selectionPill` that slides to the active chip on switch (jumps on add/remove/reorder;
 the active chip is transparent so the pill is its sole highlight). The **Docker action peek overlay** fades + pops
-in/out. Reduce Motion → everything instant. See DECISIONS D28 (why transforms, not layout; the shared-dock
-empty-on-close contract; the layer-backing/KVC gotchas). Hover/press/slide *feel* is HID-verified — the harness
-can't synthesize mouse.
+in/out. The **SESSIONS panel** collapse/expand glides the sidebar divider (`Motion.drive` — safe per-frame here,
+no terminal in either pane). The **Docker status dot** crossfades green-fill↔grey-ring when a service flips state:
+`renderServices` reuses rows in place on a same-shape re-render (the usual live-event case) so the dot can animate,
+falling back to a full rebuild on any structural change. Reduce Motion → everything instant. See DECISIONS D28 (why
+transforms, not layout; the shared-dock empty-on-close contract; the layer-backing/KVC gotchas). Hover/press/slide
+*feel* is HID-verified — the harness can't synthesize mouse.
 
 ## Deferred (v0.1.1 polish)
-Collapsible SESSIONS panel; drag-reorder tabs. Motion not yet done: Docker state-dot crossfade + service/volume row
-insert/remove — both need row-diffing (`renderServices` rebuilds rows), and the gain (Docker-only, on state change)
-didn't justify reworking a just-shipped hot path. None are functional blockers.
+Drag-reorder tabs. Motion not yet done: Docker service/volume row **insert/remove** animation (the dot crossfade
+reuses rows, but added/removed services still go through a full rebuild). None are functional blockers.
