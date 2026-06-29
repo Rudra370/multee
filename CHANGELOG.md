@@ -5,6 +5,27 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.18] - 2026-06-29
+
+### Added
+- **Automatic update checks** — Multee now looks for new versions on its own: shortly after launch, every
+  few hours while it stays open, and when you switch back to the app. You still get the same update banner
+  when one's available — but **Later** now *snoozes* it for a day instead of hiding it until you restart,
+  and a newer release brings it back right away.
+- **Reorder your projects** — drag a project up or down in the **SESSIONS** list to arrange them however you
+  like; the order is remembered.
+
+### Changed
+- **Smoother, more native motion throughout** — the bottom panel slides open and closed, overlays (Quick
+  Ask, the command palette, the centered quick terminal, the session-ended card) fade and scale in, the
+  active-tab indicator glides between tabs, the sidebar's Files/Changes/Search cross-fade, the SESSIONS panel
+  collapses with a glide, and Docker status dots and peek panels cross-fade. It's all GPU-driven and respects
+  your system's **Reduce Motion** setting.
+
+### Fixed
+- **"Check for Updates" tells the truth when it can't reach GitHub** — a failed check (offline, timed out, or
+  rate-limited) used to claim you were *up to date*; it now says it couldn't check.
+
 ## [0.1.17] - 2026-06-28
 
 ### Added

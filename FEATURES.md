@@ -476,6 +476,15 @@ API; a top banner offers Homebrew self-update or Download. **Install now** runs
 `NONINTERACTIVE=1 brew upgrade --cask --force …` (no Y/N prompt) in an in-app terminal — opening a bare
 home-folder session if nothing is open — then **auto-relaunches** into the new build: the command writes a
 temp flag on success, which `watchForCompletion` polls for before calling `relaunch()`.
+**Auto-check** (release builds only, `startAutoCheck`): checks ~3s after launch, then every 6h, plus a
+throttled re-check (≥1h since last) on app reactivation — so a session left open for days still sees a
+release published mid-session. **"Later" snoozes** that version for 24h (`dismissBanner` → `snoozeVersion` +
+`snoozeUntil`, persisted in `UserDefaults` so quitting/reopening within the window doesn't re-pop it); once
+the snooze expires the next periodic check re-surfaces the banner (`isSnoozed` gates `dismissed`). A genuinely
+newer version is never snoozed. Skips background checks while an install is mid-flight. A check only counts
+as "up to date" on a clean 2xx + parseable tag; a **failed** request (offline, timeout, rate-limit) shows a
+*"Couldn't check for updates"* alert on a manual check and stays silent for background checks (next cycle
+retries) — it no longer masquerades as "up to date."
 
 ## Motion / animations — `UI/Motion`
 Shared motion vocabulary (durations, curves, one Reduce-Motion gate) used app-wide; animates only GPU-composited

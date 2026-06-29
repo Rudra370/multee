@@ -110,7 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Update check (release builds only — the dev build is always "behind" latest).
         if !Bundle.main.isDev {
             Updates.shared.detectBrew()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Updates.shared.check() }
+            // Check on launch (after a settle delay) and periodically thereafter — Multee stays open for
+            // days, so a launch-only check would miss releases published mid-session.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Updates.shared.startAutoCheck() }
         }
 
         // "Manage Formatters…" (from the format prompt) → open Settings on the Formatters tab.

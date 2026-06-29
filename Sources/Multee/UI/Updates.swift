@@ -15,6 +15,28 @@ final class Updates: ObservableObject {
     @Published var installing = false     // brew upgrade kicked off → offer Relaunch
     @Published var brewManaged = false    // app was installed via the Homebrew cask
     private var checking = false
+    private var autoCheckTimer: Timer?
+    private var lastCheck: Date?
+    private let snoozeDuration: TimeInterval = 24 * 3600   // "Later" hides the banner for a day
+
+    // "Later" snooze, persisted so quitting/reopening within the window doesn't re-pop the banner.
+    private var snoozeVersion: String? {
+        get { UserDefaults.standard.string(forKey: "updateSnoozeVersion") }
+        set { UserDefaults.standard.set(newValue, forKey: "updateSnoozeVersion") }
+    }
+    private var snoozeUntil: Date? {
+        get {
+            let t = UserDefaults.standard.double(forKey: "updateSnoozeUntil")
+            return t > 0 ? Date(timeIntervalSince1970: t) : nil
+        }
+        set { UserDefaults.standard.set(newValue?.timeIntervalSince1970 ?? 0, forKey: "updateSnoozeUntil") }
+    }
+
+    /// Is `version` still inside its "Later" snooze window? A different (newer) version is never snoozed.
+    private func isSnoozed(_ version: String) -> Bool {
+        guard version == snoozeVersion, let until = snoozeUntil else { return false }
+        return Date() < until
+    }
 
     let repo = "Rudra370/multee"
     let caskRef = "Rudra370/tap/multee"
@@ -37,32 +59,64 @@ final class Updates: ObservableObject {
         }
     }
 
+    /// Start periodic background update checks (release builds). Fires an immediate check, then every
+    /// `interval`, and re-checks when the app is reactivated if it's been a while — Multee is meant to
+    /// stay open for days, and a launch-only check would never see a release published mid-session.
+    /// Idempotent.
+    func startAutoCheck(interval: TimeInterval = 6 * 3600) {
+        guard autoCheckTimer == nil else { return }
+        check()
+        autoCheckTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.check()
+        }
+        // Backstop the timer: a Timer fire-date that elapses during sleep is unreliable, so also probe
+        // on reactivation, throttled so returning to the app doesn't hammer the GitHub API.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appBecameActive),
+            name: NSApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    @objc private func appBecameActive() {
+        if let last = lastCheck, Date().timeIntervalSince(last) < 3600 { return }
+        check()
+    }
+
     func check(force: Bool = false) {
-        guard !checking else { return }
+        // Skip background checks while an install is mid-flight (it'd disrupt the banner); manual still runs.
+        guard !checking, force || !installing else { return }
         checking = true
         let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!
         var req = URLRequest(url: url, timeoutInterval: 12)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         let cur = current
-        URLSession.shared.dataTask(with: req) { data, _, _ in
+        URLSession.shared.dataTask(with: req) { data, resp, error in
+            // Did we actually hear back from GitHub? A failed request (offline, timeout, rate-limit/non-2xx,
+            // unparseable body) must NOT be reported as "up to date" — only a clean 2xx with a parseable tag is.
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             var newer: String?
             var body: String?
-            if let data,
+            var reached = false
+            if error == nil, (200..<300).contains(status), let data,
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let tag = obj["tag_name"] as? String {
+                reached = true
                 let v = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
                 if Updates.isNewer(v, than: cur) { newer = v; body = (obj["body"] as? String) }
             }
             DispatchQueue.main.async {
                 self.checking = false
+                self.lastCheck = Date()
                 if let newer {
                     self.latest = newer
                     self.notes = body?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    self.dismissed = false
+                    // Show unless this version is still inside its "Later" snooze window. Once the snooze
+                    // expires the next check re-surfaces it; a genuinely newer version is never snoozed.
+                    self.dismissed = self.isSnoozed(newer)
                 } else if force {
-                    self.latest = nil
-                    self.upToDateAlert()
+                    // Manual check: tell the truth — up to date only if we reached GitHub, else it failed.
+                    if reached { self.latest = nil; self.upToDateAlert() } else { self.checkFailedAlert() }
                 }
+                // Background (non-force) failures stay silent; the next periodic check retries.
             }
         }.resume()
     }
@@ -103,6 +157,14 @@ final class Updates: ObservableObject {
         }
     }
 
+    /// "Later": hide the banner and snooze this version for 24h (persisted across launches), so it comes
+    /// back on its own instead of staying hidden until relaunch / a newer release.
+    func dismissBanner() {
+        snoozeVersion = latest
+        snoozeUntil = Date().addingTimeInterval(snoozeDuration)
+        dismissed = true
+    }
+
     func download() { NSWorkspace.shared.open(releasePage) }
 
     func relaunch() {
@@ -118,6 +180,14 @@ final class Updates: ObservableObject {
         let a = NSAlert()
         a.messageText = "You're up to date"
         a.informativeText = "Multee \(current) is the latest version."
+        a.addButton(withTitle: "OK")
+        a.runModal()
+    }
+
+    private func checkFailedAlert() {
+        let a = NSAlert()
+        a.messageText = "Couldn’t check for updates"
+        a.informativeText = "Multee couldn’t reach GitHub. Check your connection and try again."
         a.addButton(withTitle: "OK")
         a.runModal()
     }
@@ -210,7 +280,7 @@ final class UpdateBannerView: NSView {
         else if updates.brewManaged { updates.installNow(app: model) }
         else { updates.download() }
     }
-    @objc private func dismiss() { updates.dismissed = true }
+    @objc private func dismiss() { updates.dismissBanner() }
     @objc private func showNotes() {
         let a = NSAlert()
         a.messageText = "What's new in Multee \(updates.latest ?? "")"
