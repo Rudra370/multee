@@ -192,7 +192,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `Motion` (`UI/Motion.swift`) is the shared animation vocabulary — durations/curves + a single Reduce-Motion
   gate; animates only GPU layer props (`transform`/`opacity`/`backgroundColor`), never per-frame layout.
   Powers the bottom-dock slide (sized once, content slid via `transform`; close empties the shared dock via
-  `finalizeDockClose`), the centered-overlay present/dismiss (scrim fade + box scale), the tab-bar `selectionPill`
+  `finalizeDockClose`), the centered-overlay present/dismiss (scrim fade + box scale — Quick Ask, centered quick
+  terminal, ⌘P palette, session-ended card), the tab-bar `selectionPill`
   slide, Docker hover crossfades + peek-overlay fade + status-dot crossfade (rows reused in place on same-shape
   re-renders), the SESSIONS-panel collapse glide (`Motion.drive` — OK there: no terminal pane), and `PointerButton`'s
   press-scale. **Gotcha:** never animate the split divider per frame *when a pane holds a terminal* — it reflows both

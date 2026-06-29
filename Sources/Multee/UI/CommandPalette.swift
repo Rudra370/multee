@@ -33,6 +33,7 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
     private var selected = 0
     private var resultCount: Int { mode == .command ? commandHits.count : hits.count }
     private var loadToken = 0              // drops a stale async listing if the palette was reopened
+    private var presented = false          // visible state; drives `isShown` and survives the dismiss fade
 
     init(model: AppModel) {
         self.model = model
@@ -42,7 +43,7 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
     /// Remember where to mount the overlay (added only on present, removed on dismiss → zero idle cost).
     func attach(to host: NSView) { self.host = host }
 
-    var isShown: Bool { overlay?.superview != nil }
+    var isShown: Bool { presented }
 
     func toggle() { isShown ? dismiss() : present() }
 
@@ -100,6 +101,8 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
             overlay.leadingAnchor.constraint(equalTo: host.leadingAnchor),
             overlay.trailingAnchor.constraint(equalTo: host.trailingAnchor),
         ])
+        presented = true
+        Motion.presentOverlay(scrim: overlay, box: panel)
 
         field.stringValue = ""
         selected = 0
@@ -108,8 +111,13 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
     }
 
     func dismiss() {
-        overlay?.removeFromSuperview()
+        presented = false
         loadToken += 1   // ignore any in-flight listing
+        guard let overlay, overlay.superview != nil else { overlay?.removeFromSuperview(); return }
+        Motion.dismissOverlay(scrim: overlay, box: panel) { [weak self] in
+            guard let self, !self.presented else { return }   // reopened during the fade → keep it
+            self.overlay?.removeFromSuperview()
+        }
     }
 
     private func loadFiles(repo: String) {

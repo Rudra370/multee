@@ -107,7 +107,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         // The "Session ended" overlay fills the content area (a dimming scrim with a centered card), hidden
         // until a terminal exits. Brought to the front (above the active terminal) when shown.
         endedOverlay.translatesAutoresizingMaskIntoConstraints = false
-        endedOverlay.isHidden = true
+        endedOverlay.hideImmediately()
         contentArea.addSubview(endedOverlay)
         NSLayoutConstraint.activate([
             endedOverlay.topAnchor.constraint(equalTo: contentArea.topAnchor),
@@ -213,7 +213,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             openButton.isHidden = false
             newProjectButton.isHidden = false
             contentViews.values.forEach { $0.isHidden = true }
-            endedOverlay.isHidden = true
+            endedOverlay.hideImmediately()
             return
         }
 
@@ -228,7 +228,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             openButton.isHidden = true
             newProjectButton.isHidden = true
             contentViews.values.forEach { $0.isHidden = true }
-            endedOverlay.isHidden = true
+            endedOverlay.hideImmediately()
             return
         }
 
@@ -294,14 +294,14 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
     /// Show the centered "Session ended" overlay over a terminal/Claude tab whose process has exited.
     private func updateEndedOverlay(for tab: Tab, session: Session) {
         let show = (tab.kind == .claude || tab.kind == .terminal) && tab.exited
-        endedOverlay.isHidden = !show
-        guard show else { return }
+        guard show else { endedOverlay.setShown(false); return }
         endedOverlay.configure(
             isClaude: tab.kind == .claude,
             onRestart: { [weak session] in session?.restartTab(tab.id) },
             onOpenTerminal: { [weak session] in session?.convertToTerminal(tab.id) },
             onClose: { [weak session] in session?.closeTab(tab.id) })
         contentArea.addSubview(endedOverlay)   // keep it above the (later-mounted) terminal view
+        endedOverlay.setShown(true)
     }
 
     /// Kill a tab's dead terminal view and drop its cache so `render()` respawns it fresh (Restart /
@@ -529,6 +529,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
 /// scrollable.
 final class SessionEndedOverlay: NSView {
     private let card = NSView()
+    private var shown = false
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "Session ended")
     private let subtitle = NSTextField(labelWithString: "")
@@ -622,6 +623,36 @@ final class SessionEndedOverlay: NSView {
             ? "Restart to resume the conversation, open a terminal here, or close the tab."
             : "Restart the shell, or close the tab."
         terminalBtn.isHidden = !isClaude
+    }
+
+    /// Animate the overlay in/out (scrim fade + card scale). Reveal is keyed on actual `isHidden` (so a
+    /// stale show/hide flip from the `objectWillChange` render loop self-corrects); `shown` is the intent,
+    /// used only to keep a dismiss-in-flight from hiding the view if it was re-shown mid-fade.
+    func setShown(_ show: Bool) {
+        let wasShown = shown
+        shown = show
+        if show {
+            if wasShown && !isHidden { return }                // already visible — don't restart the entrance
+            isHidden = false
+            layer?.removeAnimation(forKey: "motion.overlay")   // cancel any in-flight dismiss
+            card.layer?.removeAnimation(forKey: "motion.overlay")
+            layer?.opacity = 1
+            Motion.presentOverlay(scrim: self, box: card)
+        } else {
+            guard !isHidden else { return }                    // already hidden
+            Motion.dismissOverlay(scrim: self, box: card) { [weak self] in
+                guard let self, !self.shown else { return }    // re-shown during the fade → keep it
+                self.isHidden = true
+            }
+        }
+    }
+
+    /// Instant hide for empty-workspace transitions (no card to fade away), keeping `shown` consistent.
+    func hideImmediately() {
+        shown = false
+        layer?.removeAnimation(forKey: "motion.overlay"); layer?.opacity = 1
+        card.layer?.removeAnimation(forKey: "motion.overlay")
+        isHidden = true
     }
 
     @objc private func restartTapped() { onRestart?() }

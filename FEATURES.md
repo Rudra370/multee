@@ -477,7 +477,8 @@ temp flag on success, which `watchForCompletion` polls for before calling `relau
 Shared motion vocabulary (durations, curves, one Reduce-Motion gate) used app-wide; animates only GPU-composited
 layer properties, never per-frame layout. **Bottom dock** slides open/closed (`slideY`, sized once so terminals
 reflow once; close also empties the shared dock via `finalizeDockClose`). **Centered overlays** (Quick Ask,
-centered quick terminal) present/dismiss with a scrim fade + box scale 0.96↔1 (`presentOverlay`/`dismissOverlay`).
+centered quick terminal, the ⌘P **command palette**, the **session-ended** card) present/dismiss with a scrim fade
++ box scale 0.96↔1 (`presentOverlay`/`dismissOverlay`).
 **Docker rows** crossfade their hover background/icon tint; **icon buttons** (`PointerButton`) scale to 0.92 while
 pressed. **Tab bar** has a `selectionPill` that slides to the active chip on switch (jumps on add/remove/reorder;
 the active chip is transparent so the pill is its sole highlight). The **Docker action peek overlay** fades + pops

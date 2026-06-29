@@ -342,7 +342,11 @@ empty-dock contract explicit.
 must reset to identity under Reduce Motion (else a press in flight when RM flips on stays shrunk). `transform.scale`
 read back via KVC is an `NSNumber` → read as `Double`, not `CGFloat` (the latter doesn't bridge, dropping the
 current scale so the spring-back jumps). Cursor/hover/press *feel* can't be harness-verified (the sandbox blocks
-synthetic mouse) — those are HID-checked by the user (see D13/D17).
+synthetic mouse) — those are HID-checked by the user (see D13/D17). For a *persistent* overlay toggled by the
+render loop (the session-ended card), an idempotent `if intent == lastIntent { return }` guard is a trap: the
+render observer fires on `objectWillChange` (pre-change), so an exit produces a stale show→hide→show flip that can
+no-op the real reveal and leave the view `isHidden`. Key the reveal on actual `isHidden` state (self-correcting),
+not the intent flag — keep the flag only to stop a dismiss-in-flight from hiding a re-shown view.
 **Rejected:** animating the split divider position per frame (the stutter above); animating real view heights for
 the dock (reflows the terminal continuously).
 
