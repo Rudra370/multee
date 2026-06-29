@@ -25,6 +25,9 @@ final class TabBarView: NSView {
     private let chips = NSStackView()
     private let dropIndicator = NSView()   // vertical insertion line shown while dragging a chip
     private weak var argsButton: NSButton?   // the ▾ button — anchor for the keyboard-triggered args menu
+    private let selectionPill = NSView()     // active-tab highlight; slides between chips on selection change
+    private var activeTabID: String?
+    private var lastTabIDs: [String] = []    // to tell a selection change (animate) from a tab add/remove (jump)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -57,6 +60,13 @@ final class TabBarView: NSView {
             outer.topAnchor.constraint(equalTo: topAnchor),
             outer.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
+        // The sliding active-tab highlight, behind the chips (the active chip is transparent so this shows).
+        selectionPill.wantsLayer = true
+        selectionPill.layer?.cornerRadius = 5
+        selectionPill.layer?.backgroundColor = NSColor(white: 1, alpha: 0.10).cgColor
+        selectionPill.isHidden = true
+        addSubview(selectionPill, positioned: .below, relativeTo: outer)
 
         // bottom divider
         let div = NSView(); div.wantsLayer = true; div.layer?.backgroundColor = NSColor(white: 0.2, alpha: 1).cgColor
@@ -98,7 +108,10 @@ final class TabBarView: NSView {
 
     func render(session: Session?, activeTabID: String) {
         chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        guard let session else { return }
+        guard let session else {
+            self.activeTabID = nil; lastTabIDs = []; selectionPill.isHidden = true
+            return
+        }
         for tab in session.tabs {
             let canFork = tab.kind == .claude && session.canFork(tab.id)
             let chip = TabChipView(
@@ -114,6 +127,29 @@ final class TabBarView: NSView {
                 onFork: canFork ? { [weak self] in self?.onFork?(tab.id) } : nil
             )
             chips.addArrangedSubview(chip)
+        }
+        // Slide the pill only when the selection moved within the *same* set of tabs; jump on first show
+        // or when tabs were added/removed/reordered (chip positions shift — a slide would look wrong).
+        let newIDs = session.tabs.map { $0.id }
+        let slide = newIDs == lastTabIDs && self.activeTabID != activeTabID && !selectionPill.isHidden
+        self.activeTabID = activeTabID
+        lastTabIDs = newIDs
+        layoutSubtreeIfNeeded()          // give the new chips their frames before we read the active one
+        positionPill(animated: slide)
+    }
+
+    /// Move `selectionPill` to the active chip's frame. Animated slide when `animated`, otherwise a jump
+    /// (first show, tab add/remove, Reduce Motion). Hidden when there's no active chip / no layout yet.
+    private func positionPill(animated: Bool) {
+        guard let id = activeTabID, bounds.width > 0,
+              let chip = chips.arrangedSubviews.compactMap({ $0 as? TabChipView }).first(where: { $0.tabID == id })
+        else { selectionPill.isHidden = true; return }
+        let target = chip.convert(chip.bounds, to: self)
+        if selectionPill.isHidden || !animated || Motion.reduceMotion {
+            selectionPill.isHidden = false
+            selectionPill.frame = target
+        } else {
+            Motion.animate(Motion.quick) { _ in self.selectionPill.animator().frame = target }
         }
     }
 
@@ -216,7 +252,9 @@ final class TabChipView: PointerView, NSDraggingSource {
 
         wantsLayer = true
         layer?.cornerRadius = 5
-        layer?.backgroundColor = (isActive ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 1, alpha: 0.03)).cgColor
+        // Active chip is transparent — the TabBarView's sliding `selectionPill` provides its highlight
+        // (so the highlight can animate between tabs). Inactive keeps its faint background.
+        layer?.backgroundColor = (isActive ? NSColor.clear : NSColor(white: 1, alpha: 0.03)).cgColor
         toolTip = title
 
         let indicator: NSView

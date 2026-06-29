@@ -322,6 +322,9 @@ one place. The rule it enforces: animate only GPU-composited **layer** propertie
   (`presentOverlay`/`dismissOverlay`) — the macOS popover feel.
 - **Hover** (`HoverRow` bg, `HoverIconButton` tint) crossfades; **button press** (`PointerButton.mouseDown`)
   scales to 0.92 while held via an *explicit* `transform.scale` animation.
+- **Tab bar** (`TabBarView`): a persistent `selectionPill` behind the chips slides to the active chip's frame on
+  selection change (jumps on tab add/remove/reorder, since chip positions shift); the active chip goes transparent
+  so the pill is its only highlight. **Docker action peek** overlay reuses `presentOverlay`/`dismissOverlay`.
 **Why:** the first cut animated the `NSSplitView` divider per frame — every step relaid out the split and
 reflowed **both** SwiftTerm terminals (PTY `SIGWINCH` ×~24 in 200 ms), so it stuttered *and* burned CPU (the
 #1 anti-goal). Transforms are GPU-composited: zero per-frame layout, zero PTY churn. The async close then

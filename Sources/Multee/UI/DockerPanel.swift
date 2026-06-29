@@ -1457,8 +1457,20 @@ final class DockerActionOverlay: NSView {
         mounted = view
     }
 
-    func reveal() { superview?.addSubview(self); isHidden = false; isPresented = true }   // re-add = bring to front
-    func dismiss() { isHidden = true; isPresented = false }
+    func reveal() {
+        superview?.addSubview(self)   // re-add = bring to front
+        isPresented = true
+        isHidden = false
+        Motion.presentOverlay(scrim: self, box: box)   // fade in + subtle box pop
+    }
+    func dismiss() {
+        guard isPresented else { return }
+        isPresented = false
+        Motion.dismissOverlay(scrim: self, box: box) { [weak self] in
+            guard let self, !self.isPresented else { return }   // re-revealed during the fade → keep it
+            self.isHidden = true
+        }
+    }
 
     /// Drop our reference to the hosted view *without* removing it — used when the view is re-parented
     /// elsewhere (open-as-tab), so a later `showTerminal` doesn't tear it out of its new home.
