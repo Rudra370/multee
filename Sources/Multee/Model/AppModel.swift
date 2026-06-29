@@ -66,6 +66,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Reorder: move session `id` to just before `beforeID` (nil = move to the end). Drag-to-reorder in
+    /// the SESSIONS panel. Mutating `sessions` re-renders the list and persists the new order (the
+    /// snapshot saves sessions in array order) via the `$sessions` sink.
+    func moveSession(_ id: String, before beforeID: String?) {
+        guard let from = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let moved = sessions.remove(at: from)
+        if let beforeID, let to = sessions.firstIndex(where: { $0.id == beforeID }) {
+            sessions.insert(moved, at: to)
+        } else {
+            sessions.append(moved)
+        }
+    }
+
     // MARK: - Persistence
 
     private func observe(_ session: Session) {

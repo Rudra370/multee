@@ -75,7 +75,7 @@ final class SidebarViewController: NSViewController {
     private let model: AppModel
     private var cancellables = Set<AnyCancellable>()
     private var sessionStatusObservers: [String: AnyCancellable] = [:]   // per-session dot refresh
-    private let sessionsStack = NSStackView()
+    private let sessionsStack = SessionsStackView()
     private let filesContainer = NSView()
     private var treeVC: FileTreeViewController?
     private var changesVC: ChangesViewController?
@@ -372,6 +372,7 @@ final class SidebarViewController: NSViewController {
         sessionsStack.alignment = .leading
         sessionsStack.spacing = 2
         sessionsStack.translatesAutoresizingMaskIntoConstraints = false
+        sessionsStack.onReorder = { [weak self] dragged, before in self?.model.moveSession(dragged, before: before) }
 
         let scroll = NSScrollView()
         scroll.drawsBackground = false
@@ -466,6 +467,7 @@ final class SidebarViewController: NSViewController {
         }
         for session in model.sessions {
             let row = SessionRowView(
+                sessionID: session.id,
                 name: session.name,
                 isActive: session.id == model.activeSessionID,
                 status: session.status,
@@ -492,12 +494,16 @@ final class SidebarViewController: NSViewController {
 }
 
 /// One row in the SESSIONS list: status dot, name (click to activate), close button.
-final class SessionRowView: PointerView {
+final class SessionRowView: PointerView, NSDraggingSource {
+    let sessionID: String
     private let onSelect: () -> Void
     private let onClose: () -> Void
+    private var mouseDownAt: NSPoint = .zero
+    private var didDrag = false
 
-    init(name: String, isActive: Bool, status: ClaudeState,
+    init(sessionID: String, name: String, isActive: Bool, status: ClaudeState,
          onSelect: @escaping () -> Void, onClose: @escaping () -> Void) {
+        self.sessionID = sessionID
         self.onSelect = onSelect
         self.onClose = onClose
         super.init(frame: .zero)
@@ -505,20 +511,17 @@ final class SessionRowView: PointerView {
         wantsLayer = true
         layer?.cornerRadius = 5
         layer?.backgroundColor = isActive ? NSColor(white: 1, alpha: 0.08).cgColor : .clear
+        toolTip = "Switch to this session — drag to reorder"
 
         let dot = StatusDot(state: status)
 
-        let nameButton = PointerButton()
-        nameButton.title = name
-        nameButton.target = self
-        nameButton.action = #selector(select)
-        nameButton.isBordered = false
-        nameButton.bezelStyle = .inline
-        nameButton.alignment = .left
-        nameButton.contentTintColor = isActive ? .labelColor : .secondaryLabelColor
-        nameButton.font = .systemFont(ofSize: 13, weight: isActive ? .medium : .regular)
-        nameButton.setButtonType(.momentaryChange)
-        nameButton.toolTip = "Switch to this session"
+        // A plain label (not a button) so the whole row handles click-to-select vs drag-to-reorder
+        // (a button would swallow the drag). Mirrors the tab chip.
+        let nameLabel = NSTextField(labelWithString: name)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.textColor = isActive ? .labelColor : .secondaryLabelColor
+        nameLabel.font = .systemFont(ofSize: 13, weight: isActive ? .medium : .regular)
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let close = PointerButton(); close.title = "✕"; close.target = self; close.action = #selector(closeTapped)
         close.isBordered = false
@@ -528,7 +531,7 @@ final class SessionRowView: PointerView {
         close.toolTip = "Close session"
         close.setContentHuggingPriority(.required, for: .horizontal)
 
-        let stack = NSStackView(views: [dot, nameButton, NSView(), close])
+        let stack = NSStackView(views: [dot, nameLabel, NSView(), close])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 6
@@ -540,15 +543,95 @@ final class SessionRowView: PointerView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            nameButton.heightAnchor.constraint(equalToConstant: 22),
+            heightAnchor.constraint(equalToConstant: 26),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    @objc private func select() { onSelect() }
+    // Click vs drag, like the tab chip: a small move past threshold starts a reorder drag; a clean
+    // mouse-up (no drag) selects. The ✕ close button is a real button, so it handles its own clicks.
+    override func mouseDown(with event: NSEvent) { mouseDownAt = event.locationInWindow; didDrag = false }
+    override func mouseDragged(with event: NSEvent) {
+        guard !didDrag else { return }
+        let dx = event.locationInWindow.x - mouseDownAt.x, dy = event.locationInWindow.y - mouseDownAt.y
+        if (dx * dx + dy * dy) > 16 { didDrag = true; beginReorderDrag(event) }   // ~4pt
+    }
+    override func mouseUp(with event: NSEvent) { if !didDrag { onSelect() } }
     @objc private func closeTapped() { onClose() }
+
+    private func beginReorderDrag(_ event: NSEvent) {
+        let item = NSPasteboardItem()
+        item.setString(sessionID, forType: .multeeSession)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        dragItem.setDraggingFrame(bounds, contents: snapshot())
+        beginDraggingSession(with: [dragItem], event: event, source: self)
+    }
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
+    // Show the "grabbing" (closed-hand) cursor while a row is being dragged; restore on drop.
+    func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) { NSCursor.closedHand.push() }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { NSCursor.pop() }
+
+    private func snapshot() -> NSImage {
+        let image = NSImage(size: bounds.size)
+        if let rep = bitmapImageRepForCachingDisplay(in: bounds) {
+            cacheDisplay(in: bounds, to: rep)
+            image.addRepresentation(rep)
+        }
+        return image
+    }
+}
+
+/// The SESSIONS list as a drop target: rows (`SessionRowView`) are the drag sources, this stack is the
+/// destination — it shows a horizontal insertion line and, on drop, reorders via `onReorder`. Mirrors the
+/// tab bar's reorder, vertical instead of horizontal.
+final class SessionsStackView: NSStackView {
+    var onReorder: ((_ dragged: String, _ beforeID: String?) -> Void)?
+    private let dropIndicator = NSView()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        dropIndicator.wantsLayer = true
+        dropIndicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        dropIndicator.layer?.cornerRadius = 1
+        dropIndicator.isHidden = true
+        addSubview(dropIndicator)   // non-arranged → stays where we frame it
+        registerForDraggedTypes([.multeeSession])
+    }
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation { showDrop(s); return .move }
+    override func draggingUpdated(_ s: NSDraggingInfo) -> NSDragOperation { showDrop(s); return .move }
+    override func draggingExited(_ s: NSDraggingInfo?) { dropIndicator.isHidden = true }
+    override func draggingEnded(_ s: NSDraggingInfo) { dropIndicator.isHidden = true }
+    override func performDragOperation(_ s: NSDraggingInfo) -> Bool {
+        dropIndicator.isHidden = true
+        guard let dragged = s.draggingPasteboard.string(forType: .multeeSession) else { return false }
+        let (beforeID, _) = insertionPoint(at: s.draggingLocation)
+        if beforeID != dragged { onReorder?(dragged, beforeID) }
+        return true
+    }
+
+    private func showDrop(_ s: NSDraggingInfo) {
+        let (_, y) = insertionPoint(at: s.draggingLocation)
+        dropIndicator.frame = NSRect(x: 2, y: y - 1, width: max(0, bounds.width - 4), height: 2)
+        dropIndicator.isHidden = false
+    }
+
+    /// (session to insert *before* — nil = end, indicator Y). Rows are laid out top→bottom in array order;
+    /// "before a row" = visually above its centre. Direction depends on `isFlipped`.
+    private func insertionPoint(at windowPoint: NSPoint) -> (String?, CGFloat) {
+        let p = convert(windowPoint, from: nil)
+        let rows = arrangedSubviews.compactMap { $0 as? SessionRowView }
+        for row in rows {
+            let f = row.frame
+            let insertBefore = isFlipped ? (p.y < f.midY) : (p.y > f.midY)
+            if insertBefore { return (row.sessionID, isFlipped ? f.minY : f.maxY) }
+        }
+        let endY = rows.last.map { isFlipped ? $0.frame.maxY : $0.frame.minY } ?? bounds.midY
+        return (nil, endY)
+    }
 }
 
 /// Small colored status dot.

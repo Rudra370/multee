@@ -206,6 +206,8 @@ enum DebugAction {
         case "sidebarMode":  SidebarViewController.current?.debugSelectMode(Int(arg) ?? 0)   // 0 Files / 1 Changes / 2 Search
         case "revealSearch":  SidebarSearchHook.reveal?()                         // ⌘⇧F: reveal the sidebar Search
         case "sessionsToggle": SidebarCollapseHook.toggle?()                      // collapse/expand the SESSIONS panel
+        case "sessionMove":    // move the named session to the end — verifies moveSession reorder + persistence
+            if let s = model.sessions.first(where: { $0.name == arg }) { model.moveSession(s.id, before: nil) }
         case "searchOpenAsTab": SearchViewController.current?.debugOpenAsTab()    // sidebar "Open as Tab" button
         case "openAt":          // file|line — open a file at a line (a search-result click; tests markdown→Source)
             let p = arg.split(separator: "|").map(String.init)

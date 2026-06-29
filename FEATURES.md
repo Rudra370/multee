@@ -21,6 +21,10 @@ first (`UI/UnsavedGuard`: Save / Don't Save / Cancel for one, Save All / Discard
 the red close button is funnelled through quit so it's covered too; saving routes through a closure
 `CenterViewController` registers (the model owns the dirty flag, the view owns `save()`). Persistence:
 JSON snapshot in UserDefaults, debounce-saved; restore drops repos whose folder is gone.
+Both the **tab chips** and the **SESSIONS rows** drag-to-reorder (`.multeeTab` / `.multeeSession`, an insertion
+drop-line, a closed-hand cursor mid-drag); `AppModel.moveSession` reorders the array and the new order persists
+(the snapshot saves sessions in array order). The session row's name is a plain label (not a button) so the whole
+row distinguishes click-to-select from drag-to-reorder, mirroring the tab chip.
 
 **Fork a Claude session.** A Claude tab can be forked into a new, independent session that starts with
 a *copy* of the same conversation — Claude Code's `--resume <cid> --fork-session` (new session id, no
@@ -491,7 +495,7 @@ shared-dock empty-on-close contract; the layer-backing/KVC gotchas). Hover/press
 the harness can't synthesize mouse.
 
 ## Deferred (v0.1.1 polish)
-Drag-reorder tabs. Motion intentionally NOT done: **tab-chip / session-row insert + removal** animation — the tab bar
+Motion intentionally NOT done: **tab-chip / session-row insert + removal** animation — the tab bar
 and session list rebuild from scratch on every model update, so an entrance animation gets cut off mid-flight and a
 close has no surviving view to animate; making either work needs reusing views across renders (a keyed diff, like the
 Docker rows) — not worth it for a subtle effect. Also the **update-banner** slide (it sits above the workspace, so

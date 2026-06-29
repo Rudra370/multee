@@ -2,6 +2,7 @@ import AppKit
 
 extension NSPasteboard.PasteboardType {
     static let multeeTab = NSPasteboard.PasteboardType("com.multee.tab")
+    static let multeeSession = NSPasteboard.PasteboardType("com.multee.session")
 }
 
 /// Lets a keyboard shortcut (`AppDelegate`, ⌘⌥C) pop the tab bar's "New Claude with arguments" preset

@@ -48,7 +48,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "treeNewFile:a.txt", "treeNewFolder:dir", "treeBeginFile", "treeExpandAll",
               "treeCollapseAll", "treeRename:old.txt|new.txt", "treeDelete:path",
               "paletteOpen", "paletteCommands", "paletteType:foo", "paletteDown", "paletteUp",
-              "paletteEnter", "paletteClose", "sidebarMode:2", "revealSearch", "sessionsToggle", "projectSearch:foo",
+              "paletteEnter", "paletteClose", "sidebarMode:2", "revealSearch", "sessionsToggle", "sessionMove:name",
+              "projectSearch:foo",
               "searchOpenFirst", "searchOpenAsTab", "openSearchTab", "projectSearchTab:foo",
               "openAt:file.md|3", "setStatus:done", "hookStatus:0:idle", "activateTab:1",
               "renderAttentionMenu:/tmp/x.png", "showShortcuts", "renderShortcuts:/tmp/x.png",
@@ -206,5 +207,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).
 
 ## UI conventions
-- Icon/icon-buttons get a native **`.toolTip`** (reliable in AppKit, unlike SwiftUI). 
-- Deferred to a follow-up: per-button hand cursor, collapsible SESSIONS panel, drag-reorder tabs.
+- Icon/icon-buttons get a native **`.toolTip`** (reliable in AppKit, unlike SwiftUI).
+- Drag-to-reorder: tab chips (`TabChipView`) and SESSIONS rows (`SessionRowView`) both reorder by drag —
+  `NSDraggingSource` + a `.multee{Tab,Session}` pasteboard string, an insertion drop-line on the container, and
+  `onReorder` → model (`moveSession` for sessions). The dragged row's name must be a *label*, not a button, or the
+  button eats the drag. Per-button hand cursor + collapsible SESSIONS panel are done.
