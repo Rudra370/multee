@@ -48,7 +48,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "treeNewFile:a.txt", "treeNewFolder:dir", "treeBeginFile", "treeExpandAll",
               "treeCollapseAll", "treeRename:old.txt|new.txt", "treeDelete:path",
               "paletteOpen", "paletteCommands", "paletteType:foo", "paletteDown", "paletteUp",
-              "paletteEnter", "paletteClose", "sidebarMode:2", "revealSearch", "projectSearch:foo",
+              "paletteEnter", "paletteClose", "sidebarMode:2", "revealSearch", "sessionsToggle", "projectSearch:foo",
               "searchOpenFirst", "searchOpenAsTab", "openSearchTab", "projectSearchTab:foo",
               "openAt:file.md|3", "setStatus:done", "hookStatus:0:idle", "activateTab:1",
               "renderAttentionMenu:/tmp/x.png", "showShortcuts", "renderShortcuts:/tmp/x.png",

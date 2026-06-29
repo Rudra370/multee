@@ -1,6 +1,10 @@
 import AppKit
 import Combine
 
+/// Toggle the SESSIONS panel collapse — same static-hook pattern as `SidebarSearchHook`; the debug
+/// harness drives it (the chevron is a button the sandbox can't click).
+enum SidebarCollapseHook { static var toggle: (() -> Void)? }
+
 /// Root layout: a horizontal split with the workspace (center) on the left and the sidebar (files /
 /// sessions) on the right. A *plain* NSSplitView (not NSSplitViewController) so the divider drags
 /// reliably — the same kind the inner sessions split uses.
@@ -142,8 +146,10 @@ final class SidebarViewController: NSViewController {
                 // Default SESSIONS to the bottom 25% when nothing valid was restored.
                 split.setPosition(total * 0.75, ofDividerAt: 0)
             }
-        } else if !sessionsCollapsed, sessionsH < 50 {
-            // Self-heal: the SESSIONS pane has no intrinsic height; never let it vanish.
+        } else if !sessionsCollapsed, sessionsH < 50, collapseDriver == nil {
+            // Self-heal: the SESSIONS pane has no intrinsic height; never let it vanish. Skipped while a
+            // collapse/expand glide is in flight — the pane is *meant* to be transiently small mid-animation,
+            // and slamming the divider here would fight the animated setPosition.
             split.setPosition(total * 0.75, ofDividerAt: 0)
         }
     }
@@ -152,6 +158,7 @@ final class SidebarViewController: NSViewController {
         super.viewDidLoad()
         SidebarViewController.current = self
         SidebarSearchHook.reveal = { [weak self] in self?.revealSearch() }
+        SidebarCollapseHook.toggle = { [weak self] in self?.toggleSessionsCollapsed() }
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.refresh() }
@@ -424,9 +431,9 @@ final class SidebarViewController: NSViewController {
         // list), no terminal to reflow (cf. the bottom dock, which can't — D28).
         let current = split.subviews.first?.frame.height ?? target
         if animated {
-            collapseDriver = Motion.drive(Motion.quick, from: current, to: target) { [weak split] pos in
+            collapseDriver = Motion.drive(Motion.quick, from: current, to: target, step: { [weak split] pos in
                 split?.setPosition(pos, ofDividerAt: 0)
-            }
+            }, done: { [weak self] in self?.collapseDriver = nil })
         } else {
             split.setPosition(target, ofDividerAt: 0)
         }

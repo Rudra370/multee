@@ -205,6 +205,7 @@ enum DebugAction {
         case "paletteClose": CommandPaletteController.current?.dismiss()
         case "sidebarMode":  SidebarViewController.current?.debugSelectMode(Int(arg) ?? 0)   // 0 Files / 1 Changes / 2 Search
         case "revealSearch":  SidebarSearchHook.reveal?()                         // ⌘⇧F: reveal the sidebar Search
+        case "sessionsToggle": SidebarCollapseHook.toggle?()                      // collapse/expand the SESSIONS panel
         case "searchOpenAsTab": SearchViewController.current?.debugOpenAsTab()    // sidebar "Open as Tab" button
         case "openAt":          // file|line — open a file at a line (a search-result click; tests markdown→Source)
             let p = arg.split(separator: "|").map(String.init)

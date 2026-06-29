@@ -327,7 +327,10 @@ one place. The rule it enforces: animate only GPU-composited **layer** propertie
   so the pill is its only highlight. **Docker action peek** overlay reuses `presentOverlay`/`dismissOverlay`.
 - **SESSIONS panel** collapse/expand glides the sidebar divider via `Motion.drive` (eased per-frame `setPosition`).
   This is the *one* place a per-frame divider drive is OK — both panes are plain AppKit (file tree + sessions
-  list); the rule the dock taught us only forbids it when a pane holds a terminal.
+  list); the rule the dock taught us only forbids it when a pane holds a terminal. **Gotcha:** the pane had a
+  `viewDidLayout` "never let it vanish" self-heal that slammed the divider whenever the sessions pane was tiny —
+  which is exactly the transient mid-glide state, so it fought the expand. Gate any such layout self-heal on
+  "no animation in flight" (`collapseDriver == nil`).
 - **Docker status dot** crossfades on state change: `renderServices` keeps the existing `DockerServiceRow`s when the
   service set/order is unchanged (the common live-event case) and calls `refresh` to rebuild contents + crossfade
   the dot from its old colour/shape; any structural change falls back to the proven full rebuild. (Row insert/remove
