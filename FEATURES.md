@@ -485,14 +485,14 @@ the active chip is transparent so the pill is its sole highlight). The **Docker 
 in/out. The **SESSIONS panel** collapse/expand glides the sidebar divider (`Motion.drive` — safe per-frame here,
 no terminal in either pane). The **Docker status dot** crossfades green-fill↔grey-ring when a service flips state:
 `renderServices` reuses rows in place on a same-shape re-render (the usual live-event case) so the dot can animate,
-falling back to a full rebuild on any structural change. New **tab chips** and **session-list rows** pop in
-(`Motion.popIn` — fade + slight scale-up); the sidebar **Files/Changes/Search** swap fades the incoming pane in
-(`Motion.fadeIn`). Reduce Motion → everything instant. See DECISIONS D28 (why transforms, not layout; the
+falling back to a full rebuild on any structural change. The sidebar **Files/Changes/Search** swap fades the incoming
+pane in (`Motion.fadeIn`). Reduce Motion → everything instant. See DECISIONS D28 (why transforms, not layout; the
 shared-dock empty-on-close contract; the layer-backing/KVC gotchas). Hover/press/slide *feel* is HID-verified —
 the harness can't synthesize mouse.
 
 ## Deferred (v0.1.1 polish)
-Drag-reorder tabs. Motion intentionally NOT done: tab/session/Docker-row **removal** animation (inserts animate, but
-a close goes through a rebuild — animating it needs keeping the dying view alive via a list-diff, not worth it); the
-**update-banner** slide (it sits above the workspace, so animating its height reflows the workspace/terminals every
-frame — the dock's trap). None are functional blockers.
+Drag-reorder tabs. Motion intentionally NOT done: **tab-chip / session-row insert + removal** animation — the tab bar
+and session list rebuild from scratch on every model update, so an entrance animation gets cut off mid-flight and a
+close has no surviving view to animate; making either work needs reusing views across renders (a keyed diff, like the
+Docker rows) — not worth it for a subtle effect. Also the **update-banner** slide (it sits above the workspace, so
+animating its height reflows the workspace/terminals every frame — the dock's trap). None are functional blockers.

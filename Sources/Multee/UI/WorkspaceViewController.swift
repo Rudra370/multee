@@ -112,7 +112,6 @@ final class SidebarViewController: NSViewController {
     private var expandedDividerPos: CGFloat = 0
     private var didApplyInitialCollapse = false
     private var collapseDriver: Timer?   // in-flight collapse/expand glide (cancelled on re-toggle)
-    private var lastSessionIDs: [String] = []   // to pop-in only newly-opened session rows
 
     init(model: AppModel) {
         self.model = model
@@ -457,8 +456,6 @@ final class SidebarViewController: NSViewController {
         sessionsHeaderLabel.stringValue = (sessionsCollapsed && !model.sessions.isEmpty)
             ? model.sessions.map(\.name).joined(separator: ", ") : "SESSIONS"
 
-        let prevIDs = Set(lastSessionIDs)
-        lastSessionIDs = model.sessions.map { $0.id }
         sessionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if model.sessions.isEmpty {
             let empty = NSTextField(labelWithString: "No sessions open")
@@ -483,7 +480,6 @@ final class SidebarViewController: NSViewController {
             row.translatesAutoresizingMaskIntoConstraints = false
             sessionsStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: sessionsStack.widthAnchor).isActive = true
-            if !prevIDs.isEmpty && !prevIDs.contains(session.id) { Motion.popIn(row) }   // newly-opened folder
         }
     }
 
