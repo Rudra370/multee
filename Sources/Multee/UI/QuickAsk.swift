@@ -62,12 +62,15 @@ final class QuickAskController: NSObject {
         if askTab == nil { captureSource() }   // fresh; an in-progress thread keeps its source
         ensureSession()
         presentCentered(in: root)
+        if let scrim { Motion.presentOverlay(scrim: scrim, box: box) }
         isShown = true
         focusTerminal()
     }
 
     func hide() {
-        scrim?.removeFromSuperview()
+        if let scrim, scrim.superview != nil {
+            Motion.dismissOverlay(scrim: scrim, box: box) { [weak scrim] in scrim?.removeFromSuperview() }
+        }
         isShown = false
         root?.window?.makeKeyAndOrderFront(nil)
         CenterViewController.current?.focusActiveContent()

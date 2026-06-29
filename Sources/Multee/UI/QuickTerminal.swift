@@ -273,7 +273,8 @@ final class QuickTerminalController: NSObject, NSWindowDelegate {
     private func presentCentered() {
         guard let root else { return }
         let scrim = ensureScrim()
-        if scrim.superview == nil {
+        let fresh = scrim.superview == nil
+        if fresh {
             scrim.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(scrim)
             NSLayoutConstraint.activate([
@@ -284,6 +285,7 @@ final class QuickTerminalController: NSObject, NSWindowDelegate {
             ])
         }
         mountChrome(in: overlayBox)
+        if fresh { Motion.presentOverlay(scrim: scrim, box: overlayBox) }
     }
     private func ensureScrim() -> QuickTermScrim {
         if let s = scrim { return s }
@@ -311,7 +313,10 @@ final class QuickTerminalController: NSObject, NSWindowDelegate {
         scrim = s
         return s
     }
-    private func teardownCentered() { scrim?.removeFromSuperview() }
+    private func teardownCentered() {
+        guard let scrim, scrim.superview != nil else { return }
+        Motion.dismissOverlay(scrim: scrim, box: overlayBox) { [weak scrim] in scrim?.removeFromSuperview() }
+    }
 
     // Bottom dock
     private func presentBottom() {

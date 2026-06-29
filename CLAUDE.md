@@ -189,6 +189,13 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   its warm prompt cache (fast); Context/Blank toggle, New, Open as Tab (the fork PTY is keyed by a real tab id,
   so promotion is just `addTab`). It reuses `TerminalStore.view(for:)` + the Fork feature's `launchSpec`; see
   DECISIONS.md D23 for why this replaced a headless `claude -p` build.
+  `Motion` (`UI/Motion.swift`) is the shared animation vocabulary — durations/curves + a single Reduce-Motion
+  gate; animates only GPU layer props (`transform`/`opacity`/`backgroundColor`), never per-frame layout.
+  Powers the bottom-dock slide (sized once, content slid via `transform`; close empties the shared dock via
+  `finalizeDockClose`), the centered-overlay present/dismiss (scrim fade + box scale), Docker hover crossfades,
+  and `PointerButton`'s press-scale. **Gotcha:** never animate the split divider per frame — it reflows both
+  terminals (SIGWINCH storm) and stutters. Hover/press feel is HID-only (sandbox blocks synthetic mouse). See
+  DECISIONS.md D28.
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
   and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).

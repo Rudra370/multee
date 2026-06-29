@@ -20,11 +20,19 @@ private func installPointerTracking(_ view: NSView) {
                                         owner: view, userInfo: nil))
 }
 
-/// NSButton that shows the pointing-hand cursor on hover.
+/// NSButton that shows the pointing-hand cursor on hover, with a subtle tactile press (scale-down while
+/// held, spring back on release). `super.mouseDown` runs the click's modal tracking loop, so we bracket
+/// it: scale down before, scale up after it returns on mouse-up. Subclasses (HoverIconButton/ChipButton/
+/// ClosureButton) don't override mouseDown, so they inherit the press.
 class PointerButton: NSButton {
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); installPointerTracking(self) }
     override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func mouseDown(with event: NSEvent) {
+        Motion.press(self, true)
+        super.mouseDown(with: event)
+        Motion.press(self, false)
+    }
 }
 
 /// Clickable container view (rows / chips) that shows the pointing-hand cursor over its bounds.

@@ -307,6 +307,37 @@ options visible as buttons.
 
 ---
 
+## Motion / animations
+
+### D28 — One `Motion` helper; animate GPU layer properties, never layout
+**Decision:** All app animation routes through a single `UI/Motion` enum — shared durations/curves plus one
+Reduce-Motion gate (`NSWorkspace…accessibilityDisplayShouldReduceMotion`) so everything degrades to instant in
+one place. The rule it enforces: animate only GPU-composited **layer** properties (`transform`, `opacity`,
+`backgroundColor`) — **never** drive Auto Layout / view frames per frame.
+- **Bottom-dock open/close** (`CenterViewController`): the dock is sized to its resting height in *one* layout
+  pass, then its content slides via a layer `transform` (`Motion.slideY`) — open rises in, close slides down +
+  fades, then detaches. The shared dock is also force-**emptied** across the close (`finalizeDockClose`, called
+  up-front by `showBottomDock`) so opening the *other* occupant mid-close can't leave stale content stacked.
+- **Centered overlays** (Quick Ask, centered quick terminal): scrim dim fades + box `transform.scale` 0.96→1
+  (`presentOverlay`/`dismissOverlay`) — the macOS popover feel.
+- **Hover** (`HoverRow` bg, `HoverIconButton` tint) crossfades; **button press** (`PointerButton.mouseDown`)
+  scales to 0.92 while held via an *explicit* `transform.scale` animation.
+**Why:** the first cut animated the `NSSplitView` divider per frame — every step relaid out the split and
+reflowed **both** SwiftTerm terminals (PTY `SIGWINCH` ×~24 in 200 ms), so it stuttered *and* burned CPU (the
+#1 anti-goal). Transforms are GPU-composited: zero per-frame layout, zero PTY churn. The async close then
+exposed a latent bug — the bottom dock is a *shared, persistent* container (quick terminal **or** Docker), and
+nothing ever emptied it, so the next occupant rendered on top of stale content; `finalizeDockClose` makes the
+empty-dock contract explicit.
+**Gotchas:** layer-backed AppKit views suppress *implicit* CA animations — press uses an explicit animation, and
+must reset to identity under Reduce Motion (else a press in flight when RM flips on stays shrunk). `transform.scale`
+read back via KVC is an `NSNumber` → read as `Double`, not `CGFloat` (the latter doesn't bridge, dropping the
+current scale so the spring-back jumps). Cursor/hover/press *feel* can't be harness-verified (the sandbox blocks
+synthetic mouse) — those are HID-checked by the user (see D13/D17).
+**Rejected:** animating the split divider position per frame (the stutter above); animating real view heights for
+the dock (reflows the terminal continuously).
+
+---
+
 ## How we work (process)
 
 ### D17 — User tests the dev build before we ship

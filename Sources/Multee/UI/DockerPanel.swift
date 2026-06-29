@@ -551,8 +551,7 @@ final class DockerPanelController: NSObject {
         cleanupExitedAction()
         hideOverlay()
         pickerPopover.performClose(nil)
-        panel.removeFromSuperview()
-        CenterViewController.current?.hideBottomDock()
+        CenterViewController.current?.hideBottomDock()   // slides the panel out, then detaches it from the dock
         isShown = false
         CenterViewController.current?.focusActiveContent()
     }
@@ -1038,8 +1037,8 @@ class HoverRow: NSView {
                                owner: self, userInfo: nil)
         addTrackingArea(t); tracking = t
     }
-    override func mouseEntered(with event: NSEvent) { hovering = true;  layer?.backgroundColor = Self.hoverBG }
-    override func mouseExited(with event: NSEvent)  { hovering = false; layer?.backgroundColor = baseBackground }
+    override func mouseEntered(with event: NSEvent) { hovering = true;  Motion.crossfadeBackground(layer, to: Self.hoverBG) }
+    override func mouseExited(with event: NSEvent)  { hovering = false; Motion.crossfadeBackground(layer, to: baseBackground) }
 }
 
 /// An icon button that brightens on hover. `PointerButton` only swaps the cursor, so 10pt symbols don't
@@ -1057,8 +1056,10 @@ final class HoverIconButton: PointerButton {
                                owner: self, userInfo: nil)
         addTrackingArea(t); tracking = t
     }
-    override func mouseEntered(with event: NSEvent) { hovering = true;  if isEnabled { contentTintColor = hoverTint } }
-    override func mouseExited(with event: NSEvent)  { hovering = false; contentTintColor = baseTint }
+    override func mouseEntered(with event: NSEvent) { hovering = true;  if isEnabled { setTint(hoverTint) } }
+    override func mouseExited(with event: NSEvent)  { hovering = false; setTint(baseTint) }
+    // Best-effort crossfade; contentTintColor falls back to an instant set if it isn't animator-driven.
+    private func setTint(_ c: NSColor) { Motion.animate(Motion.micro) { _ in self.animator().contentTintColor = c } }
     // No pointing-hand on a disabled button (e.g. the in-use volume's dimmed trash).
     override func resetCursorRects() { if isEnabled { addCursorRect(bounds, cursor: .pointingHand) } }
 }

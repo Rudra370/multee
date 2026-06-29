@@ -22,6 +22,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
     /// Vertical split hosting the content area, with the quick terminal docked below it in "bottom" mode.
     private let centerSplit = NSSplitView()
     private var bottomDock: NSView?
+    private var dockClosing: [NSView] = []                    // content animating out of the dock (empty = no pending close)
     private let endedOverlay = SessionEndedOverlay()          // centered card shown over a terminal that exited
     private let emptyLabel = NSTextField(labelWithString: "Open a folder to start  (⌘O)")
     private let openButton = PointerButton()
@@ -413,29 +414,85 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
 
     /// Show (and return) the empty bottom-dock container, sizing the divider so it gets ~260pt the first
     /// time. The quick-terminal controller mounts its terminal view into the returned container.
+    ///
+    /// Open animation: the dock is sized to its resting height in **one** layout pass (so each terminal
+    /// reflows/SIGWINCHes exactly once), then its mounted content slides up into the clipped dock via a
+    /// GPU `transform` — no per-frame layout. Deferred one tick so the caller has mounted its content.
     func showBottomDock() -> NSView {
+        finalizeDockClose()   // collapse any in-flight close so the next consumer reuses an *empty* dock
         let dock: NSView
         if let d = bottomDock { dock = d } else {
             let d = NSView()
             d.wantsLayer = true
             d.layer?.backgroundColor = QuickTerminalController.backgroundColor.cgColor   // matches the quick terminal
+            d.layer?.masksToBounds = true                                                // clip the reveal slide
             d.translatesAutoresizingMaskIntoConstraints = false
             bottomDock = d; dock = d
         }
-        if dock.superview == nil {
+        let attaching = dock.superview == nil
+        if attaching {
             centerSplit.addArrangedSubview(dock)
             centerSplit.setHoldingPriority(.defaultLow, forSubviewAt: 0)    // content flexes on window resize
             centerSplit.setHoldingPriority(.defaultHigh, forSubviewAt: 1)   // dock keeps its height
             view.layoutSubtreeIfNeeded()
             let h = centerSplit.bounds.height
-            if h > 0 { centerSplit.setPosition(max(120, h - 260), ofDividerAt: 0) }
+            if h > 0 {
+                centerSplit.setPosition(max(120, h - 260), ofDividerAt: 0)
+                view.layoutSubtreeIfNeeded()                               // commit the dock's final frame
+            }
+            DispatchQueue.main.async { [weak dock] in
+                guard let dock, dock.superview != nil else { return }
+                let dy = dock.bounds.height
+                guard dy > 0 else { return }
+                dock.subviews.forEach { Motion.slideY($0, from: -dy, to: 0, duration: 0.22) }
+            }
         }
         return dock
     }
 
-    /// Collapse the bottom dock (the terminal view stays inside it, just detached from the split).
-    /// NOTE: bottom-dock close has an unresolved repaint gap — see the Quick terminal section in FEATURES.md.
-    func hideBottomDock() { bottomDock?.removeFromSuperview() }
+    /// Collapse the bottom dock: its content slides down out of the clipped dock (GPU transform, no
+    /// per-frame layout) and the dock fades, then both the content and the dock detach — leaving the
+    /// dock genuinely empty for the next consumer (it's a shared container reused by the quick terminal
+    /// and the Docker panel). NOTE: bottom-dock close has an unresolved repaint gap — see the Quick
+    /// terminal section in FEATURES.md.
+    func hideBottomDock() {
+        finalizeDockClose()   // a second close shouldn't stack on a pending one
+        guard let dock = bottomDock, dock.superview != nil else { return }
+        let children = dock.subviews
+        guard !Motion.reduceMotion else {
+            children.forEach { $0.removeFromSuperview() }
+            dock.removeFromSuperview()
+            return
+        }
+        let dy = dock.bounds.height
+        dockClosing = children
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in self?.finalizeDockClose() }
+        children.forEach { Motion.slideY($0, from: 0, to: -dy, duration: 0.18, timing: Motion.easeIn, hold: true) }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1; fade.toValue = 0
+        fade.duration = 0.18; fade.timingFunction = Motion.easeIn
+        fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
+        dock.layer?.add(fade, forKey: "motion.fade")
+        CATransaction.commit()
+    }
+
+    /// Finish a pending dock close synchronously: drop the content that was sliding out (the owning
+    /// controller keeps its own reference and re-mounts on next show) and detach the now-empty dock.
+    /// No-op when nothing is closing. Called from the close completion *and* up-front by `showBottomDock`
+    /// so opening the other panel mid-close can't leave stale content stacked in the dock.
+    private func finalizeDockClose() {
+        guard !dockClosing.isEmpty else { return }
+        let children = dockClosing
+        dockClosing = []
+        children.forEach {
+            $0.layer?.removeAnimation(forKey: "motion.slideY")
+            $0.removeFromSuperview()
+        }
+        bottomDock?.layer?.removeAnimation(forKey: "motion.fade")
+        bottomDock?.layer?.opacity = 1
+        bottomDock?.removeFromSuperview()
+    }
 
     /// Restore first-responder to the active tab's content (Claude/terminal or editor) — called when the
     /// quick terminal closes so focus returns to your session/file. The focus change also flushes any
