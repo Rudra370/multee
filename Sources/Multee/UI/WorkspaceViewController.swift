@@ -101,6 +101,7 @@ final class SidebarViewController: NSViewController {
     private var sidebarMode: SidebarMode { SidebarMode(rawValue: filesModeSeg.selectedSegment) ?? .files }
     private var changesMode: Bool { sidebarMode == .changes }
     private var fileActionsBar: NSStackView?   // new file / new folder / collapse-all (Files mode only)
+    private var lastShownMode: SidebarMode?     // to fade the pane in only on an actual Files/Changes/Search switch
 
     // SESSIONS header + collapse
     private let sessionsHeaderLabel = NSTextField(labelWithString: "SESSIONS")
@@ -111,6 +112,7 @@ final class SidebarViewController: NSViewController {
     private var expandedDividerPos: CGFloat = 0
     private var didApplyInitialCollapse = false
     private var collapseDriver: Timer?   // in-flight collapse/expand glide (cancelled on re-toggle)
+    private var lastSessionIDs: [String] = []   // to pop-in only newly-opened session rows
 
     init(model: AppModel) {
         self.model = model
@@ -304,6 +306,8 @@ final class SidebarViewController: NSViewController {
                 show.view.trailingAnchor.constraint(equalTo: filesContainer.trailingAnchor),
             ])
         }
+        if let last = lastShownMode, last != sidebarMode { Motion.fadeIn(show.view) }   // fade only on a real switch
+        lastShownMode = sidebarMode
         // One shared watcher + git poll; fetch only what the visible mode needs (Search needs neither).
         store.start(tree: sidebarMode == .files, changes: sidebarMode == .changes)
         if sidebarMode == .files { lastRevealedPath = nil; revealActiveFile() }   // entering Files → reveal current file
@@ -453,6 +457,8 @@ final class SidebarViewController: NSViewController {
         sessionsHeaderLabel.stringValue = (sessionsCollapsed && !model.sessions.isEmpty)
             ? model.sessions.map(\.name).joined(separator: ", ") : "SESSIONS"
 
+        let prevIDs = Set(lastSessionIDs)
+        lastSessionIDs = model.sessions.map { $0.id }
         sessionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if model.sessions.isEmpty {
             let empty = NSTextField(labelWithString: "No sessions open")
@@ -477,6 +483,7 @@ final class SidebarViewController: NSViewController {
             row.translatesAutoresizingMaskIntoConstraints = false
             sessionsStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: sessionsStack.widthAnchor).isActive = true
+            if !prevIDs.isEmpty && !prevIDs.contains(session.id) { Motion.popIn(row) }   // newly-opened folder
         }
     }
 

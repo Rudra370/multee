@@ -195,8 +195,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `finalizeDockClose`), the centered-overlay present/dismiss (scrim fade + box scale — Quick Ask, centered quick
   terminal, ⌘P palette, session-ended card), the tab-bar `selectionPill`
   slide, Docker hover crossfades + peek-overlay fade + status-dot crossfade (rows reused in place on same-shape
-  re-renders), the SESSIONS-panel collapse glide (`Motion.drive` — OK there: no terminal pane), and `PointerButton`'s
-  press-scale. **Gotcha:** never animate the split divider per frame *when a pane holds a terminal* — it reflows both
+  re-renders), the SESSIONS-panel collapse glide (`Motion.drive` — OK there: no terminal pane), tab-chip / session-row
+  pop-in + sidebar-segment fade-in, and `PointerButton`'s press-scale. Inserts animate; removals stay instant (they
+  rebuild). **Gotcha:** never animate the split divider per frame *when a pane holds a terminal* — it reflows both
   terminals (SIGWINCH storm) and stutters. Hover/press feel is HID-only (sandbox blocks synthetic mouse). See
   DECISIONS.md D28.
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)

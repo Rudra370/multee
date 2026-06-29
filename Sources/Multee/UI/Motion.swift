@@ -118,6 +118,31 @@ enum Motion {
         layer.add(anim, forKey: "motion.bg")
     }
 
+    /// Fade a view in from transparent (e.g. a swapped-in panel). No-op under Reduce Motion.
+    static func fadeIn(_ view: NSView, duration: TimeInterval = quick) {
+        view.wantsLayer = true
+        guard let layer = view.layer, !reduceMotion else { return }
+        let a = CABasicAnimation(keyPath: "opacity")
+        a.fromValue = 0; a.toValue = 1
+        a.duration = duration; a.timingFunction = easeOut
+        layer.add(a, forKey: "motion.fadeIn")
+    }
+
+    /// Entrance for a freshly-inserted item (tab chip, list row): fade + a slight scale-up from 0.85.
+    /// The model is untouched (settles at identity / opaque). No-op under Reduce Motion.
+    static func popIn(_ view: NSView, duration: TimeInterval = quick) {
+        view.wantsLayer = true
+        guard let layer = view.layer, !reduceMotion else { return }
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = 0.85; scale.toValue = 1
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0; fade.toValue = 1
+        let group = CAAnimationGroup()
+        group.animations = [scale, fade]
+        group.duration = duration; group.timingFunction = easeOut
+        layer.add(group, forKey: "motion.popIn")
+    }
+
     /// GPU-composited vertical slide of a layer-backed view's content (`transform.translation.y`),
     /// without touching its frame — so no Auto Layout / text reflow happens per frame. The model
     /// value is left untouched (identity); `hold` keeps the presentation pinned at `to` after the

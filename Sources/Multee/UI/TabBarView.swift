@@ -112,6 +112,8 @@ final class TabBarView: NSView {
             self.activeTabID = nil; lastTabIDs = []; selectionPill.isHidden = true
             return
         }
+        let prevIDs = Set(lastTabIDs)
+        var inserted: [TabChipView] = []
         for tab in session.tabs {
             let canFork = tab.kind == .claude && session.canFork(tab.id)
             let chip = TabChipView(
@@ -127,6 +129,7 @@ final class TabBarView: NSView {
                 onFork: canFork ? { [weak self] in self?.onFork?(tab.id) } : nil
             )
             chips.addArrangedSubview(chip)
+            if !prevIDs.isEmpty && !prevIDs.contains(tab.id) { inserted.append(chip) }   // newly-opened tab
         }
         // Slide the pill only when the selection moved within the *same* set of tabs; jump on first show
         // or when tabs were added/removed/reordered (chip positions shift — a slide would look wrong).
@@ -136,6 +139,7 @@ final class TabBarView: NSView {
         lastTabIDs = newIDs
         layoutSubtreeIfNeeded()          // give the new chips their frames before we read the active one
         positionPill(animated: slide)
+        inserted.forEach { Motion.popIn($0) }   // grow-in new tab chips
     }
 
     /// Move `selectionPill` to the active chip's frame. Animated slide when `animated`, otherwise a jump
