@@ -279,7 +279,11 @@ Preview/Image re-renders live from the editor's current text. Raster images stay
 **Markdown** (.md/.markdown) renders to an `NSAttributedString` (a native line-based block
 parser + Foundation for inline + the TextMate engine for fenced code blocks + `NSTextTable` for tables +
 inline image attachments) with a Preview/Source toggle. No WebKit, no dependency; RAM is just the
-rendered content, freed on close.
+rendered content, freed on close. A pragmatic slice of **raw HTML** is handled for GitHub-README style
+files: `<img>` renders as an image (honoring `width`/`alt`), `<div align="…">` aligns the blocks inside
+(so a centered header renders centered), and other structural tags (`<details>`/`<summary>`/`<div>`) are
+stripped to their text rather than shown as literal markup. Markdown autolinks (`<https://…>`) are left
+untouched (only specific HTML tags trigger this path).
 
 ## Changes & diff — `UI/Changes`, `UI/Diff`
 `ChangesModel` polls staged/unstaged; the view has a commit bar (Commit / Commit & Push), section +

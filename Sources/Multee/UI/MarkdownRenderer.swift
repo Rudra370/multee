@@ -42,6 +42,7 @@ enum MarkdownRenderer {
         let out = NSMutableAttributedString()
         let lines = source.components(separatedBy: "\n")
         var i = 0
+        var align: NSTextAlignment = .natural   // set by <div align="…">, reset by </div>
         while i < lines.count {
             let line = lines[i]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -70,7 +71,7 @@ enum MarkdownRenderer {
             }
 
             // Heading
-            if let (level, text) = heading(trimmed) { out.append(headingBlock(text, level: level, baseURL: baseURL)); i += 1; continue }
+            if let (level, text) = heading(trimmed) { out.append(headingBlock(text, level: level, align: align, baseURL: baseURL)); i += 1; continue }
 
             // Horizontal rule
             if isRule(trimmed) { out.append(ruleBlock()); i += 1; continue }
@@ -95,6 +96,20 @@ enum MarkdownRenderer {
                 continue
             }
 
+            // Raw HTML the renderer understands (README-style <div>/<img>/<details>) — markdown has none of
+            // these, and GitHub READMEs lean on them for image sizing/centering. We render <img>, honor
+            // <div align="…">, and strip other structural tags (rendering any leftover text) so they don't
+            // show as literal markup.
+            if isHTMLBlock(line) {
+                let lower = trimmed.lowercased()
+                if lower.hasPrefix("<div")  { if let a = alignAttr(trimmed) { align = a }; i += 1; continue }
+                if lower.hasPrefix("</div") { align = .natural; i += 1; continue }
+                if let img = parseImgTag(trimmed) { out.append(imageBlock(img, align: align, baseURL: baseURL)); i += 1; continue }
+                let text = stripHTMLTags(trimmed).trimmingCharacters(in: .whitespaces)
+                if !text.isEmpty { out.append(paragraphBlock(text, align: align, baseURL: baseURL)) }
+                i += 1; continue
+            }
+
             // Blank line
             if trimmed.isEmpty { out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 5)])); i += 1; continue }
 
@@ -105,7 +120,7 @@ enum MarkdownRenderer {
                 if t.isEmpty || isBlockStart(lines[i]) { break }
                 para.append(t); i += 1
             }
-            out.append(paragraphBlock(para.joined(separator: " "), baseURL: baseURL))
+            out.append(paragraphBlock(para.joined(separator: " "), align: align, baseURL: baseURL))
         }
         return out
     }
@@ -115,7 +130,44 @@ enum MarkdownRenderer {
     private static func isBlockStart(_ line: String) -> Bool {
         let t = line.trimmingCharacters(in: .whitespaces)
         return heading(t) != nil || isRule(t) || t.hasPrefix(">") || listMarker(line) != nil
-            || fenceLanguage(t) != nil || (t.hasPrefix("|") )
+            || fenceLanguage(t) != nil || (t.hasPrefix("|") ) || isHTMLBlock(line)
+    }
+
+    /// Known block-level HTML tags we handle (vs. markdown autolinks like `<https://…>`, which must NOT
+    /// be treated as HTML or they'd be stripped to nothing).
+    private static let htmlBlockTags = ["<img", "<div", "</div", "<details", "</details",
+                                        "<summary", "</summary", "<picture", "</picture", "<source", "<br"]
+    private static func isHTMLBlock(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces).lowercased()
+        return htmlBlockTags.contains { t.hasPrefix($0) }
+    }
+
+    /// Value of an HTML attribute (`name="value"` / `name='value'`), case-insensitive.
+    private static func htmlAttr(_ name: String, in tag: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: "\(name)\\s*=\\s*[\"']([^\"']*)[\"']", options: .caseInsensitive),
+              let m = re.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)),
+              let r = Range(m.range(at: 1), in: tag) else { return nil }
+        return String(tag[r])
+    }
+
+    private static func alignAttr(_ tag: String) -> NSTextAlignment? {
+        switch htmlAttr("align", in: tag)?.lowercased() {
+        case "center": return .center
+        case "right":  return .right
+        case "left":   return .left
+        default:       return nil
+        }
+    }
+
+    private static func parseImgTag(_ line: String) -> (src: String, width: CGFloat?, alt: String)? {
+        guard line.range(of: "<img", options: .caseInsensitive) != nil, let src = htmlAttr("src", in: line) else { return nil }
+        let width = htmlAttr("width", in: line).flatMap { Double($0) }.map { CGFloat($0) }
+        return (src, width, htmlAttr("alt", in: line) ?? "")
+    }
+
+    private static func stripHTMLTags(_ s: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: "<[^>]+>") else { return s }
+        return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "")
     }
 
     private static func fenceLanguage(_ trimmed: String) -> String? {
@@ -161,22 +213,40 @@ enum MarkdownRenderer {
 
     // MARK: Block builders
 
-    private static func headingBlock(_ text: String, level: Int, baseURL: URL?) -> NSAttributedString {
+    private static func headingBlock(_ text: String, level: Int, align: NSTextAlignment = .natural, baseURL: URL?) -> NSAttributedString {
         let para = NSMutableParagraphStyle()
         para.paragraphSpacingBefore = level <= 2 ? 14 : 10
         para.paragraphSpacing = 5
+        para.alignment = align
         let base: [NSAttributedString.Key: Any] = [.font: headingFont(level), .foregroundColor: headingColor, .paragraphStyle: para]
         let r = NSMutableAttributedString(attributedString: inline(text, base: base, baseURL: baseURL))
         r.append(NSAttributedString(string: "\n", attributes: base))
         return r
     }
 
-    private static func paragraphBlock(_ text: String, baseURL: URL?) -> NSAttributedString {
+    private static func paragraphBlock(_ text: String, align: NSTextAlignment = .natural, baseURL: URL?) -> NSAttributedString {
         let para = NSMutableParagraphStyle()
         para.paragraphSpacing = 8; para.lineSpacing = 2
+        para.alignment = align
         let base: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: textColor, .paragraphStyle: para]
         let r = NSMutableAttributedString(attributedString: inline(text, base: base, baseURL: baseURL))
         r.append(NSAttributedString(string: "\n", attributes: base))
+        return r
+    }
+
+    /// An HTML `<img>` rendered as an inline attachment (local files only; width honored, capped). Centered
+    /// when inside a `<div align="center">`. Falls back to the alt text if the image can't be loaded.
+    private static func imageBlock(_ img: (src: String, width: CGFloat?, alt: String), align: NSTextAlignment, baseURL: URL?) -> NSAttributedString {
+        let para = NSMutableParagraphStyle()
+        para.alignment = align; para.paragraphSpacing = 8
+        let r = NSMutableAttributedString()
+        if let url = URL(string: img.src), let attach = imageAttachment(url, baseURL: baseURL, desiredWidth: img.width) {
+            r.append(NSAttributedString(attachment: attach))
+        } else if !img.alt.isEmpty {
+            r.append(NSAttributedString(string: img.alt, attributes: [.font: italic(bodyFont), .foregroundColor: quoteColor]))
+        }
+        r.append(NSAttributedString(string: "\n", attributes: [.font: bodyFont]))
+        r.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: r.length))
         return r
     }
 
@@ -314,7 +384,7 @@ enum MarkdownRenderer {
         return result
     }
 
-    private static func imageAttachment(_ url: URL, baseURL: URL?) -> NSTextAttachment? {
+    private static func imageAttachment(_ url: URL, baseURL: URL?, desiredWidth: CGFloat? = nil) -> NSTextAttachment? {
         let resolved: URL
         if url.scheme == nil {
             resolved = baseURL?.appendingPathComponent(url.relativePath) ?? url   // relative path
@@ -323,10 +393,11 @@ enum MarkdownRenderer {
         } else {
             return nil   // remote (http) images — don't fetch over the network in a viewer; show alt text
         }
-        guard let image = NSImage(contentsOf: resolved) else { return nil }
-        let maxWidth: CGFloat = 520
-        if image.size.width > maxWidth {
-            image.size = NSSize(width: maxWidth, height: image.size.height * (maxWidth / image.size.width))
+        guard let image = NSImage(contentsOf: resolved), image.size.width > 0 else { return nil }
+        let cap: CGFloat = 520
+        let target = min(desiredWidth ?? image.size.width, cap)   // honor HTML width=, but never exceed cap
+        if target != image.size.width {
+            image.size = NSSize(width: target, height: image.size.height * (target / image.size.width))
         }
         let attachment = NSTextAttachment()
         attachment.image = image

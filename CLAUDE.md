@@ -170,7 +170,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   shared by the sidebar Search segment and a `.search` tab), `SettingsWindow`, `Updates`. A `.file` tab routes by
   extension in `CenterViewController.makeContentView`: `ImageViewController` (images/icns/SVG — zoom/pan,
   source toggle), `MarkdownViewController` + `MarkdownRenderer` (rendered preview — code blocks reuse the
-  TextMate engine, tables via NSTextTable, inline images), else the text `Editor`. `ShortcutsWindow` is the
+  TextMate engine, tables via NSTextTable, inline images, plus a pragmatic slice of raw HTML: `<img>`,
+  `<div align>`, and stripped `<details>/<summary>` — markdown autolinks `<…>` left untouched), else the text `Editor`. `ShortcutsWindow` is the
   bottom-bar keyboard-icon panel listing all shortcuts (`Shortcuts` table + keycap chips). `QuickTerminal`
   (`QuickTerminalController` + `QuickTerminalHook` + `QuickTerminalPanel`) is the ⌃` quick terminal — **multiple
   per-session shells** (a chip strip + `+` to add, `↗` open-as-tab, and a `⌃\`` hide-hint live in a shared header)
