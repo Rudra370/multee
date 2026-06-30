@@ -13,6 +13,7 @@ final class Updates: ObservableObject {
     @Published var notes: String?         // the new release's description (GitHub release body)
     @Published var dismissed = false      // user hit "Later"
     @Published var installing = false     // brew upgrade kicked off → offer Relaunch
+    @Published var installFailed = false  // the update command failed/timed out → offer Retry
     @Published var brewManaged = false    // app was installed via the Homebrew cask
     private var checking = false
     private var autoCheckTimer: Timer?
@@ -40,6 +41,7 @@ final class Updates: ObservableObject {
 
     let repo = "Rudra370/multee"
     let caskRef = "Rudra370/tap/multee"
+    let tapRef = "Rudra370/tap"           // the cask's tap — refreshed alone, never a global `brew update`
 
     private init() {}
 
@@ -109,6 +111,7 @@ final class Updates: ObservableObject {
                 if let newer {
                     self.latest = newer
                     self.notes = body?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.installFailed = false   // a fresh availability supersedes a stale prior failure
                     // Show unless this version is still inside its "Later" snooze window. Once the snooze
                     // expires the next check re-surfaces it; a genuinely newer version is never snoozed.
                     self.dismissed = self.isSnoozed(newer)
@@ -127,32 +130,54 @@ final class Updates: ObservableObject {
         let tab = Tab(kind: .terminal, title: "Update")
         session.addTab(tab)
         let appPath = Bundle.main.bundlePath
-        let flag = (NSTemporaryDirectory() as NSString).appendingPathComponent("multee-update-\(UUID().uuidString).done")
-        // NONINTERACTIVE + --force so Homebrew never stops for a Y/N; `xattr` clears the new app's quarantine;
-        // the flag is written only on full success → Multee then auto-relaunches into the new build.
-        let command = "NONINTERACTIVE=1 brew update && NONINTERACTIVE=1 brew upgrade --cask --force \(caskRef)"
-            + " && xattr -dr com.apple.quarantine '\(appPath)' && touch '\(flag)'\n"
+        let base = (NSTemporaryDirectory() as NSString).appendingPathComponent("multee-update-\(UUID().uuidString)")
+        let okFlag = base + ".done", failFlag = base + ".fail"
+        // Refresh ONLY our tap (a global `brew update` re-fetches every tap, so an unrelated/slow one can
+        // hang the update — see DECISIONS). `HOMEBREW_NO_AUTO_UPDATE=1` keeps `brew upgrade` from doing its
+        // own global update too. `perl alarm` is a portable timeout (macOS has no `timeout`) so a stalled
+        // GitHub connection fails fast instead of waiting on brew's minutes-long internal retries.
+        // `--force` reinstalls even if brew is unsure; the no-TTY stdin (below) skips the `--ask` Y/N;
+        // `xattr` clears the new app's quarantine.
+        // Exactly one marker is written: `.done` on full success → auto-relaunch; `.fail` on any failure/
+        // timeout/cancel → the banner offers Retry (instead of spinning forever).
+        let timeout = "perl -e 'alarm shift @ARGV; exec @ARGV'"
+        // `{ … } < /dev/null` gives the whole chain a non-TTY stdin, so Homebrew's `--ask`/HOMEBREW_ASK
+        // "proceed? [y/n]" confirmation is skipped (`Ask.confirm?` returns false off a TTY — `NONINTERACTIVE`
+        // alone does NOT gate it) and git can't block on a credential prompt either.
+        let command =
+            "TAP=\"$(brew --repository \(tapRef))\"; { "
+            + "\(timeout) 30 git -C \"$TAP\" fetch --quiet origin HEAD "
+            + "&& git -C \"$TAP\" reset --quiet --hard FETCH_HEAD "
+            + "&& \(timeout) 180 env HOMEBREW_NO_AUTO_UPDATE=1 NONINTERACTIVE=1 brew upgrade --cask --force \(caskRef) "
+            + "&& xattr -dr com.apple.quarantine '\(appPath)' "
+            + "&& touch '\(okFlag)'; } < /dev/null || touch '\(failFlag)'\n"
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             TerminalStore.shared.send(tab.id, command)
-            self.watchForCompletion(flag: flag)
+            self.watchForCompletion(ok: okFlag, fail: failFlag)
         }
         installing = true
+        installFailed = false
         dismissed = false
     }
 
-    /// Poll for the success flag the update command writes; when it appears, relaunch into the new build.
+    /// Poll for the marker the update command writes: `.done` → relaunch into the new build; `.fail` (or no
+    /// marker within 15 min, e.g. the tab was closed) → surface a failed state so the banner offers Retry.
     private var updateWatch: Timer?
-    private func watchForCompletion(flag: String) {
+    private func watchForCompletion(ok: String, fail: String) {
         updateWatch?.invalidate()
-        let deadline = Date().addingTimeInterval(900)   // give up after 15 min (failed/cancelled)
+        let deadline = Date().addingTimeInterval(900)
         updateWatch = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
-            if FileManager.default.fileExists(atPath: flag) {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: ok) {
                 t.invalidate()
-                try? FileManager.default.removeItem(atPath: flag)
+                try? fm.removeItem(atPath: ok); try? fm.removeItem(atPath: fail)
                 self.relaunch()
-            } else if Date() > deadline {
+            } else if fm.fileExists(atPath: fail) || Date() > deadline {
                 t.invalidate()
+                try? fm.removeItem(atPath: fail)
+                self.installing = false
+                self.installFailed = true
             }
         }
     }
@@ -268,6 +293,10 @@ final class UpdateBannerView: NSView {
             label.stringValue = "Updating Multee…"
             actionButton.title = "Relaunch"
             whatsNew.isHidden = true
+        } else if updates.installFailed {
+            label.stringValue = "Update failed — couldn’t reach GitHub"
+            actionButton.title = "Retry"
+            whatsNew.isHidden = true
         } else {
             label.stringValue = "Multee \(updates.latest ?? "") is available"
             actionButton.title = updates.brewManaged ? "Install now" : "Download"
@@ -277,6 +306,7 @@ final class UpdateBannerView: NSView {
 
     @objc private func primaryAction() {
         if updates.installing { updates.relaunch() }
+        else if updates.installFailed { updates.installNow(app: model) }   // Retry
         else if updates.brewManaged { updates.installNow(app: model) }
         else { updates.download() }
     }

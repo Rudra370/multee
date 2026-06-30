@@ -355,6 +355,33 @@ the dock (reflows the terminal continuously).
 
 ---
 
+### D29 — Self-update refreshes only our tap, with a timeout and an honest failure state
+**Decision:** `Updates.installNow` no longer runs a global `brew update`. It refreshes **only** the cask's own tap
+(`git -C "$(brew --repository Rudra370/tap)" fetch … && reset --hard FETCH_HEAD`), then `HOMEBREW_NO_AUTO_UPDATE=1
+NONINTERACTIVE=1 brew upgrade --cask --force`. The network steps are wrapped in a portable timeout
+(`perl -e 'alarm shift @ARGV; exec @ARGV' <secs>` — macOS ships no `timeout`): 30 s for the tap fetch, 180 s for the
+upgrade. The command writes exactly one marker — `.done` on success → auto-relaunch, `.fail` on any failure/timeout/
+cancel — and the watcher surfaces a **"Update failed — Retry"** banner instead of polling silently for 15 min.
+**Why:** `brew update` re-fetches *every* tap the user has. A real user (the maintainer) had an unrelated tap
+(`stripe/stripe-cli`) whose `git fetch` to GitHub stalled during a flaky-network moment; git-over-HTTPS has no
+default connect timeout, so the whole self-update hung at "Updating Homebrew…" — before Multee's part even started —
+and the old watcher just spun for 15 min then gave up with no feedback. Diagnosed live via the process tree (`ps`
+showed the stuck `git-remote-https …/stripe/homebrew-stripe-cli`) and per-URL `curl` timing (github.com fast, that
+tap's connection timed out at the connect stage). Refreshing only our tap removes the avoidable hang entirely; the
+timeout bounds the unavoidable case (a stalled *download* of our own asset) to seconds instead of brew's minutes-long
+internal retries; the `.fail` marker turns "frozen forever" into a one-click Retry. The whole chain runs with stdin
+from `/dev/null`: Homebrew's `--ask`/`HOMEBREW_ASK` "proceed? [y/n]" confirmation is gated on a TTY (`ask.rb`:
+`return false if !$stdin.tty?`) and is **not** suppressed by `NONINTERACTIVE` — a user with ask-mode on would
+otherwise hang the unattended upgrade on an invisible prompt; a non-TTY stdin skips it (and blocks git credential
+prompts too). `perl alarm` verified on macOS
+(killed `sleep 10` at 2.0 s, exit 142; fast commands pass through); marker logic and the scoped fetch verified by
+re-runnable harness. The real `brew upgrade` end-to-end isn't auto-verifiable without a live upgrade (see D17).
+**Rejected:** keeping the global `brew update` but adding `GIT_HTTP_LOW_SPEED_*` env (only catches mid-transfer
+stalls, not a connect stall); untapping unrelated taps (not ours to touch); a full rearchitecture away from shelling
+out to brew in a PTY (the terminal approach is intentional — the user watches it run).
+
+---
+
 ## How we work (process)
 
 ### D17 — User tests the dev build before we ship

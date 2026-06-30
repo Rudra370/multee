@@ -472,10 +472,14 @@ modal) with a `docker` block in the state dump (available, services + their stat
 
 ## Settings & updates — `UI/SettingsWindow`, `UI/Updates`
 Settings window (native controls) bound to `Settings`. Update checker hits the GitHub latest-release
-API; a top banner offers Homebrew self-update or Download. **Install now** runs
-`NONINTERACTIVE=1 brew upgrade --cask --force …` (no Y/N prompt) in an in-app terminal — opening a bare
-home-folder session if nothing is open — then **auto-relaunches** into the new build: the command writes a
-temp flag on success, which `watchForCompletion` polls for before calling `relaunch()`.
+API; a top banner offers Homebrew self-update or Download. **Install now** refreshes **only the cask's own tap**
+(`git fetch`+`reset` on `$(brew --repository Rudra370/tap)`) — never a global `brew update`, so an unrelated/slow
+tap can't hang the update — then runs `HOMEBREW_NO_AUTO_UPDATE=1 NONINTERACTIVE=1 brew upgrade --cask --force …`
+(no Y/N prompt) in an in-app terminal, opening a bare home-folder session if nothing is open. The network steps
+are bounded by a portable `perl alarm` timeout (30s fetch / 180s upgrade; macOS has no `timeout`). The command
+writes exactly one marker — `.done` on success → **auto-relaunch** (`watchForCompletion` polls, then `relaunch()`)
+or `.fail` on any failure/timeout/cancel → the banner flips to **"Update failed — Retry"** instead of spinning
+forever. See DECISIONS D29.
 **Auto-check** (release builds only, `startAutoCheck`): checks ~3s after launch, then every 6h, plus a
 throttled re-check (≥1h since last) on app reactivation — so a session left open for days still sees a
 release published mid-session. **"Later" snoozes** that version for 24h (`dismissBanner` → `snoozeVersion` +

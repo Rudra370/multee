@@ -216,6 +216,11 @@ enum DebugAction {
         case "projectSearchTab": SearchViewController.currentTab?.debugRun(arg)   // search inside the standalone tab
         case "projectSearch": SearchViewController.current?.debugRun(arg)   // run a sidebar search synchronously
         case "searchOpenFirst": SearchViewController.current?.debugOpenFirst()   // open the first hit at its line
+        case "updateBanner":   // drive the update banner into a state for the shot: available | installing | failed
+            let u = Updates.shared
+            u.latest = "0.1.18"; u.notes = "Test notes."; u.dismissed = false; u.brewManaged = true
+            u.installing = (arg == "installing")
+            u.installFailed = (arg == "failed")
         default: break
         }
     }
