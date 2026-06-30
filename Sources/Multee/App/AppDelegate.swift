@@ -16,7 +16,7 @@ enum NewItemHook {
     static var newTerminal: (() -> Void)?         // ⌃⇧`: quick shell if the panel is open, else a terminal tab
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let model = AppModel()
     private var windowController: MainWindowController!
     private var keyMonitor: Any?
@@ -430,10 +430,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         term.keyEquivalentModifierMask = [.control]
         term.target = self
 
+        // ⌘D toggles the Docker panel. A ⌘-combo reaches the menu even over a focused terminal (unlike the
+        // ⌃` toggle, which needs the key monitor), so the menu item alone suffices.
+        let docker = viewMenu.addItem(withTitle: "Toggle Docker Panel", action: #selector(toggleDockerPanel), keyEquivalent: "d")
+        docker.keyEquivalentModifierMask = [.command]
+        docker.target = self
+
         NSApp.mainMenu = mainMenu
     }
 
     @objc private func toggleQuickTerminal() { QuickTerminalHook.toggle?() }
+    @objc private func toggleDockerPanel() { DockerHook.toggle?() }
+
+    /// Gray out "Toggle Docker Panel" (and disable its ⌘⇧D) when the Docker daemon isn't reachable — the
+    /// status-bar icon hides in that state, so the toggle has nothing to show either.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleDockerPanel) { return model.dockerAvailable }
+        return true
+    }
     @objc private func quickAskItem() { QuickAskHook.toggle?() }
     @objc private func newFileItem() { NewItemHook.newFile?() }
     @objc private func newClaudeSession() { NewItemHook.newClaude?() }

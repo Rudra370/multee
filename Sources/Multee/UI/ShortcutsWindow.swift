@@ -43,6 +43,7 @@ enum Shortcuts {
         ]),
         Section(title: "View", items: [
             Item(name: "Toggle Terminal", keys: "⌃`"),
+            Item(name: "Toggle Docker Panel", keys: "⌘D"),
             Item(name: "Increase Font Size", keys: "⌘+"),
             Item(name: "Decrease Font Size", keys: "⌘−"),
         ]),

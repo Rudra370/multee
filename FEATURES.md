@@ -411,7 +411,8 @@ established before parking it:
 A VS Code-style **bottom-dock panel** to manage the active repo's Docker Compose stack — services,
 their state/ports/logs/shell, and volumes. Entry point is a **shippingbox icon** at the bottom-left of
 the status bar (`UI/StatusBar`, left of the git branch) that **only appears when the Docker daemon is
-reachable** (`AppModel.dockerAvailable`); clicking it toggles the dock (`DockerHook.toggle`). The dock is
+reachable** (`AppModel.dockerAvailable`); clicking it — or **⌘D** (View ▸ Toggle Docker Panel, grayed when
+the daemon is down) — toggles the dock (`DockerHook.toggle`). The dock is
 the **same bottom container the quick terminal uses** — only one occupies it at a time, so each yields to
 the other (`DockerPanelController.show` closes a bottom quick terminal; the quick terminal calls
 `vacateDock()`); see D24.

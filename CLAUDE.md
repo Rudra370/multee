@@ -181,7 +181,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `NewProject` is the ⌘⇧N "New Project" save panel (name + optional `git init` checkbox → create folder → open).
   `DockerPanel` (`DockerPanelController` + `DockerPanel` + `DockerServiceRow`/`DockerVolumeRow`/
   `DockerActionOverlay`/`ComposeFilePickerViewController`) is the **Docker bottom dock** — toggled by the
-  status-bar shippingbox icon (shown only when the daemon is up), **sharing the bottom dock with the quick
+  status-bar shippingbox icon (shown only when the daemon is up) or **⌘D** (View ▸ Toggle Docker Panel,
+  grayed via `validateMenuItem` when the daemon is down), **sharing the bottom dock with the quick
   terminal**. Lists the selected compose file(s)' services (state dot, clickable ports, gated Build/Pull,
   per-row spinner) and volumes; actions run in a watchable `__cmd__` PTY with a peek overlay. `HoverRow`/
   `HoverIconButton`/`ChipButton` (in `DockerPanel.swift`) are the zebra-striped hover rows + hover-brightening
