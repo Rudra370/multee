@@ -5,6 +5,18 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.19] - 2026-06-30
+
+### Added
+- **Toggle the Docker panel with ⌘D** (View ▸ Toggle Docker Panel) — grayed out when Docker isn't running.
+
+### Changed
+- **Markdown preview handles GitHub-style READMEs** — HTML `<img>` images render (at their set size), `<div align="center">` headers center, and `<details>`/`<summary>` no longer show as raw tags.
+
+### Fixed
+- **Updating is far more reliable** — it no longer stalls on an unrelated Homebrew tap or a hidden "proceed? [y/n]" prompt, fails fast instead of hanging on a flaky connection, and shows **Update failed — Retry** instead of spinning forever.
+- **The SESSIONS expand arrow no longer disappears** when the panel is collapsed with several projects open.
+
 ## [0.1.18] - 2026-06-29
 
 ### Added
