@@ -348,6 +348,10 @@ final class SidebarViewController: NSViewController {
         sessionsHeaderLabel.font = .systemFont(ofSize: 11, weight: .semibold)
         sessionsHeaderLabel.textColor = .secondaryLabelColor
         sessionsHeaderLabel.lineBreakMode = .byTruncatingMiddle
+        // Yield to the trailing buttons: with many projects the collapsed names label is long, and at default
+        // compression resistance it pushes the +/chevron off the fixed-width header. Let it truncate instead.
+        sessionsHeaderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        sessionsHeaderLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let gear = ClosureButton(symbol: "gearshape") { [weak self] in self?.model.showSettings = true }
         gear.toolTip = "Settings"
