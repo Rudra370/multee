@@ -8,9 +8,17 @@ enum FileNavigator {
 
 /// Reveal the right sidebar's Search section (select the segment + focus the field). Driven by ⌘⇧F and the
 /// "Find in Files…" palette command — VS Code-style, the shortcut takes you to the search section, and a
-/// button there promotes it to a tab.
+/// button there promotes it to a tab. With the Files panel off (⌘B) there is no section to reveal, so the
+/// implementation opens a search *tab* instead (see `SearchTabFocus`).
 enum SidebarSearchHook {
     static var reveal: (() -> Void)?
+}
+
+/// Focus the query field of the search tab that is **on screen**. Several search tabs can exist (sidebar
+/// "Open as Tab" always makes a fresh one), so the newest `SearchViewController` instance isn't necessarily
+/// the visible one — only `CenterViewController` knows which content view is mounted.
+enum SearchTabFocus {
+    static var focusActive: (() -> Void)?
 }
 
 /// Hands a query + toggle state to the next standalone search tab that opens, so "Open as Tab" carries the
@@ -363,6 +371,7 @@ final class SearchViewController: NSViewController, NSSearchFieldDelegate, NSOut
                                 "matches": nodes.reduce(0) { $0 + $1.matches.count },
                                 "failed": failed]
         if let f = nodes.first, let m = f.matches.first { d["firstFile"] = f.file; d["firstLine"] = m.line }
+        d["focused"] = field.currentEditor() != nil      // non-nil only while the field owns the responder
         return d
     }
 }

@@ -204,6 +204,20 @@ enum DebugAction {
         case "paletteEnter": CommandPaletteController.current?.debugOpenSelected()
         case "paletteClose": CommandPaletteController.current?.dismiss()
         case "sidebarMode":  SidebarViewController.current?.debugSelectMode(Int(arg) ?? 0)   // 0 Files / 1 Changes / 2 Search
+        case "filesPanel":   model.settings.showFilesPanel = (arg == "1")   // show/hide the FILES panel
+        case "windowWidth":  // resize the main window (exercises split constraints at narrow widths)
+            if let win = WorkspaceViewController.current?.view.window, let w = Double(arg) {
+                var f = win.frame; f.size.width = CGFloat(w); win.setFrame(f, display: true)
+            }
+        case "sidebarDrag":  WorkspaceViewController.current?.debugDragSidebar(CGFloat(Double(arg) ?? 300))
+        case "menuKey":      // fire ⌘<char> through the *real* main menu — verifies the item + its wiring
+            if let ch = arg.first,
+               let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                         windowNumber: NSApp.mainWindow?.windowNumber ?? 0, context: nil,
+                                         characters: String(ch), charactersIgnoringModifiers: String(ch),
+                                         isARepeat: false, keyCode: 0) {
+                _ = NSApp.mainMenu?.performKeyEquivalent(with: ev)
+            }
         case "revealSearch":  SidebarSearchHook.reveal?()                         // ⌘⇧F: reveal the sidebar Search
         case "sessionsToggle": SidebarCollapseHook.toggle?()                      // collapse/expand the SESSIONS panel
         case "sessionMove":    // move the named session to the end — verifies moveSession reorder + persistence
@@ -237,7 +251,13 @@ enum DebugState {
         if let p = CommandPaletteController.current?.debugState() { root["palette"] = p }
         if let s = SearchViewController.current?.debugState() { root["search"] = s }
         if let s = SearchViewController.currentTab?.debugState() { root["searchTab"] = s }
+        if let s = CenterViewController.current?.debugActiveSearchState() { root["activeSearchTab"] = s }
         if let a = AttentionItem.current?.debugState() { root["attention"] = a }
+        if let st = SettingsWindowController.current?.debugState() { root["settingsWindow"] = st }
+        if var sb = SidebarViewController.current?.debugState() {
+            WorkspaceViewController.current?.debugState().forEach { sb[$0.key] = $0.value }
+            root["sidebar"] = sb
+        }
         if let q = QuickTerminalController.current?.debugState() { root["quickTerminal"] = q }
         if let d = DockerPanelController.current?.debugStateDict() { root["docker"] = d }
         root["activeSession"] = model.activeSession?.name ?? NSNull()

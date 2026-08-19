@@ -5,6 +5,7 @@ import UserNotifications
 /// Settings window: native checkboxes / stepper / text field bound to `Settings` (UserDefaults),
 /// plus toggleable preset chips for the default Claude args. ESC closes it.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    static weak var current: SettingsWindowController?   // for the debug harness (checkbox states)
     private let settings: Settings
     private var fontLabel: NSTextField!
     private var stepper: NSStepper!
@@ -12,7 +13,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var argsField: NSTextField!
     private var chipButtons: [(flag: String, button: NSButton)] = []
     private var notifyStatus: NSStackView!     // "macOS notifications are off" warning (hidden when on)
+    private var filesPanelBox: NSButton!       // also toggled by ⌘B, so it has to track the setting
     private var escMonitor: Any?
+    private var cancellables = Set<AnyCancellable>()
 
     // Tabs.
     private var segmented: NSSegmentedControl!
@@ -38,6 +41,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.contentView = buildContent()
         window.center()
+        SettingsWindowController.current = self
+
+        // ⌘B / View ▸ Toggle Files Panel flips this while the window is open — keep the box honest.
+        settings.$showFilesPanel
+            .receive(on: RunLoop.main)
+            .sink { [weak self] on in self?.filesPanelBox?.state = on ? .on : .off }
+            .store(in: &cancellables)
+        // Same for ⌘+ / ⌘− (and the terminal's font actions) versus the font stepper.
+        settings.$fontSize
+            .receive(on: RunLoop.main)
+            .sink { [weak self] size in
+                self?.stepper?.integerValue = Int(size)
+                self?.fontLabel?.stringValue = "Font size: \(Int(size)) pt"
+            }
+            .store(in: &cancellables)
 
         // ESC closes the settings window (a local monitor catches it even when a field is focused).
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -51,6 +69,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     deinit { if let escMonitor { NSEvent.removeMonitor(escMonitor) } }
+
+    /// Debug harness: window + checkbox states (an open Settings window isn't in the main-window shot).
+    func debugState() -> [String: Any] {
+        ["visible": window?.isVisible ?? false, "filesPanelBox": filesPanelBox?.state == .on,
+         "fontStepper": stepper?.integerValue ?? -1, "fontLabel": fontLabel?.stringValue ?? ""]
+    }
 
     /// Root: a General | Formatters tab switcher over two panes; the window resizes to fit the active one.
     private func buildContent() -> NSView {
@@ -95,6 +119,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let restore = checkbox("Restore sessions & tabs on launch", \.restoreOnLaunch)
         let monitor = checkbox("Show resource usage (memory / CPU) in the title bar", \.showResourceMonitor)
         let menuBar = checkbox("Show session status in the menu bar", \.showMenuBarStatus)
+        let filesPanel = checkbox("Show the files panel in the sidebar (⌘B)", \.showFilesPanel)
+        filesPanelBox = filesPanel
 
         stepper = NSStepper()
         stepper.minValue = 9; stepper.maxValue = 24; stepper.increment = 1
@@ -147,7 +173,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         argsStack.alignment = .leading
         argsStack.spacing = 8
 
-        let stack = NSStackView(views: [autoLaunch, expand, sound, notify, notifyStatus, restore, monitor, menuBar, fontRow, quickTermRow, argsStack])
+        let stack = NSStackView(views: [autoLaunch, expand, sound, notify, notifyStatus, restore, monitor, menuBar, filesPanel, fontRow, quickTermRow, argsStack])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14

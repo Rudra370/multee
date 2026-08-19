@@ -380,6 +380,32 @@ re-runnable harness. The real `brew upgrade` end-to-end isn't auto-verifiable wi
 stalls, not a connect stall); untapping unrelated taps (not ours to touch); a full rearchitecture away from shelling
 out to brew in a PTY (the terminal approach is intentional — the user watches it run).
 
+### D30 — Hiding the Files panel tears the git stack down; sidebar width is per mode
+**Decision:** ⌘B / the Settings checkbox (`Settings.showFilesPanel`) removes the FILES pane from the sidebar
+split entirely and **destroys the session's `RepoStore`** — no FSEvents watcher, no git poll — instead of
+hiding a view that keeps polling. The status bar's branch, which the store normally bridges, is then fetched
+once per repo (`fetchBranchOnce`). ⌘⇧F falls back to a project-search **tab**. The outer split's width is
+remembered under two keys (`sidebarWidthFiles` / `sidebarWidthSessions`) and AppKit's `autosaveName` was
+**dropped** from that split.
+**Why:** The feature exists for people who never browse files here, and for them the point is that the app
+stops watching the repo — a hidden-but-live tree would keep an FSEvents watcher and a poll timer per session,
+against the performance goal. Removing the pane (rather than `isHidden`) keeps `NSSplitView` honest: a hidden
+arranged subview still owns a divider. Two width keys because a files+sessions sidebar wants ~320pt while a
+sessions-only one is comfortable at ~260 — one shared number leaves a half-empty column after every toggle.
+Shortcuts that only existed inside the panel must land somewhere real, hence the search tab (the `.search`
+tab kind already existed for "Open as Tab").
+**Gotchas that shaped the code** (both cost a debugging round, both are load-bearing):
+`NSSplitView`'s **autosave restores its position *after* the first `viewDidLayout`**, so a width applied there
+is silently overwritten at launch — and `viewDidLayout` then never fires again for later window sizing, so
+convergence has to live in `splitViewDidResizeSubviews`. That notification is **delivered asynchronously**,
+so a "we're moving the divider ourselves" flag around `setPosition` doesn't catch it; our own moves are
+recognised by landing exactly on the computed target (or on the width AppKit's constraints substituted for
+it — `clamp` subtracts `dividerThickness` so it agrees with `constrainMinCoordinate`), and a window resize
+(total width changed) re-asserts the remembered width instead of storing the squeezed one.
+**Verified:** harness runs — launch/toggle/round-trip widths, simulated drags (`sidebarDrag`), ⌘B through the
+real menu (`menuKey:b`), branch with no poller across a session switch, search-tab fallback + dedupe, ⌘P
+with the panel off, no-session toggling, and toggling while the Search/Changes segments are live.
+
 ---
 
 ## How we work (process)

@@ -28,6 +28,9 @@ final class Settings: ObservableObject {
     @Published var showResourceMonitor: Bool { didSet { d.set(showResourceMonitor, forKey: K.resourceMonitor) } }
     /// Show the menu-bar attention item (aggregate session status + jump). On by default.
     @Published var showMenuBarStatus: Bool { didSet { d.set(showMenuBarStatus, forKey: K.menuBarStatus) } }
+    /// Show the sidebar's FILES panel (Files / Changes / Search). Off = a sessions-only sidebar for people
+    /// who juggle projects and never browse files here; also stops this session's git poller entirely.
+    @Published var showFilesPanel: Bool { didSet { d.set(showFilesPanel, forKey: K.filesPanel) } }
     /// How the quick-access terminal (⌃`) opens: floating window / centered overlay / bottom panel.
     @Published var quickTermMode: QuickTermMode { didSet { d.set(quickTermMode.rawValue, forKey: K.quickTermMode) } }
     /// Formatter ids the user has turned off (empty = all enabled).
@@ -52,6 +55,7 @@ final class Settings: ObservableObject {
             K.defaultArgs: "",
             K.resourceMonitor: false,
             K.menuBarStatus: true,
+            K.filesPanel: true,
             K.formatOnSave: false,
             K.quickTermMode: QuickTermMode.floating.rawValue,
         ])
@@ -65,6 +69,7 @@ final class Settings: ObservableObject {
         defaultClaudeArgs = d.string(forKey: K.defaultArgs) ?? ""
         showResourceMonitor = d.bool(forKey: K.resourceMonitor)
         showMenuBarStatus = d.bool(forKey: K.menuBarStatus)
+        showFilesPanel = d.bool(forKey: K.filesPanel)
         quickTermMode = QuickTermMode(rawValue: d.string(forKey: K.quickTermMode) ?? "") ?? .floating
         disabledFormatters = Set((d.array(forKey: K.disabledFormatters) as? [String]) ?? [])
         formatOnSave = d.bool(forKey: K.formatOnSave)
@@ -91,6 +96,7 @@ final class Settings: ObservableObject {
         static let defaultArgs   = "defaultClaudeArgs"
         static let resourceMonitor = "showResourceMonitor"
         static let menuBarStatus = "showMenuBarStatus"
+        static let filesPanel    = "showFilesPanel"
         static let quickTermMode = "quickTermMode"
         static let disabledFormatters = "disabledFormatters"
         static let formatOnSave = "formatOnSave"

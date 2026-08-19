@@ -9,15 +9,23 @@ enum SidebarCollapseHook { static var toggle: (() -> Void)? }
 /// sessions) on the right. A *plain* NSSplitView (not NSSplitViewController) so the divider drags
 /// reliably — the same kind the inner sessions split uses.
 final class WorkspaceViewController: NSViewController, NSSplitViewDelegate {
+    static weak var current: WorkspaceViewController?   // for the debug harness (split geometry)
     private let model: AppModel
     private let centerVC: CenterViewController
     private let sidebarVC: SidebarViewController
     private var didSizeOnce = false
+    private var cancellables = Set<AnyCancellable>()
+    /// The Files-panel mode the current sidebar width belongs to (see `sidebarWidthKey`).
+    private var appliedFilesShown: Bool
+    private var desiredWidth: CGFloat = 0      // this mode's remembered width, *before* clamping to the window
+    private var lastTotalWidth: CGFloat = 0    // to tell a divider drag from a window resize
+    private var lastResultWidth: CGFloat = 0   // width AppKit actually gave after our last move
 
     init(model: AppModel) {
         self.model = model
         self.centerVC = CenterViewController(model: model)
         self.sidebarVC = SidebarViewController(model: model)
+        self.appliedFilesShown = model.settings.showFilesPanel
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -28,7 +36,9 @@ final class WorkspaceViewController: NSViewController, NSSplitViewDelegate {
         let split = NSSplitView()
         split.isVertical = true                 // vertical divider → side-by-side
         split.dividerStyle = .thin
-        split.autosaveName = "MulteeMainSplit"
+        // Deliberately **no** `autosaveName`: the sidebar width is remembered per Files-panel mode (see
+        // `sidebarWidthKey`), and AppKit restores an autosaved position *after* our first layout — it would
+        // silently override the mode's width on every launch. We persist it ourselves instead.
         split.delegate = self
         addChild(centerVC)
         addChild(sidebarVC)
@@ -39,22 +49,81 @@ final class WorkspaceViewController: NSViewController, NSSplitViewDelegate {
         self.view = split
     }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        WorkspaceViewController.current = self
+        // `@Published` publishes in *willSet*, so this closure runs before the flag flips — the one moment
+        // we can still bank the outgoing mode's width before loading (and applying) the incoming one.
+        model.settings.$showFilesPanel
+            .sink { [weak self] shown in
+                guard let self, shown != self.appliedFilesShown else { return }
+                self.storeWidth()
+                self.appliedFilesShown = shown
+                self.desiredWidth = self.storedWidth()
+                self.enforceWidth()
+            }
+            .store(in: &cancellables)
+    }
+
     override func viewDidLayout() {
         super.viewDidLayout()
+        guard !didSizeOnce, let split = view as? NSSplitView, split.bounds.width > 100,
+              split.arrangedSubviews.count > 1 else { return }
+        didSizeOnce = true
+        migrateLegacyWidthIfNeeded()
+        desiredWidth = storedWidth()
+        enforceWidth()
+    }
+
+    /// Re-assert the remembered width for the current mode, clamped to what the window can currently give.
+    /// `viewDidLayout` fires only for the first sizing pass (the split lays its subviews out itself), so the
+    /// window-resize path comes from `splitViewDidResizeSubviews` instead.
+    private func enforceWidth() {
         guard let split = view as? NSSplitView, split.bounds.width > 100,
               split.arrangedSubviews.count > 1 else { return }
         let total = split.bounds.width
-        let sidebarW = split.arrangedSubviews[1].frame.width
-        // First layout: set the default sidebar width if nothing valid was restored.
-        if !didSizeOnce {
-            didSizeOnce = true
-            if sidebarW < 120 || sidebarW > total - 200 {
-                split.setPosition(total - 320, ofDividerAt: 0)
-            }
-        } else if sidebarW < 120 {
-            // Self-heal: the inner split has no intrinsic width, so never let it collapse to nothing.
-            split.setPosition(total - 320, ofDividerAt: 0)
-        }
+        lastTotalWidth = total
+        let target = clamp(desiredWidth, total: total, divider: split.dividerThickness)
+        guard abs(split.arrangedSubviews[1].frame.width - target) > 1 else { return }
+        split.setPosition(total - target - split.dividerThickness, ofDividerAt: 0)
+        lastResultWidth = split.arrangedSubviews[1].frame.width   // what AppKit's constraints allowed
+    }
+
+    /// The sidebar width is remembered **per mode**: files+sessions wants ~320pt, a sessions-only sidebar is
+    /// comfortable at ~260, and sharing one number leaves a half-empty column after every toggle.
+    private func sidebarWidthKey(_ filesShown: Bool) -> String {
+        filesShown ? "sidebarWidthFiles" : "sidebarWidthSessions"
+    }
+
+    private func storedWidth() -> CGFloat {
+        let stored = UserDefaults.standard.double(forKey: sidebarWidthKey(appliedFilesShown))
+        return stored > 0 ? CGFloat(stored) : (appliedFilesShown ? 320 : 260)
+    }
+
+    private func storeWidth() {
+        guard desiredWidth >= 120 else { return }
+        UserDefaults.standard.set(Double(desiredWidth), forKey: sidebarWidthKey(appliedFilesShown))
+    }
+
+    /// Keep both panes usable: the sidebar never below 220pt, the center never below 360pt. The ceiling
+    /// subtracts the divider so it matches what `constrainMinCoordinate` will actually allow — a target
+    /// AppKit has to adjust would otherwise look like a user drag by the difference.
+    private func clamp(_ want: CGFloat, total: CGFloat, divider: CGFloat) -> CGFloat {
+        min(max(want, 220), max(220, total - 360 - divider))
+    }
+
+    /// One-time migration: the outer split used to use AppKit's `autosaveName` ("MulteeMainSplit"). Seed the
+    /// files-mode width from that stored frame so an existing layout survives the upgrade.
+    private func migrateLegacyWidthIfNeeded() {
+        let d = UserDefaults.standard
+        let key = sidebarWidthKey(true)
+        guard d.double(forKey: key) == 0,
+              let frames = d.array(forKey: "NSSplitView Subview Frames MulteeMainSplit") as? [String],
+              frames.count > 1 else { return }
+        // Each entry is "x, y, w, h, collapsed, collapsed"; the sidebar is subview 1.
+        let parts = frames[1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count > 2, let w = Double(parts[2]), w >= 120 else { return }
+        d.set(w, forKey: key)
     }
 
     // Keep both panes usable while dragging.
@@ -62,6 +131,39 @@ final class WorkspaceViewController: NSViewController, NSSplitViewDelegate {
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMax: CGFloat, ofDividerAt dividerIndex: Int) -> CGFloat { splitView.bounds.width - 220 }
     func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
         view !== sidebarVC.view   // on window resize, grow/shrink the center, keep the sidebar
+    }
+
+    /// Remember a **dragged** sidebar width for the current mode. Two things must not be mistaken for a
+    /// drag: a window resize (the available width changed — re-assert the remembered width instead), and our
+    /// own `setPosition` (delivered asynchronously, so a flag around the call can't catch it — but our moves
+    /// land exactly on `target`, which a drag doesn't). Either would quietly rewrite the pref.
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard didSizeOnce, let split = view as? NSSplitView, split.bounds.width > 100,
+              split.arrangedSubviews.count > 1 else { return }
+        let total = split.bounds.width
+        if abs(total - lastTotalWidth) >= 0.5 { enforceWidth(); return }
+        let w = split.arrangedSubviews[1].frame.width
+        // Ignore both the width we asked for and the one AppKit's constraints substituted for it.
+        guard w >= 120, abs(w - clamp(desiredWidth, total: total, divider: split.dividerThickness)) > 1,
+              abs(w - lastResultWidth) > 1 else { return }
+        desiredWidth = w
+        storeWidth()
+    }
+
+    /// Debug harness: move the divider the way a *user drag* does — straight `setPosition`, bypassing
+    /// `enforceWidth` — so the drag-detection path in `splitViewDidResizeSubviews` is exercised for real
+    /// (the sandbox can't synthesize mouse events).
+    func debugDragSidebar(_ width: CGFloat) {
+        guard let split = view as? NSSplitView, split.arrangedSubviews.count > 1 else { return }
+        split.setPosition(split.bounds.width - width - split.dividerThickness, ofDividerAt: 0)
+    }
+
+    /// Debug harness: outer-split geometry (sidebar width can't be read from a screenshot).
+    func debugState() -> [String: Any] {
+        guard let split = view as? NSSplitView, split.arrangedSubviews.count > 1 else { return [:] }
+        return ["sidebarW": Int(split.arrangedSubviews[1].frame.width),
+                "centerW": Int(split.arrangedSubviews[0].frame.width),
+                "desiredW": Int(desiredWidth)]
     }
 }
 
@@ -103,6 +205,11 @@ final class SidebarViewController: NSViewController {
     private var fileActionsBar: NSStackView?   // new file / new folder / collapse-all (Files mode only)
     private var lastShownMode: SidebarMode?     // to fade the pane in only on an actual Files/Changes/Search switch
 
+    // FILES panel on/off (Settings ▸ "Show the files panel…" / ⌘B). Off = sessions-only sidebar.
+    private var filesPane: NSView?
+    private var filesShown: Bool
+    private var branchOnlyRepo: String?          // repo whose branch we fetched one-shot (no poller)
+
     // SESSIONS header + collapse
     private let sessionsHeaderLabel = NSTextField(labelWithString: "SESSIONS")
     private var sessionsScroll: NSScrollView?
@@ -115,6 +222,7 @@ final class SidebarViewController: NSViewController {
 
     init(model: AppModel) {
         self.model = model
+        self.filesShown = model.settings.showFilesPanel
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -127,10 +235,15 @@ final class SidebarViewController: NSViewController {
         split.dividerStyle = .thin
         split.autosaveName = "MulteeSidebarSplit"
 
-        split.addArrangedSubview(makeFilesPane())
+        // The FILES pane is built either way (it's just a segmented control + an empty container, no tree)
+        // so toggling it back on is instant; it's only *in* the split while the panel is on.
+        let files = makeFilesPane()
+        filesPane = files
+        if filesShown { split.addArrangedSubview(files) }
         split.addArrangedSubview(makeSessionsPane())
         sidebarSplit = split
         self.view = split
+        applyFilesPanelChrome()
     }
 
     override func viewDidLayout() {
@@ -160,6 +273,10 @@ final class SidebarViewController: NSViewController {
         SidebarViewController.current = self
         SidebarSearchHook.reveal = { [weak self] in self?.revealSearch() }
         SidebarCollapseHook.toggle = { [weak self] in self?.toggleSessionsCollapsed() }
+        model.settings.$showFilesPanel
+            .receive(on: RunLoop.main)
+            .sink { [weak self] shown in self?.setFilesPanel(shown) }
+            .store(in: &cancellables)
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.refresh() }
@@ -261,7 +378,17 @@ final class SidebarViewController: NSViewController {
 
     /// Rebuild the tree + changes VCs when the active session changes, then show the one for the mode.
     private func syncFileTree() {
-        guard let session = model.activeSession else { teardownSidebarVCs(); currentRepo = nil; return }
+        guard let session = model.activeSession else { teardownSidebarVCs(); currentRepo = nil; branchOnlyRepo = nil; return }
+        // Files panel off → no tree, no Changes, and crucially **no `RepoStore`**: no FSEvents watcher and
+        // no git poll for this session at all. The status bar still needs the branch, which the store would
+        // normally bridge, so fetch it once per repo instead.
+        guard filesShown else {
+            teardownSidebarVCs()
+            currentRepo = nil
+            fetchBranchOnce(session)
+            return
+        }
+        branchOnlyRepo = nil
         if currentRepo != session.url {
             teardownSidebarVCs()
             currentRepo = session.url
@@ -313,6 +440,52 @@ final class SidebarViewController: NSViewController {
         if sidebarMode == .search { DispatchQueue.main.async { [weak self] in self?.searchVC?.focusField() } }
     }
 
+    /// Branch for the status bar without a poller (Files panel off). Deduped per repo — `refresh()` runs on
+    /// every model change.
+    private func fetchBranchOnce(_ session: Session) {
+        guard branchOnlyRepo != session.url else { return }
+        branchOnlyRepo = session.url
+        let repo = session.url
+        DispatchQueue.global().async { [weak session] in
+            let branch = Git.branch(repo)
+            DispatchQueue.main.async { if session?.url == repo { session?.gitBranch = branch } }
+        }
+    }
+
+    /// Add / remove the FILES pane (Settings checkbox or ⌘B). Removing it also tears down the git poller;
+    /// re-adding rebuilds the tree from scratch via `refresh()`.
+    private func setFilesPanel(_ shown: Bool) {
+        guard shown != filesShown, let split = sidebarSplit, let files = filesPane else { return }
+        filesShown = shown
+        collapseDriver?.invalidate(); collapseDriver = nil     // a collapse glide mid-toggle would fight us
+        if shown {
+            split.insertArrangedSubview(files, at: 0)
+            // The autosaved divider position can't help here (the pane count changed), so restore the last
+            // FILES height ourselves.
+            let total = split.bounds.height
+            let stored = CGFloat(UserDefaults.standard.double(forKey: "sidebarFilesHeight"))
+            let target = (stored > 60 && stored < total - 60) ? stored : total * 0.75
+            if total > 0 { split.setPosition(target, ofDividerAt: 0) }
+            didApplyInitialCollapse = false        // re-apply the SESSIONS collapse state on the next layout
+        } else {
+            if split.arrangedSubviews.count > 1 {
+                let h = split.arrangedSubviews[0].frame.height
+                if h > 60 { UserDefaults.standard.set(Double(h), forKey: "sidebarFilesHeight") }
+            }
+            files.removeFromSuperview()            // `removeArrangedSubview` would leave it drawn
+            sessionsScroll?.isHidden = false       // SESSIONS is the whole sidebar now
+        }
+        applyFilesPanelChrome()
+        refresh()
+    }
+
+    /// Sessions-only sidebar: there is nothing to collapse *into*, so the chevron goes away and the list is
+    /// always shown. The collapsed preference itself is kept for when the FILES panel comes back.
+    private func applyFilesPanelChrome() {
+        collapseChevron?.isHidden = !filesShown
+        if !filesShown { sessionsScroll?.isHidden = false }
+    }
+
     private func teardownSidebarVCs() {
         store?.stop(); store = nil
         treeVC?.view.removeFromSuperview(); treeVC?.removeFromParent(); treeVC = nil
@@ -327,16 +500,45 @@ final class SidebarViewController: NSViewController {
         FileNavigator.openAt?(rel, line)
     }
 
-    /// Reveal the Search segment and focus its field (⌘⇧F / "Find in Files…").
+    /// Reveal the Search segment and focus its field (⌘⇧F / "Find in Files…"). With the FILES panel off
+    /// there is no Search segment, so the shortcut opens a project-search **tab** instead of no-op'ing.
     func revealSearch() {
+        guard filesShown else {
+            guard let session = model.activeSession else { return }
+            session.openSearch()
+            // The tab's view is built on the next render pass; focus the field once it exists.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { SearchTabFocus.focusActive?() }
+            return
+        }
         filesModeSeg.selectedSegment = SidebarMode.search.rawValue
         filesModeChanged()          // shows the search pane; showSidebarContent focuses the field
     }
 
     /// Debug harness: select a sidebar segment (0 Files / 1 Changes / 2 Search) as if clicked.
     func debugSelectMode(_ index: Int) {
+        guard filesShown else { return }
         filesModeSeg.selectedSegment = max(0, min(2, index))
         filesModeChanged()
+    }
+
+    /// Debug harness: sidebar structure + geometry (none of it readable from a screenshot).
+    func debugState() -> [String: Any] {
+        var d: [String: Any] = [
+            "filesPanel": filesShown,
+            "panes": sidebarSplit?.arrangedSubviews.count ?? 0,
+            "tree": treeVC != nil,
+            "store": store != nil,
+            "mode": filesModeSeg.selectedSegment,
+            "sessionsCollapsed": sessionsCollapsed,
+            "chevronVisible": !(collapseChevron?.isHidden ?? true),
+            "sessionsListVisible": !(sessionsScroll?.isHidden ?? true),
+            "header": sessionsHeaderLabel.stringValue,
+        ]
+        if let split = sidebarSplit {
+            if split.arrangedSubviews.count > 1 { d["filesH"] = Int(split.arrangedSubviews[0].frame.height) }
+            d["sessionsH"] = Int(split.arrangedSubviews.last?.frame.height ?? 0)
+        }
+        return d
     }
 
     // SESSIONS pane: header (label + settings / open-repo / collapse) over the session list.
@@ -413,6 +615,7 @@ final class SidebarViewController: NSViewController {
 
     /// Toggle the collapsed SESSIONS panel: shrink to just its header (showing session names) and back.
     private func toggleSessionsCollapsed() {
+        guard filesShown else { return }   // nothing to collapse into — SESSIONS is the whole sidebar
         sessionsCollapsed.toggle()
         UserDefaults.standard.set(sessionsCollapsed, forKey: "sessionsCollapsed")
         collapseChevron?.image = NSImage(systemSymbolName: sessionsCollapsed ? "chevron.up" : "chevron.down",
@@ -458,7 +661,7 @@ final class SidebarViewController: NSViewController {
 
     private func rebuildSessions() {
         // Collapsed header shows the open session names instead of "SESSIONS".
-        sessionsHeaderLabel.stringValue = (sessionsCollapsed && !model.sessions.isEmpty)
+        sessionsHeaderLabel.stringValue = (sessionsCollapsed && filesShown && !model.sessions.isEmpty)
             ? model.sessions.map(\.name).joined(separator: ", ") : "SESSIONS"
 
         sessionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }

@@ -436,11 +436,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         docker.keyEquivalentModifierMask = [.command]
         docker.target = self
 
+        // ⌘B hides/shows the sidebar's FILES panel — a sessions-only sidebar for people who never browse
+        // files here (it also stops the git poller; see Settings ▸ "Show the files panel…").
+        let filesPanel = viewMenu.addItem(withTitle: "Toggle Files Panel", action: #selector(toggleFilesPanel), keyEquivalent: "b")
+        filesPanel.keyEquivalentModifierMask = [.command]
+        filesPanel.target = self
+
         NSApp.mainMenu = mainMenu
     }
 
     @objc private func toggleQuickTerminal() { QuickTerminalHook.toggle?() }
     @objc private func toggleDockerPanel() { DockerHook.toggle?() }
+    @objc private func toggleFilesPanel() { model.settings.showFilesPanel.toggle() }
 
     /// Gray out "Toggle Docker Panel" (and disable its ⌘⇧D) when the Docker daemon isn't reachable — the
     /// status-bar icon hides in that state, so the toggle has nothing to show either.

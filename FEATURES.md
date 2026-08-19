@@ -113,6 +113,15 @@ virtualized. Both are fed by **one per-session `RepoStore`** (`UI/RepoStore`): a
 watcher + git poll + the git mutation actions, of which only the *visible* sidebar mode's data is
 fetched. One source of truth, one watcher.
 
+**Files panel on/off (⌘B / Settings)** — the whole FILES panel (Files / Changes / Search) can be hidden,
+leaving a **sessions-only sidebar** for people who juggle projects and never browse files here. Off is not
+just a hidden view: the `RepoStore` is never created, so that session has **no FSEvents watcher and no git
+poll at all**; the status bar's branch (normally bridged from the poller) comes from one `Git.branch` call
+per repo instead. ⌘⇧F / "Find in Files…" opens a project-search **tab** rather than no-op'ing, ⌘P go-to-file
+is unaffected (it reads `Git.repoFiles` directly), and the SESSIONS collapse chevron hides (there is nothing
+to collapse into) while keeping the preference for when the panel returns. The sidebar width is remembered
+**per mode** (~320pt with files, ~260 without) — see D30.
+
 ## Editor — `UI/Editor`, `TextMate/`
 `NSTextView` over a plain `NSTextStorage`, syntax-coloured by a **native TextMate-grammar highlighter**
 (`TextMate/TextMateHighlighter`) — a small engine that runs `.tmLanguage.json` grammars via
@@ -260,7 +269,9 @@ Two surfaces: (1) the **right sidebar's Search segment** — the Files/Changes s
 control (Files / Changes / Search); selecting Search shows the panel and focuses the field. (2) a **standalone
 Search tab** (`TabKind.search`, `⌕` glyph) — a full-width search in the center. **⌘⇧F** (and the palette's
 **Find in Files…**) **reveals the sidebar** Search section via the `SidebarSearchHook.reveal` hook (Format
-Document moved to **⇧⌥F** to free the shortcut). The sidebar panel has an **Open-as-Tab** button (⬈, sidebar
+Document moved to **⇧⌥F** to free the shortcut) — or, when the **Files panel is off** (⌘B), opens/activates a
+search **tab** instead and focuses it through `SearchTabFocus.focusActive`, which `CenterViewController` owns
+because it knows which of several search tabs is actually mounted. The sidebar panel has an **Open-as-Tab** button (⬈, sidebar
 instance only) that opens a **fresh** search tab each time (multiple allowed, titled `Search: <query>`),
 **carrying the query + toggles** via the `SearchSeed` holder, consumed in `CenterViewController.render` when the
 tab activates. Search tabs are **excluded from session restore** (`AppModel.save` filters `.search`, indexing

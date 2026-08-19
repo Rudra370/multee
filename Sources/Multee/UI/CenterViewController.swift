@@ -176,6 +176,13 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         FormatterInstall.run = { [weak self] command in
             self?.model.activeSession?.addTab(Tab(kind: .terminal, title: "Install", args: command))
         }
+        // ⌘⇧F with the Files panel off opens a project-search *tab*; focus the field of the one actually on
+        // screen (`SearchViewController.currentTab` is just the newest instance, which may be a background tab).
+        SearchTabFocus.focusActive = { [weak self] in
+            guard let self, let id = self.model.activeSession?.activeTabID,
+                  let vc = self.contentVCs[id] as? SearchViewController else { return }
+            vc.focusField()
+        }
         // A project-search hit (sidebar / search tab) → open the file in the active session and jump to the line.
         FileNavigator.openAt = { [weak self] rel, line in
             guard let self, let session = self.model.activeSession else { return }
@@ -366,6 +373,12 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             contentVCs[tab.id] = vc
             return vc.view
         }
+    }
+
+    /// Debug harness: state of the search tab that's actually mounted (see `SearchTabFocus`).
+    func debugActiveSearchState() -> [String: Any]? {
+        guard let id = model.activeSession?.activeTabID else { return nil }
+        return (contentVCs[id] as? SearchViewController)?.debugState()
     }
 
     /// A renamed-while-open file: anything hosting an editable source editor (the plain-text editor, plus

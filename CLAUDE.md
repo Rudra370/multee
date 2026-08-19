@@ -49,6 +49,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "treeCollapseAll", "treeRename:old.txt|new.txt", "treeDelete:path",
               "paletteOpen", "paletteCommands", "paletteType:foo", "paletteDown", "paletteUp",
               "paletteEnter", "paletteClose", "sidebarMode:2", "revealSearch", "sessionsToggle", "sessionMove:name",
+              "filesPanel:0|1", "sidebarDrag:300", "menuKey:b", "windowWidth:900",
               "projectSearch:foo",
               "searchOpenFirst", "searchOpenAsTab", "openSearchTab", "projectSearchTab:foo",
               "openAt:file.md|3", "setStatus:done", "hookStatus:0:idle", "activateTab:1",
@@ -135,6 +136,15 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   harness actions (dump the applied fg colour per line / per char — colours can't be read from a screenshot).
 - **Self-screenshot needs layer-backed standard views** to capture; the terminal is the exception
   (see harness note above).
+- **`NSSplitView` autosave restores *after* your first `viewDidLayout`** — a divider position you set there is
+  silently overwritten at launch. And `viewDidLayout` fires only for that first sizing pass (the split lays its
+  own subviews out), so anything that must survive window resizing belongs in `splitViewDidResizeSubviews`.
+  That notification is **delivered asynchronously**, so a "this move is mine" flag around `setPosition` never
+  catches it — recognise your own moves by the width landing exactly on the target you asked for, and treat a
+  changed *total* width as a window resize (re-assert), not a drag (store). Also make your own clamp match
+  `constrainMinCoordinate` **including `dividerThickness`** — a target AppKit has to adjust comes back a few
+  points off and reads as a drag. Bit the per-mode sidebar width (D30): a launch-time clamp at a tiny window
+  size was being stored as if the user had dragged it.
 - **Two cursor mechanisms that don't compose (custom cursors).** AppKit resolves a view's cursor via
   either cursor **rects** (`resetCursorRects`/`addCursorRect`, window-owned) or a **tracking-area
   `cursorUpdate`** callback. Once you interact with *any* cursor-rect view (every `NSButton` registers
@@ -161,7 +171,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   `quickView(sessionID:cwd:)` under a reserved `__quick__<sid>` id; and **command PTYs** under a reserved
   `__cmd__` id for one-shot docker actions — `commandView`/`promoteCommand`/`onCommandExit`), `HookServer`
   (status listener), `Hooks`.
-- `UI/` — `WorkspaceViewController` (split + sidebar), `CenterViewController` (tab bar + content),
+- `UI/` — `WorkspaceViewController` (split + sidebar; owns the per-mode sidebar width and the **⌘B Files-panel
+  on/off**, which removes the FILES pane *and* the session's `RepoStore` — see D30), `CenterViewController` (tab bar + content),
   `TabBarView`, `FileTree` (virtualized tree + a toolbar row: new file / new folder / collapse-all,
   with **inline in-tree naming** like VS Code), `RepoStore` (one per-session git poller — single
   FSEvents watcher + poll + actions, feeds the tree *and* Changes), `Editor` (plain NSTextStorage +
