@@ -5,6 +5,11 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.21] - 2026-08-19
+
+### Fixed
+- **Updates no longer give up on a slow connection.** The updater aborted after 3 minutes and reported *"couldn't reach GitHub"* even while the download was still running — Homebrew shows no progress during it, so the terminal looked frozen. It now downloads first with a much longer budget, shows Homebrew's progress instead of a blank screen, skips a redundant planning pass on Homebrew 6, and — when it genuinely does run out of time — says *"Update timed out — slow connection"*.
+
 ## [0.1.20] - 2026-08-19
 
 ### Added
