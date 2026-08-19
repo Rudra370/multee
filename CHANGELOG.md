@@ -5,6 +5,14 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.20] - 2026-08-19
+
+### Added
+- **Hide the files panel for a sessions-only sidebar — ⌘B** (View ▸ Toggle Files Panel, or Settings ▸ "Show the files panel in the sidebar"). Built for juggling several projects without browsing files here: the sidebar becomes just your session list, and Multee stops watching that project's repo altogether — no file watcher, no git polling — while the branch still shows in the status bar. ⌘⇧F opens search in a tab instead of the sidebar, ⌘P still opens any file, and the sidebar remembers a separate width for each mode.
+
+### Fixed
+- **Settings keeps up with the shortcuts** — the files-panel checkbox and the font size now follow ⌘B and ⌘+/⌘− while the Settings window is open.
+
 ## [0.1.19] - 2026-06-30
 
 ### Added
