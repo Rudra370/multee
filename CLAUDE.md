@@ -68,7 +68,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "dockerActing:web", "dockerOpenPort:8080", "dockerUp", "dockerStopAll", "dockerRestartAll",
               "dockerBuild", "dockerPull", "dockerDown", "dockerConfirm:ok", "dockerLogsAll",
               "dockerOverlayShow", "dockerOverlayOpenAsTab", "dockerVolumes", "dockerVolSize:name",
-              "dockerVolRemove:name", "updateBanner:available|installing|failed"] }
+              "dockerVolRemove:name", "updateBanner:available|installing|failed|timeout", "dumpUpdateCmd:/tmp/x.txt"] }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via

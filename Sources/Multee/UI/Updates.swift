@@ -14,6 +14,9 @@ final class Updates: ObservableObject {
     @Published var dismissed = false      // user hit "Later"
     @Published var installing = false     // brew upgrade kicked off → offer Relaunch
     @Published var installFailed = false  // the update command failed/timed out → offer Retry
+    /// The failure was our own alarm firing, not an error from brew/git — the update was *working*, just
+    /// slower than its budget, so the banner says so instead of blaming the network.
+    @Published var installTimedOut = false
     @Published var brewManaged = false    // app was installed via the Homebrew cask
     private var checking = false
     private var autoCheckTimer: Timer?
@@ -131,51 +134,73 @@ final class Updates: ObservableObject {
         session.addTab(tab)
         let appPath = Bundle.main.bundlePath
         let base = (NSTemporaryDirectory() as NSString).appendingPathComponent("multee-update-\(UUID().uuidString)")
-        let okFlag = base + ".done", failFlag = base + ".fail"
-        // Refresh ONLY our tap (a global `brew update` re-fetches every tap, so an unrelated/slow one can
-        // hang the update — see DECISIONS). `HOMEBREW_NO_AUTO_UPDATE=1` keeps `brew upgrade` from doing its
-        // own global update too. `perl alarm` is a portable timeout (macOS has no `timeout`) so a stalled
-        // GitHub connection fails fast instead of waiting on brew's minutes-long internal retries.
-        // `--force` reinstalls even if brew is unsure; the no-TTY stdin (below) skips the `--ask` Y/N;
-        // `xattr` clears the new app's quarantine.
-        // Exactly one marker is written: `.done` on full success → auto-relaunch; `.fail` on any failure/
-        // timeout/cancel → the banner offers Retry (instead of spinning forever).
-        let timeout = "perl -e 'alarm shift @ARGV; exec @ARGV'"
-        // `{ … } < /dev/null` gives the whole chain a non-TTY stdin, so Homebrew's `--ask`/HOMEBREW_ASK
-        // "proceed? [y/n]" confirmation is skipped (`Ask.confirm?` returns false off a TTY — `NONINTERACTIVE`
-        // alone does NOT gate it) and git can't block on a credential prompt either.
-        let command =
-            "TAP=\"$(brew --repository \(tapRef))\"; { "
-            + "\(timeout) 30 git -C \"$TAP\" fetch --quiet origin HEAD "
-            + "&& git -C \"$TAP\" reset --quiet --hard FETCH_HEAD "
-            + "&& \(timeout) 180 env HOMEBREW_NO_AUTO_UPDATE=1 NONINTERACTIVE=1 brew upgrade --cask --force \(caskRef) "
-            + "&& xattr -dr com.apple.quarantine '\(appPath)' "
-            + "&& touch '\(okFlag)'; } < /dev/null || touch '\(failFlag)'\n"
+        let okFlag = base + ".done", failFlag = base + ".fail", timeoutFlag = base + ".timeout"
+        let command = updateCommand(appPath: appPath, ok: okFlag, fail: failFlag, timedOut: timeoutFlag)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             TerminalStore.shared.send(tab.id, command)
-            self.watchForCompletion(ok: okFlag, fail: failFlag)
+            self.watchForCompletion(ok: okFlag, fail: failFlag, timedOut: timeoutFlag)
         }
         installing = true
         installFailed = false
+        installTimedOut = false
         dismissed = false
     }
 
-    /// Poll for the marker the update command writes: `.done` → relaunch into the new build; `.fail` (or no
-    /// marker within 15 min, e.g. the tab was closed) → surface a failed state so the banner offers Retry.
+    /// The shell chain the Update tab runs. Extracted so the dev harness can dump it verbatim
+    /// (`dumpUpdateCmd`) — the quoting and the exit-code→marker branch are otherwise invisible until a real
+    /// update runs.
+    func updateCommand(appPath: String, ok: String, fail: String, timedOut: String) -> String {
+        // Refresh ONLY our tap (a global `brew update` re-fetches every tap, so an unrelated/slow one can
+        // hang the update — see DECISIONS). `HOMEBREW_NO_AUTO_UPDATE=1` keeps `brew upgrade` from doing its
+        // own global update too. `perl alarm` is a portable timeout (macOS has no `timeout`) — a backstop
+        // against a *frozen* brew, deliberately generous: on a link where dual-stack connects stall ~10s
+        // each (Happy-Eyeballs fallback), a cold cask download legitimately takes minutes, and the old 180s
+        // cap killed working updates (the download is silent, so it looked hung — see DECISIONS D31).
+        // `brew fetch` first so the (slow) download happens under its own budget and the upgrade that
+        // follows is near-instant from the cache. `--verbose` keeps curl's progress meter on screen instead
+        // of a frozen-looking terminal. `--force` reinstalls even if brew is unsure; `xattr` clears the new
+        // app's quarantine.
+        // Exactly one marker is written: `.done` on full success → auto-relaunch; `.timeout` when a step hit
+        // its alarm (SIGALRM → 128+14); `.fail` on any other failure/cancel. Both failures offer Retry.
+        let timeout = "perl -e 'alarm shift @ARGV; exec @ARGV'"
+        let brewEnv = "env HOMEBREW_NO_AUTO_UPDATE=1 NONINTERACTIVE=1"
+        // `{ … } < /dev/null` gives the whole chain a non-TTY stdin, so Homebrew's confirmation prompt is
+        // skipped (`Ask.confirm?` returns false off a TTY — `NONINTERACTIVE` alone does NOT gate it) and git
+        // can't block on a credential prompt either. Homebrew 6 also turned that prompt *on by default*
+        // (`--no-ask` opts out), and merely reaching it costs a full dry-run planning pass — so pass
+        // `--no-ask` when this brew knows the flag (older brews would reject an unknown option).
+        return "TAP=\"$(brew --repository \(tapRef))\"; "
+            + "NOASK=$(brew upgrade --help 2>/dev/null | grep -q -- '--no-ask' && echo --no-ask); { "
+            + "echo '==> Updating Multee — this can take a few minutes on a slow connection' "
+            + "&& \(timeout) 30 git -C \"$TAP\" fetch --quiet origin HEAD "
+            + "&& git -C \"$TAP\" reset --quiet --hard FETCH_HEAD "
+            + "&& \(timeout) 600 \(brewEnv) brew fetch --cask --verbose \(caskRef) "
+            + "&& \(timeout) 600 \(brewEnv) brew upgrade --cask --force --verbose $NOASK \(caskRef) "
+            + "&& xattr -dr com.apple.quarantine '\(appPath)' "
+            + "&& touch '\(ok)'; } < /dev/null "
+            + "|| { s=$?; if [ \"$s\" = 142 ]; then touch '\(timedOut)'; else touch '\(fail)'; fi; }\n"
+    }
+
+    /// Poll for the marker the update command writes: `.done` → relaunch into the new build; `.timeout` /
+    /// `.fail` → surface a failed state so the banner offers Retry. The fallback deadline sits above the
+    /// command's own budget (fetch + upgrade, 600s each) so a slow-but-working update is never declared dead
+    /// while its terminal is still going; it only catches a closed tab / killed shell.
     private var updateWatch: Timer?
-    private func watchForCompletion(ok: String, fail: String) {
+    private func watchForCompletion(ok: String, fail: String, timedOut: String) {
         updateWatch?.invalidate()
-        let deadline = Date().addingTimeInterval(900)
+        let deadline = Date().addingTimeInterval(1500)
         updateWatch = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
             let fm = FileManager.default
+            let markers = [ok, fail, timedOut]
             if fm.fileExists(atPath: ok) {
                 t.invalidate()
-                try? fm.removeItem(atPath: ok); try? fm.removeItem(atPath: fail)
+                markers.forEach { try? fm.removeItem(atPath: $0) }
                 self.relaunch()
-            } else if fm.fileExists(atPath: fail) || Date() > deadline {
+            } else if fm.fileExists(atPath: fail) || fm.fileExists(atPath: timedOut) || Date() > deadline {
                 t.invalidate()
-                try? fm.removeItem(atPath: fail)
+                self.installTimedOut = fm.fileExists(atPath: timedOut)
+                markers.forEach { try? fm.removeItem(atPath: $0) }
                 self.installing = false
                 self.installFailed = true
             }
@@ -294,7 +319,8 @@ final class UpdateBannerView: NSView {
             actionButton.title = "Relaunch"
             whatsNew.isHidden = true
         } else if updates.installFailed {
-            label.stringValue = "Update failed — couldn’t reach GitHub"
+            label.stringValue = updates.installTimedOut ? "Update timed out — slow connection"
+                                                         : "Update failed — couldn’t reach GitHub"
             actionButton.title = "Retry"
             whatsNew.isHidden = true
         } else {

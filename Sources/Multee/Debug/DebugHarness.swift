@@ -230,11 +230,16 @@ enum DebugAction {
         case "projectSearchTab": SearchViewController.currentTab?.debugRun(arg)   // search inside the standalone tab
         case "projectSearch": SearchViewController.current?.debugRun(arg)   // run a sidebar search synchronously
         case "searchOpenFirst": SearchViewController.current?.debugOpenFirst()   // open the first hit at its line
+        case "dumpUpdateCmd":   // write the composed update shell chain (quoting + marker branch) to a file
+            let cmd = Updates.shared.updateCommand(appPath: "/Applications/Multee.app",
+                                                   ok: "/tmp/mu.done", fail: "/tmp/mu.fail", timedOut: "/tmp/mu.timeout")
+            try? cmd.write(toFile: arg.isEmpty ? "/tmp/multee-updatecmd.txt" : arg, atomically: true, encoding: .utf8)
         case "updateBanner":   // drive the update banner into a state for the shot: available | installing | failed
             let u = Updates.shared
             u.latest = "0.1.18"; u.notes = "Test notes."; u.dismissed = false; u.brewManaged = true
             u.installing = (arg == "installing")
-            u.installFailed = (arg == "failed")
+            u.installFailed = (arg == "failed" || arg == "timeout")
+            u.installTimedOut = (arg == "timeout")
         default: break
         }
     }

@@ -406,6 +406,32 @@ it — `clamp` subtracts `dividerThickness` so it agrees with `constrainMinCoord
 real menu (`menuKey:b`), branch with no poller across a session switch, search-tab fallback + dedupe, ⌘P
 with the panel off, no-session toggling, and toggling while the Search/Changes segments are live.
 
+### D31 — The update timeout is a freeze backstop, not a speed limit
+**Decision:** The self-update chain now runs `brew fetch --cask` before `brew upgrade`, gives each step a
+**600s** alarm (was one 180s alarm over the whole upgrade), passes `--verbose` and `--no-ask`, and reports a
+distinct **"Update timed out — slow connection"** state (a `.timeout` marker, written when a step exits 142 =
+128 + SIGALRM) instead of blaming GitHub.
+**Why:** A real report: the update sat at "Upgrading 1 outdated package:" and then failed with *"couldn't
+reach GitHub"*. It was neither hung nor unreachable — on that link a **dual-stack connect stalls ~10s** before
+falling back (measured: `curl -4` 1.07s, `curl -6` 1.09s, plain `curl` 10.9s with 10.03s in connect), so a
+cold cask download took **~78s** of wall time with **zero output** — Homebrew passes curl `--silent` when
+stdout isn't a TTY and shows no progress line before the transfer. Several such requests blew past the 180s
+cap, the alarm killed a *working* upgrade, and the banner told the user the opposite of the truth. Fetching
+first puts the slow part under its own budget (the upgrade that follows is cache-warm: measured **3.0s**);
+`--verbose` keeps curl's meter on screen; the marker split makes the message honest.
+**Also:** Homebrew 6 flipped the confirmation prompt to **on by default** (`cmd/upgrade.rb`:
+`ask = !args.no_ask? && !args.dry_run?`), and merely reaching it costs a full dry-run planning pass — that's
+the `==> Would upgrade …` block users saw before the real run. `--no-ask` skips it, but it's detected at
+runtime (`brew upgrade --help | grep -q -- '--no-ask'`) because older brews reject an unknown flag. The
+`< /dev/null` guard from D29 still does the real work of suppressing the prompt (`Ask.confirm?` returns false
+off a TTY).
+**Verified:** the marker branch exercised for all three outcomes (success → `.done`, exit 1 → `.fail`,
+SIGALRM → `.timeout`), the composed command dumped from the app (`dumpUpdateCmd`) and run end-to-end for real
+(0.1.19 → 0.1.20 in 3.0s, `.done` written, Info.plist reads 0.1.20), and the new banner state rendered via
+`updateBanner:timeout`.
+**Note:** a self-updater only fixes *future* updates — the version doing the updating is the old one, so this
+lands for anyone updating **from 0.1.21 onward**.
+
 ---
 
 ## How we work (process)

@@ -505,6 +505,12 @@ newer version is never snoozed. Skips background checks while an install is mid-
 as "up to date" on a clean 2xx + parseable tag; a **failed** request (offline, timeout, rate-limit) shows a
 *"Couldn't check for updates"* alert on a manual check and stays silent for background checks (next cycle
 retries) — it no longer masquerades as "up to date."
+Installing runs a visible shell chain in an "Update" tab (`Updates.updateCommand`, dumpable via the harness's
+`dumpUpdateCmd`): refresh **only our tap** → `brew fetch --cask` → `brew upgrade --cask --force` → clear
+quarantine → write a marker. Each brew step gets a **600s** alarm as a freeze backstop, and the fetch-first
+split keeps a slow download from starving the upgrade; a step killed by its alarm writes a `.timeout` marker
+so the banner says *"Update timed out — slow connection"* rather than blaming GitHub. See D29 (why we scope to
+our tap and feed it a non-TTY stdin) and D31 (why 180s was killing working updates).
 
 ## Motion / animations — `UI/Motion`
 Shared motion vocabulary (durations, curves, one Reduce-Motion gate) used app-wide; animates only GPU-composited
