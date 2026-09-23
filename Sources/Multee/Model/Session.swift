@@ -61,23 +61,27 @@ final class Session: ObservableObject, Identifiable {
         addTab(Tab(kind: .file, title: "\(prefix)\(n)", path: nil))
     }
 
-    /// Fork a Claude tab into a new, independent session that starts with a copy of the same
-    /// conversation (Claude's `--resume <cid> --fork-session`). Only possible once the source tab has
-    /// captured its conversation id from the hooks — before any real activity there's nothing to fork,
-    /// so this is a no-op then. Carries the source's launch flags (model/permissions) to the fork.
-    /// Returns the new tab's id, or nil if the source isn't a forkable Claude tab yet.
+    /// Fork a Claude or chat tab into a new, independent tab of the same kind that starts with a copy of the
+    /// same conversation (Claude's `--resume <cid> --fork-session`). Only possible once the source tab has
+    /// captured its conversation id — before any real activity there's nothing to fork, so this is a no-op
+    /// then. Carries the source's launch flags (model/permissions) to the fork. Returns the new tab's id,
+    /// or nil if the source isn't forkable yet.
     @discardableResult
-    func forkTab(_ id: String) -> String? {
-        guard let src = tabs.first(where: { $0.id == id }),
-              src.kind == .claude, let cid = src.claudeSessionId else { return nil }
-        let new = addTab(Tab(kind: .claude, title: "Claude (fork)", args: src.args, forkParentId: cid))
+    func forkTab(_ id: String, title: String? = nil) -> String? {
+        guard let src = tabs.first(where: { $0.id == id }), src.kind == .claude || src.kind == .chat,
+              let cid = src.claudeSessionId else { return nil }
+        // A chat fork is named after its source (Claude keeps the name — see ChatSession's fork title); a
+        // terminal fork starts as "Claude (fork)" and takes its first prompt's name.
+        let base = src.title.count > 50 ? String(src.title.prefix(49)) + "…" : src.title
+        let name = title ?? (src.kind == .chat ? "\(base) (fork)" : "Claude (fork)")
+        let new = addTab(Tab(kind: src.kind, title: name, args: src.args, forkParentId: cid))
         return new.id
     }
 
-    /// Can this tab be forked right now (a Claude tab that has captured a conversation id)?
+    /// Can this tab be forked right now (a Claude or chat tab that has captured a conversation id)?
     func canFork(_ id: String) -> Bool {
         guard let t = tabs.first(where: { $0.id == id }) else { return false }
-        return t.kind == .claude && t.claudeSessionId != nil
+        return (t.kind == .claude || t.kind == .chat) && t.claudeSessionId != nil
     }
 
     /// An untitled tab was saved to `path` — adopt it as a real file (path + filename title). The editor
@@ -91,6 +95,7 @@ final class Session: ObservableObject, Identifiable {
     func closeTab(_ id: String) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         TerminalStore.shared.close(id)   // kill the PTY if this tab had one
+        ChatStore.shared.close(id)       // …or its chat's `claude` process (and the background tasks it started)
         tabs.remove(at: idx)
         tabStatus[id] = nil
         if activeTabID == id {
@@ -101,7 +106,7 @@ final class Session: ObservableObject, Identifiable {
 
     /// Kill every PTY this session owns (called when the session itself closes).
     func killTerminals() {
-        for tab in tabs { TerminalStore.shared.close(tab.id) }
+        for tab in tabs { TerminalStore.shared.close(tab.id); ChatStore.shared.close(tab.id) }
         TerminalStore.shared.closeAllQuick(sessionID: id)   // and its quick-access shells, if any were opened
     }
 
@@ -134,6 +139,27 @@ final class Session: ObservableObject, Identifiable {
         tabs[i].title = "Terminal"
         tabs[i].exited = false
         TerminalLifecycle.rebuild?(id)
+    }
+
+    /// Switch a Claude tab between the terminal UI and the native chat in place, keeping its conversation:
+    /// the old process stops, the tab's kind flips, and the view is rebuilt — resuming the same session id.
+    /// Needs a captured conversation id (nothing to carry over before the first exchange). One cold turn on
+    /// the first message after the switch: the two modes send different prompt prefixes (see D23).
+    @discardableResult
+    func switchClaudeUI(_ id: String) -> Bool {
+        guard let i = tabs.firstIndex(where: { $0.id == id }), tabs[i].claudeSessionId != nil,
+              tabs[i].kind == .claude || tabs[i].kind == .chat else { return false }
+        ChatStore.shared.close(id)
+        tabs[i].kind = tabs[i].kind == .chat ? .claude : .chat
+        tabs[i].exited = false
+        TerminalLifecycle.rebuild?(id)
+        return true
+    }
+
+    /// Can this tab switch between terminal UI and chat right now?
+    func canSwitchClaudeUI(_ id: String) -> Bool {
+        guard let t = tabs.first(where: { $0.id == id }) else { return false }
+        return (t.kind == .claude || t.kind == .chat) && t.claudeSessionId != nil
     }
 
     /// Mark a tab as shown (lazy-spawn gate flips on first view).

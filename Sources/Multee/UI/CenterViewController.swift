@@ -147,6 +147,8 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         tabBar.onNewTerminal = { [weak self] in
             self?.model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
         }
+        tabBar.onNewChat = { NewItemHook.newChat?() }
+        tabBar.onSwitchUI = { [weak self] id in self?.model.activeSession?.switchClaudeUI(id) }
         tabBar.onFork        = { [weak self] id in self?.model.activeSession?.forkTab(id) }
         tabBar.onReorder     = { [weak self] dragged, beforeID in
             guard let session = self?.model.activeSession else { return }
@@ -169,6 +171,21 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         super.viewDidLoad()
         CenterViewController.current = self
         TerminalLifecycle.rebuild = { [weak self] tabID in self?.rebuildTerminal(tabID) }
+        ChatHook.openInTerminal = { [weak self] tabID in
+            guard let self else { return }
+            for s in self.model.sessions where s.tabs.contains(where: { $0.id == tabID }) { s.switchClaudeUI(tabID) }
+        }
+        ChatHook.fork = { [weak self] tabID, title in
+            guard let self else { return }
+            for s in self.model.sessions where s.tabs.contains(where: { $0.id == tabID }) { s.forkTab(tabID, title: title) }
+        }
+        ChatHook.openFile = { [weak self] tabID, path in
+            guard let self else { return }
+            for s in self.model.sessions where s.tabs.contains(where: { $0.id == tabID }) { s.openFile(path) }
+        }
+        ChatHook.tabTitle = { [weak self] tabID in
+            self?.model.sessions.lazy.compactMap { $0.tabs.first { $0.id == tabID }?.title }.first
+        }
         // Let the unsaved-changes guard save any (already-mounted) editor tab by id, without it needing
         // to know about view controllers. A dirty tab has always been viewed, so its editor exists here.
         UnsavedGuard.saveTab = { [weak self] id in (self?.contentVCs[id] as? SourceEditing)?.sourceEditor?.saveImmediately() ?? true }
@@ -270,6 +287,9 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             if let search = contentVCs[tab.id] as? SearchViewController {
                 DispatchQueue.main.async { search.focusField() }
             }
+            if let chat = contentVCs[tab.id] as? ChatViewController {
+                DispatchQueue.main.async { chat.focusInput() }
+            }
         }
 
         // A search hit opened this file → jump to its line now the editor exists & is active (after any
@@ -318,6 +338,7 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         TerminalStore.shared.close(tabID)            // terminate the old PTY + remove the old view
         contentViews[tabID]?.removeFromSuperview()
         contentViews[tabID] = nil
+        contentVCs[tabID]?.removeFromParent()        // a chat tab switching to the terminal UI owns a VC
         contentVCs[tabID] = nil
         contentPaths[tabID] = nil
         render()                                     // contentViews[id] == nil → spawns a fresh terminal
@@ -364,6 +385,11 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             addChild(vc)
             contentVCs[tab.id] = vc
             return vc.view
+        case .chat:
+            let vc = ChatViewController(tab: tab, repo: session, settings: model.settings)
+            addChild(vc)
+            contentVCs[tab.id] = vc
+            return vc.view
         case .search:
             // A full-width project search in the center. `isPrimary: false` so it doesn't steal the
             // sidebar instance's `SearchViewController.current` (the harness target).
@@ -373,6 +399,12 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             contentVCs[tab.id] = vc
             return vc.view
         }
+    }
+
+    /// Debug harness: the chat tab that's actually mounted and active.
+    func debugActiveChat() -> ChatViewController? {
+        guard let id = model.activeSession?.activeTabID else { return nil }
+        return contentVCs[id] as? ChatViewController
     }
 
     /// Debug harness: state of the search tab that's actually mounted (see `SearchTabFocus`).
@@ -517,6 +549,8 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
             TerminalStore.shared.focus(tab.id)
         case .file:
             (contentVCs[tab.id] as? EditorViewController)?.focusText()
+        case .chat:
+            (contentVCs[tab.id] as? ChatViewController)?.focusInput()
         default:
             break
         }

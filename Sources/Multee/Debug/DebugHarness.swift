@@ -24,11 +24,29 @@ enum DebugHarness {
                 delay += 0.9
             }
         }
+        // Live channel: append action lines to this file while the app runs; each is executed once, in
+        // order, then the file is emptied. Lets a test wait on the state dump between steps (LLM turns take
+        // variable time) instead of guessing fixed delays up front.
+        if let live = cfg["live"] as? String {
+            try? "".write(toFile: live, atomically: true, encoding: .utf8)
+            Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { _ in
+                guard let text = try? String(contentsOfFile: live, encoding: .utf8), !text.isEmpty else { return }
+                try? "".write(toFile: live, atomically: true, encoding: .utf8)
+                for line in text.split(separator: "\n") where !line.isEmpty { DebugAction.run(String(line), model) }
+            }
+        }
     }
 }
 
 /// Scripted actions that drive the model so features can be verified without a human.
 enum DebugAction {
+    private static var chat: ChatViewController? { CenterViewController.current?.debugActiveChat() }
+    /// The window key events go to: the key/main one, or — with Multee in the background, where both are
+    /// nil — its visible workspace window (the harness never pulls the app to the front).
+    private static var harnessWindow: NSWindow? {
+        NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeMain }
+    }
+
     static func run(_ action: String, _ model: AppModel) {
         let parts = action.split(separator: ":", maxSplits: 1).map(String.init)
         let cmd = parts[0]
@@ -106,6 +124,134 @@ enum DebugAction {
             let dump = DockerPanelController.current?.debugDump() ?? "<no docker>"
             try? dump.write(toFile: arg.isEmpty ? "/tmp/multee-docker.txt" : arg, atomically: true, encoding: .utf8)
         case "newTerminal":    model.activeSession?.addTab(Tab(kind: .terminal, title: "Terminal"))
+        // Chat tab (native Claude UI). Actions target the active chat tab.
+        case "newChat":        NewItemHook.newChat?()
+        case "chatOpenSession": // a chat tab resuming an existing conversation id (history + scroll tests)
+            model.activeSession?.addTab(Tab(kind: .chat, title: "Chat", args: model.settings.defaultArgs, claudeSessionId: arg))
+        case "chatSend":       chat?.debugSend(arg)                       // as if typed + sent (local /commands included)
+        case "chatType":       chat?.debugSetInput(arg)                   // set the input text (completion popup updates)
+        case "chatSubmit":     chat?.debugSubmitInput()
+        case "chatKey":        // esc | shiftTab | up | down | enter | tab | optEnter — through the input's key routing
+            let sel: Selector? = ["esc": #selector(NSResponder.cancelOperation(_:)), "shiftTab": #selector(NSResponder.insertBacktab(_:)),
+                                  "up": #selector(NSResponder.moveUp(_:)), "down": #selector(NSResponder.moveDown(_:)),
+                                  "enter": #selector(NSResponder.insertNewline(_:)), "tab": #selector(NSResponder.insertTab(_:)),
+                                  "optEnter": #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:))][arg]
+            if let sel { chat?.debugKey(sel) }
+        case "chatAllow":      chat?.debugPromptPress(nil)                // the prompt card's primary button
+        case "chatAnswer":     chat?.debugPromptPress(arg)                // pick an AskUserQuestion option by label
+        case "chatDeny":       chat?.debugDeny()
+        case "chatDenyMsg":    chat?.debugPromptFeedback(arg); chat?.debugPromptDeny()   // "tell Claude what to do instead"
+        case "chatAllowAlways": chat?.debugAllowAlways()
+        case "chatInterrupt":  chat?.session.interrupt()
+        case "chatMode":       chat?.session.setPermissionMode(arg)
+        case "chatCycleMode":  chat?.session.cycleMode()
+        case "chatModel":      chat?.session.setModel(arg)
+        case "chatTasks":      chat?.debugToggleTasks()
+        case "chatLog":        chat?.debugShowLog(Int(arg) ?? 0)
+        case "chatStopTask":   chat?.debugStopTask(Int(arg) ?? 0)
+        case "chatClearTasks": chat?.session.clearFinishedTasks()
+        case "chatScroll":     chat?.debugScroll(CGFloat(Double(arg) ?? 0))   // 0 = top … 1 = bottom
+        case "chatToggleItem": chat?.debugToggleItem(Int(arg) ?? -1)      // expand/collapse (negative = from the end)
+        case "chatLoadEarlier": chat?.session.loadEarlier()
+        case "chatContext":    chat?.debugContext()
+        case "chatRestart":    chat?.session.restart()
+        case "chatTrust":      chat?.session.trustAndStart()
+        case "chatKill":       if let pid = chat?.session.processID { kill(pid, SIGKILL) }   // simulate a crash
+        case "keyEvent":   // a real key-down through NSApp.sendEvent (the whole responder path):
+                           // shiftTab|tab|esc|enter|space|up|down|left|right|<char>
+            func fn(_ k: Int) -> String { String(Character(UnicodeScalar(UInt32(k))!)) }
+            let specs: [String: (UInt16, String, NSEvent.ModifierFlags)] = [
+                "shiftTab": (48, "\u{19}", .shift), "tab": (48, "\t", []), "esc": (53, "\u{1b}", []), "enter": (36, "\r", []),
+                "space": (49, " ", []), "delete": (51, "\u{8}", []),
+                "fwdDelete": (117, fn(NSDeleteFunctionKey), [.function]),
+                "up": (126, fn(NSUpArrowFunctionKey), [.numericPad, .function]),
+                "down": (125, fn(NSDownArrowFunctionKey), [.numericPad, .function]),
+                "left": (123, fn(NSLeftArrowFunctionKey), [.numericPad, .function]),
+                "right": (124, fn(NSRightArrowFunctionKey), [.numericPad, .function]),
+                // ⌘V goes through the Edit menu's key equivalent, not a key binding — the only way to test
+                // that AppKit even *enables* Paste for what is on the clipboard. Needs Multee frontmost.
+                "cmdV": (9, "v", .command)]
+            let (code, chars, mods) = specs[arg] ?? (0, arg, [])
+            if let win = Self.harnessWindow,
+               let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: win.windowNumber, context: nil, characters: chars,
+                                         charactersIgnoringModifiers: arg == "shiftTab" ? "\t" : chars, isARepeat: false, keyCode: code) {
+                // With Multee in the background there is no key window and NSApp drops key events — hand
+                // it to the window itself then (same responder path; only menu key equivalents are skipped).
+                if NSApp.keyWindow != nil { NSApp.sendEvent(ev) } else { win.sendEvent(ev) }
+            }
+        case "dumpResponder":   // what has keyboard focus (class names up the chain)
+            var chain: [String] = []
+            var r = Self.harnessWindow?.firstResponder
+            while let x = r, chain.count < 8 { chain.append(String(describing: type(of: x))); r = x.nextResponder }
+            try? chain.joined(separator: " → ").write(toFile: arg.isEmpty ? "/tmp/multee-responder.txt" : arg, atomically: true, encoding: .utf8)
+        case "chatResume":     chat?.debugShowResume()                    // open the resume picker
+        case "chatResumePick": chat?.debugResumePick(Int(arg) ?? 0)
+        case "chatRemote":     chat?.session.setRemoteControl(arg != "off")
+        case "chatEffort":     chat?.session.setEffort(arg)
+        case "chatModeTo":     chat?.debugChangeMode(arg)                 // through the bypass confirmation
+        case "chatCycleUI":    chat?.debugCycle()                         // ⇧⇥ path incl. confirmation
+        case "chatOtherModel": chat?.debugOtherModel()                    // the model menu's "Other model…" card
+        case "chatPasteImage": chat?.debugPasteImage(arg, asFile: false)  // copy an image, then ⌘V into the box
+        case "chatPasteImageFile": chat?.debugPasteImage(arg, asFile: true)   // …as a file (Finder copy)
+        case "chatPasteText":  chat?.debugPasteText(arg)                  // plain text still pastes as text
+        case "chatPasteImageData": chat?.debugPasteImageData(arg)         // raw bytes under one type (clipboard managers)
+        case "dumpPasteEnabled": // is Edit ▸ Paste enabled for what's on the clipboard (i.e. would ⌘V fire)
+            try? (chat?.debugPasteEnabled() ?? "no chat").write(toFile: arg.isEmpty ? "/tmp/multee-paste-enabled.txt" : arg,
+                                                                atomically: true, encoding: .utf8)
+        case "chatUndo":       chat?.debugUndo()                          // ⌘Z in the message box
+        case "chatMenuPaste":  chat?.debugMenuPaste()                     // paste down the responder chain, as the menu does
+        case "dumpPasteboard": // what's on the clipboard right now (diagnosing a clipboard manager's paste)
+            let items = NSPasteboard.general.pasteboardItems ?? []
+            let dump = items.enumerated().map { i, item in
+                "item \(i): " + item.types.map { t in "\(t.rawValue)(\(item.data(forType: t)?.count ?? 0)B)" }.joined(separator: ", ")
+            }.joined(separator: "\n")
+            try? dump.write(toFile: arg.isEmpty ? "/tmp/multee-pasteboard.txt" : arg, atomically: true, encoding: .utf8)
+        case "chatConfirm":    ChatConfirm.debugResponse = arg.isEmpty ? nil : (arg == "ok")   // canned answer for a chat card (ok = its yes choice)
+        case "chatChoice":     ChatConfirm.debugChoice = Int(arg)          // canned multi-button answer (rewind); empty = ask
+        case "chatSavePath":   ChatConfirm.debugSavePath = arg.isEmpty ? nil : arg   // /export without a file → here
+        case "chatPick":       chat?.debugResumePick(Int(arg) ?? 0)        // pick the n-th entry of the open picker
+        case "dumpClipboard":
+            try? (NSPasteboard.general.string(forType: .string) ?? "").write(toFile: arg.isEmpty ? "/tmp/multee-clipboard.txt" : arg, atomically: true, encoding: .utf8)
+        case "chatCopyCode":   // press the n-th visible code block's Copy button, then dump the pasteboard
+            _ = chat?.debugPressCopy(Int(arg) ?? 0)
+            try? (NSPasteboard.general.string(forType: .string) ?? "").write(toFile: "/tmp/multee-clipboard.txt", atomically: true, encoding: .utf8)
+        case "chatOpenInTerminal": chat?.openInTerminal()                  // the status line's terminal button
+        case "chatSubmitAnswers": chat?.debugPromptPress(nil)             // question card: Submit
+        case "switchUI":       if let s = model.activeSession { s.switchClaudeUI(s.activeTabID) }
+        case "chatScrollBench":   // scroll the whole transcript, write frame times + jump count
+            if let r = chat?.debugScrollBenchmark(), let d = try? JSONSerialization.data(withJSONObject: r, options: [.prettyPrinted, .sortedKeys]) {
+                try? d.write(to: URL(fileURLWithPath: arg.isEmpty ? "/tmp/multee-chatbench.json" : arg))
+            }
+        case "chatMarkdownSelfTest":   // render edge-case Markdown off-main (hang/slowness regression), write timings
+            let out = arg.isEmpty ? "/tmp/multee-mdtest.json" : arg
+            DispatchQueue.global().async {
+                let long = String(repeating: "word ", count: 20_000)
+                let cases: [String] = ["", "#", "#foo", "#!/bin/sh", "# ", "####### seven", "|", "| a | b", "a|b\n|---|",
+                    "|---|", ">", "> q\n#x", "```", "```\nunclosed", "~~~\nx", "- ", "-", "1.", "1. ", "---", "***", "* * *",
+                    "   ", "\t- tab item", "- [ ] task\n- [x] done", "a\r\nb\r\n", "emoji 🚀👩‍💻 ok", "**unclosed bold",
+                    "`unclosed code", "[link](http://x", long, String(repeating: "line\n", count: 5000),
+                    String(repeating: "#tag ", count: 3000), String(repeating: "| x\n", count: 3000)]
+                let style = ChatStyle(size: 13)
+                var times: [String: Double] = [:]
+                let t0 = CFAbsoluteTimeGetCurrent()
+                for (n, c) in cases.enumerated() {
+                    let t = CFAbsoluteTimeGetCurrent()
+                    _ = ChatMarkdown.render(c, style: style)
+                    times["case\(n)"] = (CFAbsoluteTimeGetCurrent() - t) * 1000
+                }
+                let total = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                let r: [String: Any] = ["cases": cases.count, "totalMs": total, "maxMs": times.values.max() ?? 0, "perCaseMs": times]
+                if let d = try? JSONSerialization.data(withJSONObject: r, options: [.sortedKeys]) { try? d.write(to: URL(fileURLWithPath: out)) }
+            }
+        case "dumpChat":       // full chat state (items, prompt, tasks, footer, transcript geometry) + visible text
+            if let c = chat {
+                var st = c.debugState()
+                st["visibleText"] = c.debugVisibleText()
+                if let d = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted, .sortedKeys]) {
+                    try? d.write(to: URL(fileURLWithPath: arg.isEmpty ? "/tmp/multee-chat.json" : arg))
+                }
+            }
         case "newProject":   // path|git — create a folder (optionally git init) + open it (skips the HID save panel)
             let p = arg.split(separator: "|", maxSplits: 1).map(String.init)
             NewProject.create(at: p.first ?? "", initGit: p.count > 1 && p[1] == "git", model: model)
@@ -265,6 +411,12 @@ enum DebugState {
         }
         if let q = QuickTerminalController.current?.debugState() { root["quickTerminal"] = q }
         if let d = DockerPanelController.current?.debugStateDict() { root["docker"] = d }
+        if let c = CenterViewController.current?.debugActiveChat() {
+            let s = c.debugState()
+            root["chat"] = s.filter { ["run", "working", "activity", "cid", "model", "mode", "contextPercent", "itemCount",
+                                       "prompt", "promptVisible", "tasks", "footer", "activityText", "transcript",
+                                       "completion", "inputText", "tasksVisible"].contains($0.key) }
+        }
         root["activeSession"] = model.activeSession?.name ?? NSNull()
         root["branch"] = model.activeSession?.gitBranch ?? NSNull()
         if let ed = ActiveEditor.current {

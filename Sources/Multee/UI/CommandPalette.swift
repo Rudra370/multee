@@ -201,9 +201,15 @@ final class CommandPaletteController: NSObject, NSTextFieldDelegate, NSTableView
             c.append(PaletteCommand(title: "New Claude Session", keepsOpen: false) { [weak self] in
                 s.addTab(Tab(kind: .claude, title: "Claude", args: self?.model.settings.defaultArgs ?? ""))
             })
+            c.append(PaletteCommand(title: "New Claude Chat", keepsOpen: false) { NewItemHook.newChat?() })
             c.append(PaletteCommand(title: "New Terminal", keepsOpen: false) {
                 s.addTab(Tab(kind: .terminal, title: "Terminal"))
             })
+            if let t = s.activeTab, s.canSwitchClaudeUI(t.id) {
+                c.append(PaletteCommand(title: t.kind == .chat ? "Open Chat in Terminal UI" : "Open Claude Tab as Chat", keepsOpen: false) {
+                    s.switchClaudeUI(t.id)
+                })
+            }
         }
         if ActiveEditor.current != nil {
             c.append(PaletteCommand(title: "Format Document", keepsOpen: false) {

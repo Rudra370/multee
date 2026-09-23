@@ -13,6 +13,7 @@ enum NewItemHook {
     static var newFile: (() -> Void)?             // new blank untitled editor tab (⌘N)
     static var newClaude: (() -> Void)?           // new Claude tab, default args (⌘⇧C)
     static var newClaudeWithArgs: (() -> Void)?   // pop the args preset menu (⌘⌥C)
+    static var newChat: (() -> Void)?             // new native Claude chat tab (⌘⇧M)
     static var newTerminal: (() -> Void)?         // ⌃⇧`: quick shell if the panel is open, else a terminal tab
 }
 
@@ -59,6 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         NewItemHook.newClaude = { [weak self] in
             guard let self, let s = self.model.activeSession else { return }
             s.addTab(Tab(kind: .claude, title: "Claude", args: self.model.settings.defaultArgs))
+        }
+        NewItemHook.newChat = { [weak self] in
+            guard let self, let s = self.model.activeSession else { return }
+            s.addTab(Tab(kind: .chat, title: "Chat", args: self.model.settings.defaultArgs))
         }
         NewItemHook.newClaudeWithArgs = { [weak self] in
             guard self?.model.activeSession != nil else { return }   // no repo → no tab bar to anchor the menu
@@ -193,10 +198,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let self else { return }
             for session in self.model.sessions {
                 guard let i = session.tabs.firstIndex(where: { $0.id == tabID }) else { continue }
-                if session.tabs[i].kind == .claude, Self.isDefaultClaudeTitle(session.tabs[i].title) {
+                if session.tabs[i].kind == .claude || session.tabs[i].kind == .chat, Self.isDefaultClaudeTitle(session.tabs[i].title) {
                     session.tabs[i].title = Self.cappedName(prompt)
                 }
                 return
+            }
+        }
+        // Chat tabs report the same three things from their stream instead of hooks — route them identically
+        // (status dot + "done" debounce + notifications, `--resume` id capture, first-prompt naming).
+        ChatStore.shared.onStatus = { tabID, state in HookServer.shared.onStatus?(tabID, state) }
+        ChatStore.shared.onClaudeId = { tabID, cid in HookServer.shared.onClaudeId?(tabID, cid) }
+        ChatStore.shared.onPrompt = { tabID, prompt in HookServer.shared.onPrompt?(tabID, prompt) }
+        ChatStore.shared.onArgs = { [weak self] tabID, args in
+            for s in self?.model.sessions ?? [] {
+                if let i = s.tabs.firstIndex(where: { $0.id == tabID }) { s.tabs[i].args = args }
             }
         }
         // A tab's process exited (typed `exit`, Claude quit) → flag it so the "Session ended" bar appears.
@@ -212,7 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     /// The placeholder titles a Claude tab carries before it's named after its conversation.
-    private static func isDefaultClaudeTitle(_ s: String) -> Bool { s == "Claude" || s == "Claude (fork)" }
+    private static func isDefaultClaudeTitle(_ s: String) -> Bool { s == "Claude" || s == "Claude (fork)" || s == "Chat" }
 
     /// Tidy a raw prompt / transcript title into a one-line tab label, capped so chips don't grow unbounded
     /// (the chip truncates visually too, and shows the full text in its tooltip).
@@ -229,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// showing "Claude" until you interacted with it. Each call is debounced inside `scheduleTitleRefresh`.
     private func refreshAllClaudeTitles() {
         for session in model.sessions {
-            for tab in session.tabs where tab.kind == .claude && tab.claudeSessionId != nil {
+            for tab in session.tabs where (tab.kind == .claude || tab.kind == .chat) && tab.claudeSessionId != nil {
                 scheduleTitleRefresh(tabID: tab.id, sessionID: session.id)
             }
         }
@@ -246,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // Read the id at fire time (it may have been captured after this was scheduled).
             guard let session = self.model.sessions.first(where: { $0.id == sessionID }),
                   let i = session.tabs.firstIndex(where: { $0.id == tabID }),
-                  session.tabs[i].kind == .claude,
+                  session.tabs[i].kind == .claude || session.tabs[i].kind == .chat,
                   let cid = session.tabs[i].claudeSessionId else { return }
             self.titleQueue.async {
                 guard let title = ClaudeTranscript.title(forSessionId: cid) else { return }
@@ -286,6 +301,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Chat tabs' `claude` processes are plain children (not PTYs) — stop them explicitly so they, and the
+    /// servers/watchers they started, don't outlive the app.
+    func applicationWillTerminate(_ notification: Notification) { ChatStore.shared.terminateAll() }
 
     /// Quit (⌘Q, menu, or the red close button funnelled through here by MainWindowController): confirm
     /// before discarding unsaved edits across every session.
@@ -367,6 +386,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let newClaudeArgs = fileMenu.addItem(withTitle: "New Claude with Args…", action: #selector(newClaudeWithArgs), keyEquivalent: "c")
         newClaudeArgs.keyEquivalentModifierMask = [.command, .option]
         newClaudeArgs.target = self
+        let newChat = fileMenu.addItem(withTitle: "New Claude Chat", action: #selector(newChatItem), keyEquivalent: "m")
+        newChat.keyEquivalentModifierMask = [.command, .shift]
+        newChat.target = self
         let newTerm = fileMenu.addItem(withTitle: "New Terminal", action: #selector(newTerminalItem), keyEquivalent: "`")
         newTerm.keyEquivalentModifierMask = [.control, .shift]
         newTerm.target = self
@@ -460,6 +482,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc private func newClaudeSession() { NewItemHook.newClaude?() }
     @objc private func newClaudeWithArgs() { NewItemHook.newClaudeWithArgs?() }
     @objc private func newTerminalItem() { NewItemHook.newTerminal?() }
+    @objc private func newChatItem() { NewItemHook.newChat?() }
 
     @objc private func appBecameActive() {
         guard let s = model.activeSession else { return }

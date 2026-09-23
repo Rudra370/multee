@@ -18,27 +18,41 @@ enum ClaudeTranscript {
     }
 
     /// The best display name for a Claude session, or nil if none yet (the transcript doesn't exist).
-    /// Prefers Claude's own auto-generated **`ai-title`** (what it shows in the `--resume` picker); falls
-    /// back to the session's **first user prompt** — `ai-title` isn't generated for short conversations,
-    /// so without the fallback brand-new/short sessions would never get a name beyond "Claude".
+    /// Prefers a name the user gave (**`custom-title`** — `/rename`, a named chat fork), then Claude's own
+    /// auto-generated **`ai-title`** (what it shows in the `--resume` picker); falls back to the session's
+    /// **first user prompt** — `ai-title` isn't generated for short conversations, so without the fallback
+    /// brand-new/short sessions would never get a name beyond "Claude".
     static func title(forSessionId id: String) -> String? {
         guard let path = file(forSessionId: id) else { return nil }
-        return aiTitle(path: path) ?? firstPrompt(path: path)
+        return title(path: path)
     }
 
-    /// Claude's `ai-title` — rewritten periodically, so the newest is always near the end. **Tail 256 KB**
-    /// keeps the cost flat no matter how large the file grows; a sliced leading partial line just fails to
-    /// parse and is skipped.
-    private static func aiTitle(path: String) -> String? {
+    /// Same, for a transcript file already in hand (the chat's resume picker lists a folder's files).
+    static func title(path: String) -> String? {
+        let tail = tailText(path: path)
+        return tail.flatMap { latest(in: $0, type: "custom-title", key: "customTitle") }
+            ?? tail.flatMap { latest(in: $0, type: "ai-title", key: "aiTitle") }
+            ?? firstPrompt(path: path)
+    }
+
+    /// The transcript's last 256 KB. Claude re-appends its session metadata (`custom-title`, `ai-title`)
+    /// every turn, so the newest is always near the end; the bounded tail keeps the cost flat no matter how
+    /// large the file grows (a sliced leading partial line just fails to parse and is skipped).
+    private static func tailText(path: String) -> String? {
         guard let h = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? h.close() }
         let tail: UInt64 = 256 * 1024
         guard let size = try? h.seekToEnd() else { return nil }
         try? h.seek(toOffset: size > tail ? size - tail : 0)
-        guard let data = try? h.readToEnd(), let text = String(data: data, encoding: .utf8) else { return nil }
+        guard let data = try? h.readToEnd() else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// The newest `key` of the `type` records in `text` (last wins).
+    private static func latest(in text: String, type: String, key: String) -> String? {
         var latest: String?
-        for line in text.split(separator: "\n") where line.contains("\"ai-title\"") {
-            if let v = jsonString(line, key: "aiTitle") { latest = v }   // keep scanning → last wins
+        for line in text.split(separator: "\n") where line.contains("\"\(type)\"") {
+            if let v = jsonString(line, key: key) { latest = v }
         }
         return latest
     }

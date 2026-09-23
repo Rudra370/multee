@@ -68,7 +68,22 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "dockerActing:web", "dockerOpenPort:8080", "dockerUp", "dockerStopAll", "dockerRestartAll",
               "dockerBuild", "dockerPull", "dockerDown", "dockerConfirm:ok", "dockerLogsAll",
               "dockerOverlayShow", "dockerOverlayOpenAsTab", "dockerVolumes", "dockerVolSize:name",
-              "dockerVolRemove:name", "updateBanner:available|installing|failed|timeout", "dumpUpdateCmd:/tmp/x.txt"] }
+              "dockerVolRemove:name", "updateBanner:available|installing|failed|timeout", "dumpUpdateCmd:/tmp/x.txt",
+              "newChat", "chatOpenSession:<cid>", "chatSend:text", "chatType:text", "chatSubmit",
+              "chatKey:esc|shiftTab|up|down|enter|tab|optEnter", "chatAllow", "chatAllowAlways", "chatDeny",
+              "chatDenyMsg:text", "chatAnswer:label", "chatSubmitAnswers", "chatInterrupt", "chatMode:plan",
+              "chatCycleMode", "chatModel:haiku", "chatTasks", "chatLog:0", "chatStopTask:0", "chatClearTasks",
+              "chatScroll:0.5", "chatToggleItem:-1", "chatLoadEarlier", "chatContext", "chatRestart", "chatTrust",
+              "chatKill", "chatOpenInTerminal", "switchUI", "chatScrollBench:/tmp/x.json",
+              "chatMarkdownSelfTest:/tmp/x.json", "dumpChat:/tmp/x.json", "chatResume", "chatResumePick:0",
+              "chatRemote:on|off", "chatEffort:low", "chatModeTo:bypassPermissions", "chatCycleUI", "chatConfirm:ok",
+              "chatCopyCode:0", "keyEvent:shiftTab|tab|esc|enter|space|delete|fwdDelete|up|down|left|right|cmdV|<char>",
+              "dumpResponder:/tmp/x.txt",
+              "chatPick:0", "chatChoice:0", "chatSavePath:/tmp/x.md", "dumpClipboard:/tmp/x.txt", "chatOtherModel",
+              "chatPasteImage:/tmp/x.png", "chatPasteImageFile:/tmp/x.png", "chatPasteImageData:/tmp/x.png",
+              "chatPasteText:hi", "dumpPasteboard:/tmp/x.txt", "dumpPasteEnabled:/tmp/x.txt", "chatMenuPaste",
+              "chatUndo"],
+  "live": "/tmp/multee-cmd" }
 ```
 - `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
@@ -78,6 +93,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - `state` → UI + active-terminal state each 1s (active session/tab, tab list, terminal rows/cols/
   scroll/repaints/**terminalText**, editorDirty, a `layout` frame diagnostic). Assert on values.
 - `actions` → scripted with delays; `wait:N` inserts N extra seconds.
+- `live` → a file the app polls (0.3 s): append action lines while it runs and each executes once. Use it for
+  chat tests — LLM turns take variable time, so poll the `chat` block of the state dump between steps instead
+  of guessing delays. Chat tests are cheap on Haiku: `chatModel:haiku` (the pick persists on the tab).
 - `DebugHarness.swift` holds it all; `TerminalStore.debugText/debugState` inspect terminals.
 - Clear stale dev state between runs: `defaults delete com.multee.native.dev multee.state`.
 
@@ -159,6 +177,76 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   cursor rects to match SwiftTerm. Cursor *shape* can't be checked by the screenshot harness, and the
   sandbox blocks synthetic mouse events (CGEvent/NSEvent) — so this class of bug needs a human to verify.
 
+- **Chat tab (`Chat/`) gotchas** (see D32–D35):
+  - `claude -p` skips the folder-trust dialog → the chat asks itself (`ChatTrust`, exact path only).
+  - Text from `JSONSerialization` is a bridged NSString; Swift `count`/character walks on it are ~100× slower.
+    Render native strings (`.native` / `.nativeLines` in `ChatRender.swift`).
+  - A Markdown parse loop must always consume a line (a `#tag` line once hung a render pass forever);
+    `chatMarkdownSelfTest` pins the edge cases.
+  - Never drop an off-main measuring pass — the transcript reconciles rows with the session by item id.
+  - After `/compact`, Claude replays kept messages as un-streamed assistant events — skip them until the next
+    `message_start`.
+  - **⇧⇥ arrives as `insertTab:` in an NSTextView**, not `insertBacktab:` — catch it in `keyDown` from the
+    event (keyCode 48 + shift). Test keys with `keyEvent:` (a real event through `NSApp.sendEvent`), not a
+    direct `doCommand` — that skipped the key-binding step and hid this bug. Note `NSApp.currentEvent` isn't
+    the synthesized event, so read modifiers from the event itself.
+  - Multee launched from inside a Claude Code session inherits `CLAUDECODE`/`CLAUDE_CODE_*` markers; chat
+    processes strip them (terminal tabs don't yet). Measure CPU with the `shot` timer off (it costs CPU).
+  - **A transcript is a tree** (D37): /rewind and retracted prompts leave dead branches in the `.jsonl`.
+    `ChatHistory` shows only the live branch (`parentUuid` chain from the leaf) — never read it linearly.
+    Standalone check: `swiftc ChatModel.swift ChatHistory.swift <test>.swift` runs it outside the app.
+  - Print mode keeps file checkpoints (what `rewind_files` restores) only with
+    `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`; the `uuid` we send on a user message becomes its id.
+  - `rewind_conversation` to anything but the newest message needs `last_seen_user_message_uuid` (the newest
+    user message the chat sent — `!` output included), else Claude refuses "stale target". Claude matches ids
+    by **prefix**, so test with random uuids, never look-alike ones.
+  - `!` output reaches Claude as `shouldQuery: false` user messages; Claude still emits an empty `init` →
+    `result` turn for them, which the session keeps silent by matching their uuids in `command_lifecycle`.
+    `/btw` is the `side_question` control request (answer only, nothing joins the conversation).
+  - Images ride in the user message as `{"type":"image","source":{"type":"base64",…}}` blocks before the text
+    (print mode accepts them). **The `[Image #n]` markers in the box are the record of what the message
+    carries** — `textChanged` drops any attachment whose marker is gone (cut, selected away, box cleared), so
+    numbering restarts on its own; number a new one from the highest still present, never from the count.
+    **A marker is one character as far as the box is concerned**: the caret steps over it
+    (`willChangeSelectionFromCharacterRange` snaps out of a marker) and an edit that covers part of one
+    covers all of it (`shouldChangeTextIn` grows the range) — otherwise a caret placed inside it deletes a
+    letter, leaving `[Imag #1]`, which names no image and reaches Claude as literal text.
+    Backspace (and ⌦) next to a marker selects the whole marker plus the space after it and lets AppKit
+    delete the selection — `deleteBackward`/`deleteForward` → `markerRange{Before,After}Caret`; editing the
+    text ourselves put the deletion on the undo stack when a plain backspace is **not** undoable in an
+    `NSTextView`, so ⌘Z brought the marker back without its image. The marker helpers live on
+    `ChatAttachment`: number a new image from the highest marker *in the text* (`highestMarker`), and strip
+    markers no attachment claims when sending (`stripMarkers`) so a stray one never reaches Claude as
+    literal text. The transcript shows the picture instead of the marker — `ChatItem.images` holds small
+    thumbnails (`ChatImage.thumbnail`, ImageIO, safe off-main) that `ChatRender.user` draws as text
+    attachments, so the exact-height measuring pass covers them for free; `ChatHistory` rebuilds them from
+    the transcript's base64 blocks when a chat is reopened.
+  - **A clipboard manager pastes differently**: a temp file with an odd or missing extension, or raw bytes
+    under a single type. Decide "is it an image?" by the file's content type (sniffing generic/dynamic ones),
+    never by extension, and keep `NSImage(pasteboard:)` as the last resort. `dumpPasteboard:` shows what a
+    given app actually put on the clipboard.
+  - **⌘V is an Edit-menu key equivalent, not a key binding**, so AppKit greys the item out — and swallows the
+    keystroke — when the clipboard holds nothing the focused view lists in `readablePasteboardTypes`. A
+    plain-text `NSTextView` (`isRichText = false`) lists only text shapes, so an **image-only clipboard made
+    ⌘V a no-op and `paste(_:)` was never called** (a Finder copy worked only because it carries the filename
+    as text). `ChatInputTextView` claims the image types back. Test it with `dumpPasteEnabled:` (validation +
+    the matched type) and `chatMenuPaste` (paste down the responder chain) — the `chatPaste*` actions call
+    `paste(_:)` directly and skip the validation step, which is why they hid this for a whole round.
+  - Messages sent mid-turn are **not** one turn each: Claude merges whatever is queued when a turn starts
+    into one user message. `command_lifecycle` (`queued`/`started`/`completed`, by our uuid) says which —
+    never assume one `init` per queued message (that left messages stuck as "queued").
+  - **`NSView.prepareForReuse()` un-hides the view** (its default resets `isHidden`/`alphaValue`). Recycle a row
+    as prepare → hide → pool (`ChatTranscriptView.recycle`); the other order left ghost rows drawn after a
+    rewind / resume switch. `dumpChat` → `transcript.shownRowViews` must equal `liveRows`.
+  - A view's frame change posts **no** `boundsDidChangeNotification` (only scrolling does) — the transcript
+    sees its viewport shrink (a prompt card opening below) in `layout()` and re-pins to the bottom there.
+  - `keyEvent:` works with Multee in the background (no key/main window then — it targets the visible
+    window directly), so card/keyboard tests don't need the app frontmost. `dumpChat` has `promptCard`
+    (page, cursor, rows as `❯ [x] Label` / `«field»`, answers) for asserting keyboard flows.
+  - The periodic `state` dump holds a trimmed `chat` block; `dumpChat:<path>` has everything (items with
+    uuids, picker entries, queued messages). Multee pauses its repo poller while it isn't frontmost, so a
+    file created during a background harness run shows in the tree only after activation.
+
 ## File map (Sources/Multee/)
 - `App/` — `main.swift`, `AppDelegate.swift` (menu, key monitors, status routing + the `.done`/debounce
   attention logic, settings/update wiring), `MainWindowController.swift` (window + banner + workspace),
@@ -217,6 +305,14 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   DECISIONS.md D28.
 - `TextMate/` — `TextMateHighlighter` (grammar engine + theme + ext→language map + bundle resolver)
   and `Grammars/*.json` (~30 `.tmLanguage.json`, bundled as a SwiftPM resource).
+- `Chat/` — the native chat tab (D32–D35): `ClaudeStream` (process + stream-json transport), `ChatSession`
+  (+ `ChatStore`: event reducer, intents, lifecycle), `ChatModel` (items, prompts, tasks), `ChatHistory`
+  (transcript tail → items, live branch only), `ChatRender` (+ `ChatMarkdown`, `ChatMeasurer`, `ChatStyle`),
+  `ChatTranscriptView` (virtual list with exact heights), `ChatInputView` (input + `/`/`@` completion),
+  `ChatPanels` (prompt card, activity line, status line, background-tasks panel, /btw card), `ChatResume` (past
+  conversations + `ChatPickerPanel`, the picker /resume, /rewind and /memory share), `ChatLocalCommands`
+  (/export Markdown, /memory files, the `!` shell runner, pasted-image encoding), `ChatTrust`, `ChatViewController` (+ port scanner, the chat's own
+  commands).
 - `Debug/` — `DebugHarness` (dev-only shot/state/actions).
 
 ## UI conventions

@@ -106,7 +106,7 @@ final class TerminalStore {
             let env = Env.array(extra: ["MULTEE_SESSION_ID": tab.id,
                                         "MULTEE_HOOK_PORT": String(HookServer.shared.port)])
             return (exe, base + ["--settings", Hooks.json], env)
-        case .terminal, .file, .diff, .search:   // only .terminal reaches here (file/diff/search use their own views)
+        case .terminal, .file, .diff, .search, .chat:   // only .terminal reaches here (the others use their own views)
             let exe = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
             // A terminal tab created with an initial command (e.g. "Install" a formatter) runs it, then
             // drops to an interactive login shell so its output stays visible.

@@ -73,6 +73,152 @@ screen (`TerminalStore.screenText`) and sending the option's number — digit on
 would accept Claude's ghost history suggestion and run a stray command. Each fork duplicates the conversation
 on disk (Claude prunes after `cleanupPeriodDays`, default 30).
 
+## Chat tab (native Claude UI) — `Chat/`, `UI/CenterViewController`, `UI/TabBarView`
+A **Chat** tab is Claude Code rendered natively instead of in a terminal — a new tab kind (`TabKind.chat`)
+*next to* the terminal Claude tab, not a replacement. New Chat: the tab-bar bubbles icon, File ▸ New Claude
+Chat (**⌘⇧M**), or the palette. It runs the unmodified `claude` CLI in print mode over stream-json
+(`claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages
+--permission-prompt-tool stdio`), one process per tab, spawned lazily when the tab is first shown and
+killed with the tab/session/app (SIGTERM — Claude then stops the background tasks it started).
+- **Transport** — `ClaudeStream`: JSON lines both ways, parsing off-main, writes on a serial queue,
+  `SIGPIPE` ignored, exit reported only after stdout drains. Control requests: `initialize` (slash commands
+  with descriptions, models, account), `interrupt`, `set_model`, `set_permission_mode`, `stop_task`,
+  `get_context_usage`. Claude's `can_use_tool` requests become the prompt card.
+- **Model** — `ChatSession` reduces stream events into `ChatItem`s (user, assistant markdown, tool calls
+  with results, notices) and chrome state; `ChatStore` holds one per tab (the chat `TerminalStore`).
+  Status/id/first-prompt route through the same closures as Claude-tab hooks (`ChatStore.onStatus` →
+  `HookServer.onStatus`), so the status dot, "done" attention, notifications, tab naming and `--resume`
+  id capture all just work.
+- **Transcript** — `ChatTranscriptView`: a hand-rolled virtual list (prefix-sum offsets, binary-searched
+  visible range, pooled rows). Every row height is measured *exactly* with the same TextKit 1 stack the row
+  draws with (`ChatMeasurer`), so nothing is estimated and later corrected — the cause of scroll-up lag in
+  long chats. Rows reconcile with the session by item id (`syncRows`), large batches render+measure
+  off-main in parallel. Streaming updates only the changed row (~16/s), replacing just the tail of its text.
+  Follows the bottom unless you scroll up (then a ↓ button). History: a resumed tab reads Claude's
+  transcript tail (2 MB chunks) and loads earlier chunks when you reach the top.
+- **Rendering** — `ChatRender`/`ChatMarkdown`: headings, lists, task lists, quotes, tables, rules, inline
+  code/bold/italic/links, fenced code with the TextMate highlighter. Tool rows mimic the terminal UI:
+  `Tool(summary)` + a `⎿` preview (4 lines, "show more"), Edit as a red/green diff, Write/Read line
+  counts, TodoWrite checklist, Agent rows with the subagent's step count + latest action and a cleaned
+  report, background shells as a one-liner. Rows are selectable text; "Copy Message" in the context menu.
+- **The chat's own questions** — rewind what, turning bypass on (first time; defaults to No, and declining
+  from ⇧⇥ moves on to the next mode so the cycle isn't stuck in front of it), "Other model…"
+  — use the same card and keys as Claude's prompts (`ChatLocalCard`, neutral border), never a modal alert.
+- **Prompt card** (`ChatPromptPanel`) — fully keyboard-driven, like the terminal UI: every choice is a
+  numbered row (`ChatChoiceRow`) under a ❯ cursor — ↑/↓ move, ⏎ confirms, 1–9 pick, esc denies/skips, and
+  typing letters goes straight into the card's text row. Permissions: Yes / "Yes, and always allow <rule>"
+  (or "allow all edits this session") / "No, and tell Claude what to do differently" (a text row).
+  AskUserQuestion: one question at a time (tabs ☐/☑ per question, ←/→ or tab to switch), single-select picks
+  (shown `Label ✓` when you come back) and moves on; multi-select toggles with ⏎, space or the number (as in
+  the terminal UI) and ends in a Next / Submit row; a "Type something…" row (joins multi-select picks), then a
+  Submit step that reviews the answers (a lone question submits directly).
+  ExitPlanMode: the plan (page up/down scrolls it) + "Yes, and auto-accept edits" / "Yes, and manually
+  approve edits" / "No, keep planning — …" (text row).
+- **Images** — paste or drop one into the box (⌘V from a screenshot, an image file from Finder): it becomes
+  `[Image #n]` in the text and rides along as an image block (`ChatImage` scales it to 1568px on the long
+  side, PNG, or JPEG when that would be heavy). The sent message shows the **picture**, not the marker — a
+  200pt thumbnail drawn as a text attachment, rebuilt from the transcript when the chat is reopened.
+  In the box a marker behaves as **one character**: the caret steps over it instead of landing inside, and
+  backspace, ⌦ or any edit touching it takes the whole marker — and the image with it. So does cutting or
+  clearing the box, after which `[Image #1]` starts over. A pasted
+  non-image file inserts its path instead. Clipboard managers work too — their temp file (odd extension or
+  none) is read for what it is, and raw single-type bytes are accepted. The box claims the image pasteboard
+  types so ⌘V is even *offered*: AppKit greys out Edit ▸ Paste — and swallows the key — when a plain-text
+  view says it reads nothing on the clipboard, which made an image-only clipboard a silent no-op.
+- **Input** (`ChatInputView`) — ⏎ send, ⇧⏎/⌥⏎ newline, esc stops Claude (esc esc on an empty box: rewind),
+  ⇧⇥ cycles mode, ↑/↓ history;
+  `/` completion (all commands incl. skills, with argument hints + descriptions) and `@` file completion
+  (`git ls-files`). Messages sent while Claude works queue above the box and join the transcript when Claude
+  starts them (`command_lifecycle`); several it takes into one turn share one bubble, as in its transcript. `/model` opens the model menu, `/tasks` the tasks panel, `/context` the context popover;
+  the chat's own commands (below) join `/` completion; commands needing the terminal UI (`/permissions`,
+  `/hooks`, `/login`…) explain themselves instead.
+- **Status line** (`ChatFooterView`) — permission mode (click or ⇧⇥: ask → accept edits → plan → auto (models
+  that support it) → bypass; chats launch with `--allow-dangerously-skip-permissions`, and turning bypass on
+  asks once per install), folder, branch, model ▾ (the models, **effort** low…max for the picked model, fast
+  mode with its real availability, "Other model…"), live context % (click → Claude's own breakdown), 5h / 7d
+  usage with reset countdowns (kept across launches), background tasks (shells, agents, ports), cost,
+  **Remote Control** (antenna; green while on — open/copy the session link, stop), **Resume** (clock), and
+  **Open in Terminal**. Model and effort picks are saved on the tab (`--model` / `--effort`).
+- **Code blocks** get a copy icon in their top-right corner (a green ✓ for a moment after copying);
+  consecutive blocks stay separate (a spacer line — TextKit merges adjacent equal text blocks).
+- **Rewind** (`/rewind`, esc esc) — pick one of your messages since the last compaction (oldest at the top,
+  the latest at the bottom and selected, as in the terminal UI); a dry run
+  (`rewind_files`) shows which files changed since then, then a card (not a modal) asks: restore code and
+  conversation / conversation / code / never mind. The conversation rewind is Claude's `rewind_conversation` (cut in place, the message goes
+  back into the box to edit); code comes from Claude's file checkpoints (print mode keeps them only with
+  `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING`, which chats set). Each sent message carries its own id so
+  the chat can name it. History (`ChatHistory`) shows only the transcript's **live branch** — the one Claude
+  resumes — so undone and retracted messages stay hidden after a reopen.
+- **Fork** (`/fork [name]`, or the ⑂ on a chat tab chip) — a new chat tab on a copy of the conversation
+  (`--resume <id> --fork-session`), named "<title> (fork)" or the given name; Claude keeps the name
+  (`rename_session` → `custom-title`, which tab titles now prefer).
+- **`/plan`** — plan mode (with a note); `/plan <task>` also sends the task; `/plan open` (or `/plan` while
+  planning) opens the session's plan file (`get_plan`) in an editor tab.
+- **`/btw <question>`** — a side question answered in a card above the box from the conversation's context
+  (`side_question`), not added to it; works while Claude is busy, follow-ups see earlier answers, esc/×
+  dismisses (an unanswered one is cancelled).
+- **`!` shell mode** — `!git status` runs in your `$SHELL` in the chat's folder (the box turns pink); the row
+  shows `! command` + output (red with "[exit code N]" on failure; esc stops it; stopped after 120 s). The
+  command and output then join Claude's context as the terminal UI records them (`<bash-input>` /
+  `<bash-stdout>` messages sent with `shouldQuery: false` — no model call, no "working"), also mid-turn.
+- **`/copy [n]`** — Claude's last (or n-th latest) reply to the clipboard. **`/export [file]`** — the whole
+  conversation (unloaded history included) as Markdown, to `file` or via a save panel. **`/memory`** — pick
+  project / user / local / auto memory; opens it in an editor tab (created if new).
+- **Resume** (`ChatResume`, `/resume` or the clock) — this folder's past conversations (title, age, size),
+  searchable; ⏎ switches this tab to the picked one with its history. **Remote Control** (`/remote-control`,
+  `/rc`, `/remote-control off`) — print mode doesn't offer the command, so the chat drives Claude's
+  `remote_control` control request; the session link shows as a clickable notice. `/effort <level>` and
+  `/fast` map to the same settings as the menu.
+- **Background tasks** (`ChatTasksPanel`) — every `run_in_background` shell and async agent: status,
+  elapsed time, listening ports (found under the task's process tree, click to open), live log tail, Stop.
+- **Switching** — right-click a Claude/chat tab ▸ "Open as Chat" / "Open in Terminal UI" (or the status-line
+  button / palette) converts the tab in place, same conversation (`Session.switchClaudeUI`).
+- **Folder trust** (`ChatTrust`) — print mode skips Claude's "trust this folder?" prompt, so a chat asks
+  first unless Claude already trusts that exact folder.
+- **Crash/exit** — "Claude stopped (…) — Restart resumes this conversation" with a Restart button.
+**Verified (harness, live `claude` 2.1.278):** tool calls/markdown/streaming; permission allow / deny with
+feedback / always-allow (rule written to settings.local.json); questions (single, multi-select, two
+questions); plan approval → mode switch → edits without prompts; interrupt (incl. during a pending prompt);
+queued messages; crash → Restart resumes; restore on relaunch with history; switch chat ↔ terminal both
+ways; two background servers with correct per-task ports, live log, Stop one; `/compact` `/cost` `/resume`;
+`/` and `@` completion; trust gate; tab/session/app close kills the process and its servers. Performance on
+a 200 MB / 14,333-message transcript: 25,942-frame scroll, **0 height jumps**, p50 0.9 ms / p99 6.6 ms / max
+15 ms; streaming a ~600-word reply costs ~1.5 CPU-s (a terminal tab: ~1.6 CPU-s); idle 0% CPU.
+Also verified: a real ⇧⇥ key event cycles every mode (incl. the one-time bypass confirmation, and bypass
+really skips prompts); effort set + persisted on Sonnet; auto mode accepted on Sonnet; Copy puts the exact
+code on the clipboard; resume switches conversation with history and context; Remote Control on (link) and off.
+Bypass card: from ⇧⇥ "No, skip it" (and esc) continue the cycle past bypass; from the mode menu "No" changes nothing.
+Rewind: code + conversation (file back to its earlier content; Claude's own recall matches the cut), conversation
+only, code only, to the oldest of several messages, past a `!` command, with a message sent while `!` ran, in a
+reopened chat, no-file-changes dialog, cancel, while working (refused), a message queued mid-turn, esc esc,
+after `/compact` (only newer messages offered), survives reopen and relaunch. Fork: `/fork name` keeps its name
+after the first turn (custom title in the fork's transcript), ⑂ default name, own id. `/copy` (+ n too large),
+`/export` to a file and via the save path (full history of an 18 MB transcript in 0.3 s), `/memory` creates and
+opens CLAUDE.md; all three in an empty chat. History branch walk: 8 real transcripts (to 200 MB), chunked
+reads identical to one full read.
+Plan / btw / shell (live, Haiku): `/plan` → mode + note, "No plan yet", `/plan <task>` → plan card, `/plan open`
+opens the plan file; `/btw` answers (PELICAN), follow-up uses history, answers while Claude works, never enters
+the conversation; `!` output / failure with exit code / esc stop / empty `!` / first message of a chat / run
+mid-turn (Claude then quotes it) / reopened history keeps output and status / not sent to a conversation the
+tab switched to.
+Transcript stays on the bottom when a card opens below it and after it closes (gap to bottom 0 both times).
+Prompt cards by real key events only: two-question card (space/↓/3 toggles, walk into and type in the text row, ↑
+out, ⏎ next, ↓⏎ pick, ← back with the pick kept, → Submit step, ⏎ → Claude got "Apple, Cherry, kiwi" / "Blue");
+permission (3 + typed reason → denied with it; ↓↑⏎ allow; esc deny; typing letters goes to the reason row);
+plan (3 + feedback → revised plan; 2 → approved, mode back to ask); single question typed answer ("mango").
+Images: a copied image and an image file both paste as `[Image #n]` and Claude read them back ("1 red, 2 blue");
+a 3000×2000 PNG is scaled down; deleting the marker drops the image (the saved message keeps text only); plain
+text still pastes as text; a reopened chat shows the markers once; a clipboard manager's shapes (file without
+extension, `.dat` file, raw bytes under one type) all attach, while a text file still inserts its path. Drag-and-drop shares that code path (the
+sandbox blocks synthetic drags, so it isn't harness-tested). An image-only clipboard now enables Edit ▸ Paste
+(`dumpPasteEnabled` → `enabled=true matched=public.png`, `false` before) and pastes through the menu's own
+route (`chatMenuPaste`); ←/→ step over a marker (caret 11 → 10 → 0 → 10, never inside), typing beside it
+leaves it intact, one backspace (or ⌦) clears `[Image #1]` whole, numbering restarts after it, and a
+marker no image claims is stripped before sending (typed `[Image #9]` never reached Claude; the real image
+did). A sent image draws as a 200×150 thumbnail in its bubble and comes back the same after the conversation
+is closed and reopened from the transcript (`dumpChat` → `items[].images`).
+**Not supported yet:** Claude's own `/permissions` `/hooks` editors (use Open in Terminal).
+
 ## Terminal — `Terminal/`
 `TerminalStore` caches one SwiftTerm PTY view per tab id (process survives tab/session switches).
 Login-shell PATH via `Env.bootstrap`. Claude launches with `--settings <hooks>` + env; a shared
@@ -352,11 +498,12 @@ mirror of `AppDelegate.buildMenu` + the ⌘+/− monitor + ⌘S — keep it in s
 swallowed as text input over the editor (Option composes a special char), it's handled in `AppDelegate`'s key
 monitor — intercepted before the editor when one is focused — not as a menu key-equivalent.
 
-**New Claude / New Terminal shortcuts (`NewItemHook`).** Three File-menu commands, backed by one hook enum so
+**New Claude / New Terminal shortcuts (`NewItemHook`).** File-menu commands, backed by one hook enum so
 the menu items, the key monitor, and the harness share an implementation: **New Claude Session (⌘⇧C)** opens a
 Claude tab with the default args; **New Claude with Args… (⌘⌥C)** pops the tab bar's existing preset menu
 (Default / `--continue` / `--resume` / `--dangerously-skip-permissions`) via `TabBarHook.popClaudeArgsMenu` —
-one source of presets, anchored to the ▾ button; **New Terminal (⌃⇧`)** is context-aware — it adds a shell to
+one source of presets, anchored to the ▾ button; **New Claude Chat (⌘⇧M)** opens a native chat tab (see Chat
+tab); **New Terminal (⌃⇧`)** is context-aware — it adds a shell to
 the quick terminal when that panel is open (`QuickTerminalController.addShell`), otherwise opens a terminal tab.
 ⌃⇧` is intercepted in the key monitor next to ⌃` (matched by `keyCode == 50`, the grave key, so Shift's `→~
 remap is irrelevant); the ⌘-based Claude shortcuts work as plain menu key-equivalents. The args menu is gated on

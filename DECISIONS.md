@@ -434,6 +434,131 @@ lands for anyone updating **from 0.1.21 onward**.
 
 ---
 
+## Chat tab
+
+### D32 — A native chat tab over `claude -p` stream-json, beside (not instead of) the terminal tab
+**Decision:** The chat tab drives the unmodified `claude` binary in print mode with stream-json in and out
+and `--permission-prompt-tool stdio`, one long-lived process per tab. It's a new tab kind; terminal Claude
+tabs are untouched, and a tab can switch between the two (same conversation id).
+**Why:** Rendering the conversation ourselves is the only way to get a fast, customizable UI (the status
+line, a background-task manager, native prompts). The stream-json protocol is what Claude's own SDK speaks,
+so hooks, skills, CLAUDE.md, subagents, resume and compaction all keep working, and the user's own
+subscription login is used as-is. Verified live (2.1.278): control requests `initialize`, `interrupt`,
+`set_model`, `set_permission_mode`, `stop_task`, `get_context_usage`; `can_use_tool` for permissions,
+AskUserQuestion and ExitPlanMode; `background_tasks_changed` / `task_*` events; `-p --resume` keeps the
+session id and persists even pure-text transcripts.
+**Rejected:** scraping the terminal UI (fragile, no structure); the Agent SDK in a sidecar (another
+runtime to ship for the same protocol); calling the API directly (loses Claude Code's tools and settings,
+and subscription auth).
+**Costs accepted:** the control protocol is undocumented, so a CLI update can break it (the harness actions
+make a regression quick to see). Moving a conversation between chat and terminal costs one uncached turn
+(different prompt prefixes — D23). Some terminal-only commands (`/rewind`, `/permissions`, editors) aren't
+available in chat; "Open in Terminal" is the escape hatch. **Status: open** — distributing this in a public
+build: Anthropic's terms bar third-party apps from *offering* claude.ai login, but this only runs the user's
+own signed-in CLI; confirm before release.
+
+### D33 — Exact row heights in a hand-rolled virtual list (rejected: NSTableView, one big NSTextView)
+**Decision:** The transcript is our own virtual list. Each row's height is measured with the same TextKit 1
+stack the row draws with, before the row is shown; rows reconcile with the session by item id; large
+batches are rendered and measured off-main in parallel.
+**Why:** Scroll-up lag in long chats comes from *estimated* heights corrected during scrolling (measured:
+NSTableView estimates even with `heightOfRow`; up to 563,000 pt content jumps). Exact heights make the
+content height true, so scrolling is just moving a clip view. Measured on a 200 MB transcript: 0 jumps,
+p50 0.9 ms per frame. A custom list also avoids the undocumented `NSTableViewCanEstimateRowHeights`
+default, which would have been app-wide.
+**Rejected:** one big NSTextView (re-estimates layout; 250–480 ms jumps); auto-layout rows (thousands of
+jumps); NSTableView + the defaults key (works, but global and undocumented).
+**Learned the hard way:** (1) never let a newer measuring pass cancel an older one — rows went missing
+(10,255 items / 9,264 rows) until reconciliation by id replaced "generation" dropping; (2) a Markdown
+paragraph must always consume its first line — a line like `#tag` looked like a block start, and the loop
+spun forever (the `chatMarkdownSelfTest` harness action pins 34 such cases); (3) text from
+`JSONSerialization` is a bridged NSString — render native Swift strings (`.native`), per-character Swift
+ops on bridged strings are ~100× slower; (4) streaming must replace only the text's tail — replacing the
+whole string repainted the entire message layer each update (30% CPU → 12%, now below a terminal tab's).
+
+### D34 — A chat tab asks for folder trust, because print mode doesn't
+**Decision:** Before a chat's first launch in a folder, `ChatTrust` checks Claude's own
+`~/.claude.json` (`projects[<exact path>].hasTrustDialogAccepted`) and our own list; if neither trusts the
+folder, the chat shows a "Trust folder & start" card naming the folder's own Claude settings (hooks,
+pre-approved tool rules).
+**Why:** `claude -p` skips the terminal UI's trust dialog, so a chat would otherwise load an untrusted repo's
+`.claude/settings*.json` silently. Exact-path only: the user's config trusts `/`, yet Claude still prompted
+for a subfolder — Claude doesn't inherit trust from parents, so neither do we. We record our own trust in
+Multee's defaults and never write `~/.claude.json`, which live Claude processes also write.
+
+### D36 — Resume, Remote Control, effort and bypass via Claude's control protocol
+**Decision:** Print mode refuses `/resume` and has no `/remote-control`, so the chat does them itself:
+resume lists `~/.claude/projects/<encoded cwd>/*.jsonl` and relaunches the tab with `--resume <id>`;
+Remote Control sends the `remote_control` control request (`enabled`, optional `name`) and shows the
+returned `session_url`; effort and fast mode go through `apply_flag_settings` (`effortLevel`, `fastMode`).
+Every chat launches with `--allow-dangerously-skip-permissions` so bypass is a mode you can pick (the
+terminal UI's flag for exactly that); turning it on asks once per install.
+**Why:** all verified live against 2.1.278 (the schemas are in the CLI's own bundle: `remote_control`,
+`apply_flag_settings`, `list_models`, `control_cancel_request`, `rewind_files`, …). The model *list* is the
+same five the terminal's `/model` shows — what the chat menu lacked was the picker's effort control, fast
+mode, and "other model". `control_cancel_request` (a prompt answered elsewhere, e.g. from Remote Control)
+removes the local card.
+**Status:** `rewind_files` is used by /rewind — see D37.
+
+### D37 — /rewind through Claude's rewind requests; history shows the live branch only
+**Decision:** Every user message the chat sends carries its own `uuid` (Claude keeps it as the message id).
+/rewind runs `rewind_files` (a dry run for the dialog's "N files changed", then for real) and
+`rewind_conversation` (Claude cuts its conversation in place and returns the message text to prefill). Chats
+launch with `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1` — print mode keeps no file checkpoints otherwise.
+Chat history follows the transcript's `parentUuid` chain from its leaf (the last message, or an explicit
+`last-prompt` marker a rewind writes after it) — the branch Claude itself resumes. Each rewind also names the
+newest message the chat sent (`last_seen_user_message_uuid`); without it Claude only rewinds to the latest
+message ("stale target"), a guard against wiping turns a client never showed.
+**Why:** verified live on 2.1.278: both requests work in print mode, the cut survives a resume, and a
+transcript is a tree — undone messages (and prompts you retracted with esc before a reply) stay in the
+file. Reading it linearly would show messages Claude no longer has. Rejected: relaunching with
+`--resume <id> --resume-session-at <uuid>` (a restart — drops the warm process and its background tasks).
+/fork uses `--resume <id> --fork-session` in a new chat tab (the `fork_conversation` request needs a Remote
+Control server) and names the fork with `rename_session`, so `ClaudeTranscript.title` now prefers
+`custom-title` over `ai-title`.
+**Status:** built. Rewind can't reach past a compaction (Claude no longer holds those messages), so the
+picker lists only messages after the last one.
+
+### D38 — `!` shell mode runs in Multee; its output reaches Claude as the terminal UI records it
+**Decision:** A chat's `!command` runs in your `$SHELL -c` in the chat's folder (120 s cap, esc stops it) and
+shows as a shell row. The command and output then go to Claude as two user messages in the terminal UI's own
+format (`<bash-input>…`, `<bash-stdout>…<bash-stderr>…`) with `shouldQuery: false`, so they join the
+conversation without a model call; a failure adds "[exit code N]" (Claude sees it; history reads it back —
+the transcript keeps no exit status). `/btw` uses the `side_question` control request; `/plan open` uses
+`get_plan`.
+**Why:** verified on 2.1.278: print mode has no bash mode, but a `shouldQuery: false` message lands in
+context (Claude then quotes the output) at zero model cost. Its empty turn (`init` → `result`) is matched by
+uuid through `command_lifecycle`, so the chat doesn't flash "working"/"done" — and when Claude merges it with
+a real queued message, that turn is treated as real.
+
+### D39 — Pasted images: the box claims the image clipboard types, a marker is one character, the transcript draws the picture
+**Decision:** `ChatInputTextView` adds the image types to `readablePasteboardTypes`. In the box an
+`[Image #n]` marker behaves as a single character — the caret steps over it, and backspace, ⌦ or any edit
+touching part of it takes the whole marker and drops its image. The markers in the text are the record:
+numbering comes from the highest marker present, an attachment whose marker is gone is released, and a
+marker no attachment claims is stripped when the message is sent. A sent message shows a ~200pt thumbnail
+(an `NSTextAttachment` in the row's attributed string) instead of the marker, rebuilt from the transcript's
+base64 blocks when the chat is reopened.
+**Why:** ⌘V is the Edit menu's key equivalent, and AppKit greys that item out — swallowing the keystroke —
+when the focused view lists nothing on the clipboard as readable; a plain-text `NSTextView` lists only text,
+so an image-only clipboard was a silent no-op (a Finder copy worked only because it carries the filename as
+text). Editing the marker's text ourselves was worse than letting AppKit do it: a plain backspace is not
+undoable in an `NSTextView`, so a custom edit put the deletion on the undo stack and ⌘Z brought the marker
+back without its image. Drawing the image as a text attachment keeps the transcript's exact-height measuring
+pass (D33) covering it with no change to the virtual list. Thumbnails come from ImageIO, which decodes
+straight to size and is safe off the main thread — history is parsed on a background queue.
+**Status:** built. 57 real transcripts (to 64 MB) still parse in ≤25 ms each with images decoded.
+
+### D35 — Chat processes drop a parent Claude session's environment markers
+**Decision:** A chat's `claude` is launched without `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
+`CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_EFFORT` and the other per-session markers.
+**Why:** When Multee itself is started from inside a Claude Code session (how the dev build is driven), those
+leak into every child and Claude treats the tab as that session's child — e.g. "Transcript saving is off".
+A chat is its own session. **Status: open** — terminal Claude tabs inherit the same markers today
+(`Env.array`); same fix proposed separately.
+
+---
+
 ## How we work (process)
 
 ### D17 — User tests the dev build before we ship

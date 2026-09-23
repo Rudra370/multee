@@ -179,6 +179,9 @@ final class TextMateHighlighter {
 
     /// Compiled highlighter per grammar, reused across every editor (regexes compiled once → low RAM/CPU).
     private static var cache: [String: TextMateHighlighter] = [:]
+    /// Guards `cache`: chat transcripts render code blocks off the main thread (history loads), so a lookup
+    /// can race the editor's. `spans(for:)` itself needs no lock (the grammar is immutable once built).
+    private static let cacheLock = NSLock()
 
     /// Highlighter for a file, by extension / well-known filename. `nil` → no grammar (plain text).
     static func forPath(_ path: String) -> TextMateHighlighter? {
@@ -206,6 +209,8 @@ final class TextMateHighlighter {
     }
 
     private static func load(language: String) -> TextMateHighlighter? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         if let hit = cache[language] { return hit }
         guard let url = GrammarBundle.bundle?.url(forResource: language, withExtension: "json", subdirectory: "Grammars"),
               let data = try? Data(contentsOf: url),

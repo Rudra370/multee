@@ -22,6 +22,7 @@ enum Shortcuts {
             Item(name: "New File", keys: "⌘N"),
             Item(name: "New Claude Session", keys: "⌘⇧C"),
             Item(name: "New Claude with Args…", keys: "⌘⌥C"),
+            Item(name: "New Claude Chat", keys: "⌘⇧M"),
             Item(name: "New Terminal", keys: "⌃⇧`"),
         ]),
         Section(title: "Editing", items: [

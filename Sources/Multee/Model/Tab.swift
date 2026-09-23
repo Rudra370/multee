@@ -5,8 +5,9 @@ import Foundation
 /// session completes while you're not looking, cleared when you open that tab.
 enum ClaudeState: String { case idle, working, needs, done }
 
-/// What a tab shows.
-enum TabKind: String, Codable { case claude, terminal, file, diff, search }
+/// What a tab shows. `claude` is Claude Code's terminal UI in a PTY; `chat` is the same Claude Code rendered
+/// natively (stream-json — see `Chat/`).
+enum TabKind: String, Codable { case claude, terminal, file, diff, search, chat }
 
 /// A single tab in a session. Value type — sessions hold `[Tab]` and mutate by index, so changes
 /// flow through `Session`'s `@Published var tabs` for free.
@@ -14,7 +15,7 @@ struct Tab: Identifiable, Equatable {
     var id: String
     var kind: TabKind
     var title: String
-    var args: String              // claude launch args (for .claude)
+    var args: String              // claude launch args (for .claude / .chat)
     var path: String?             // absolute file path (for .file / .diff)
     var claudeSessionId: String?  // captured from hooks → used to `claude --resume` after a restart
     var forkParentId: String?     // transient: a fork's source conversation id → launch `--resume <id> --fork-session`

@@ -19,7 +19,9 @@ final class TabBarView: NSView {
     var onClose: ((String) -> Void)?
     var onNewClaude: ((String) -> Void)?   // arg string ("" / "--continue" / …)
     var onNewTerminal: (() -> Void)?
+    var onNewChat: (() -> Void)?           // new native chat tab (Claude Code without the terminal UI)
     var onFork: ((String) -> Void)?        // chip ⑂ icon → fork that specific Claude tab
+    var onSwitchUI: ((String) -> Void)?    // chip menu: Claude tab ↔ chat, same conversation
     /// Reorder: move `dragged` to just before `beforeID` (nil = move to the end).
     var onReorder: ((_ dragged: String, _ beforeID: String?) -> Void)?
 
@@ -40,10 +42,11 @@ final class TabBarView: NSView {
         chips.alignment = .centerY
 
         let newClaude = iconButton("sparkles", "New Claude session (⌘⇧C)", #selector(newClaudeDefault))
+        let newChat = iconButton("bubble.left.and.text.bubble.right", "New Claude chat — native UI (⌘⇧M)", #selector(newChatTapped))
         let argsMenu = iconButton("chevron.down", "New Claude with arguments… (⌘⌥C)", #selector(argsMenuTapped), size: 9)
         argsButton = argsMenu
         let newTerm = iconButton("terminal", "New terminal (⌃⇧`)", #selector(newTerminal))
-        let rightButtons = NSStackView(views: [newClaude, argsMenu, newTerm])
+        let rightButtons = NSStackView(views: [newClaude, argsMenu, newChat, newTerm])
         rightButtons.orientation = .horizontal
         rightButtons.spacing = 4
         rightButtons.setContentHuggingPriority(.required, for: .horizontal)
@@ -114,7 +117,7 @@ final class TabBarView: NSView {
             return
         }
         for tab in session.tabs {
-            let canFork = tab.kind == .claude && session.canFork(tab.id)
+            let canFork = session.canFork(tab.id)
             let chip = TabChipView(
                 tabID: tab.id,
                 title: tab.title,
@@ -125,7 +128,8 @@ final class TabBarView: NSView {
                 copyPaths: Self.copyPaths(for: tab, repo: session.url),
                 onSelect: { [weak self] in self?.onSelect?(tab.id) },
                 onClose: { [weak self] in self?.onClose?(tab.id) },
-                onFork: canFork ? { [weak self] in self?.onFork?(tab.id) } : nil
+                onFork: canFork ? { [weak self] in self?.onFork?(tab.id) } : nil,
+                onSwitchUI: session.canSwitchClaudeUI(tab.id) ? { [weak self] in self?.onSwitchUI?(tab.id) } : nil
             )
             chips.addArrangedSubview(chip)
         }
@@ -165,6 +169,7 @@ final class TabBarView: NSView {
 
     @objc private func newClaudeDefault() { onNewClaude?("") }
     @objc private func newTerminal() { onNewTerminal?() }
+    @objc private func newChatTapped() { onNewChat?() }
 
     @objc private func argsMenuTapped(_ sender: NSButton) { popArgsMenu(from: sender) }
 
@@ -234,6 +239,8 @@ final class TabChipView: PointerView, NSDraggingSource {
     private let onSelect: () -> Void
     private let onClose: () -> Void
     private let onFork: (() -> Void)?                              // forkable claude tabs only → ⑂ icon on the chip
+    private let onSwitchUI: (() -> Void)?                          // claude/chat tabs with a conversation → right-click switch
+    private let kind: TabKind
     private let copyPaths: (absolute: String, relative: String)?   // file tabs only → right-click copy
     private let closeButton = PointerButton()
     private let forkButton = PointerButton()
@@ -243,11 +250,13 @@ final class TabChipView: PointerView, NSDraggingSource {
     init(tabID: String, title: String, kind: TabKind, status: ClaudeState, dirty: Bool, isActive: Bool,
          copyPaths: (absolute: String, relative: String)? = nil,
          onSelect: @escaping () -> Void, onClose: @escaping () -> Void,
-         onFork: (() -> Void)? = nil) {
+         onFork: (() -> Void)? = nil, onSwitchUI: (() -> Void)? = nil) {
         self.tabID = tabID
         self.onSelect = onSelect
         self.onClose = onClose
         self.onFork = onFork
+        self.onSwitchUI = onSwitchUI
+        self.kind = kind
         self.copyPaths = copyPaths
         super.init(frame: .zero)
 
@@ -259,7 +268,7 @@ final class TabChipView: PointerView, NSDraggingSource {
         toolTip = title
 
         let indicator: NSView
-        if kind == .claude {
+        if kind == .claude || kind == .chat {
             indicator = StatusDot(state: status)
         } else {
             let glyph = NSTextField(labelWithString: Self.glyph(for: kind))
@@ -326,6 +335,7 @@ final class TabChipView: PointerView, NSDraggingSource {
         case .diff:     return "±"
         case .claude:   return "✦"
         case .search:   return "⌕"
+        case .chat:     return "✦"
         }
     }
 
@@ -368,8 +378,17 @@ final class TabChipView: PointerView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
 
-    // Right-click on a file tab → copy its path. (Claude tabs fork via the ⑂ icon on the chip.)
+    // Right-click on a file tab → copy its path; on a Claude/chat tab → switch between terminal UI and chat.
+    // (Claude tabs fork via the ⑂ icon on the chip.)
     override func menu(for event: NSEvent) -> NSMenu? {
+        if onSwitchUI != nil {
+            let menu = NSMenu()
+            let item = NSMenuItem(title: kind == .chat ? "Open in Terminal UI" : "Open as Chat",
+                                  action: #selector(switchUITapped), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            return menu
+        }
         guard copyPaths != nil else { return nil }
         let menu = NSMenu()
         for (title, sel) in [("Copy Path", #selector(copyAbsolute)), ("Copy Relative Path", #selector(copyRelative))] {
@@ -380,6 +399,7 @@ final class TabChipView: PointerView, NSDraggingSource {
         return menu
     }
     @objc private func forkTapped() { onFork?() }
+    @objc private func switchUITapped() { onSwitchUI?() }
     @objc private func copyAbsolute() { if let p = copyPaths?.absolute { Clipboard.copy(p) } }
     @objc private func copyRelative() { if let p = copyPaths?.relative { Clipboard.copy(p) } }
 
