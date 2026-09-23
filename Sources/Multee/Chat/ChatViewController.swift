@@ -385,7 +385,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
                 ]
             } else {
                 detail = unavailable.map { "Code can’t be restored: \($0)" } ?? "No files changed since this message."
-                choices = [.init(title: "Restore conversation", detail: back.prefix(1).uppercased() + back.dropFirst()) { rewind(false, true) }]
+                choices = [.init(title: "Restore conversation", detail: back.prefix(1).uppercased() + String(back.dropFirst())) { rewind(false, true) }]
             }
             choices.append(.init(title: "Never mind") {})
             self.ask(ChatLocalCard(title: "Rewind to before “\(short)”?", detail: detail, choices: choices,

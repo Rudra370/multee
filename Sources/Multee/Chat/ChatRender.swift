@@ -446,7 +446,7 @@ enum ChatRender {
         let prefix = cwd.hasSuffix("/") ? cwd : cwd + "/"
         if path.hasPrefix(prefix) { return String(path.dropFirst(prefix.count)) }
         let home = NSHomeDirectory()
-        let short = path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+        let short = path.hasPrefix(home + "/") ? "~" + String(path.dropFirst(home.count)) : path
         let parts = short.split(separator: "/")
         return short.count > 70 && parts.count > 3 ? "…/" + parts.suffix(3).joined(separator: "/") : short
     }

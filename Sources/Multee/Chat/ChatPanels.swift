@@ -229,7 +229,7 @@ final class ChatPromptPanel: NSView, NSTextFieldDelegate {
         }
         addChoice("Yes") { [weak self] in self?.onAnswer?(.allow) }
         if let always = Self.alwaysLabel(p.suggestions) {
-            addChoice("Yes, and " + always.prefix(1).lowercased() + always.dropFirst()) { [weak self] in self?.onAnswer?(.allowAlways) }
+            addChoice("Yes, and " + always.prefix(1).lowercased() + String(always.dropFirst())) { [weak self] in self?.onAnswer?(.allowAlways) }
         }
         addChoice("", field: "No, and tell Claude what to do differently", text: feedbackText) { [weak self] in self?.denyWithFeedback() }
         addHint("↑↓ select · ⏎ confirm · 1–\(rows.count) pick · esc deny")
@@ -1071,7 +1071,7 @@ final class ChatFooterView: NSView {
         if let levels = current?.effortLevels, !levels.isEmpty {
             menu.addItem(Self.header("Effort" + (currentEffort == nil ? " (model default)" : "")))
             for l in levels {
-                let item = NSMenuItem(title: l.prefix(1).uppercased() + l.dropFirst(), action: #selector(effortPicked(_:)), keyEquivalent: "")
+                let item = NSMenuItem(title: l.prefix(1).uppercased() + String(l.dropFirst()), action: #selector(effortPicked(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = l
                 item.state = l == currentEffort ? .on : .off
                 item.indentationLevel = 1

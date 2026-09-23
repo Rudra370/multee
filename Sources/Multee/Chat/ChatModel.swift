@@ -170,7 +170,8 @@ enum ModelName {
         if let last = parts.last, last.count == 8, Int(last) != nil { parts.removeLast() }   // date stamp
         guard let family = parts.first, !family.isEmpty else { return id }
         let version = parts.dropFirst().joined(separator: ".")
-        return family.prefix(1).uppercased() + family.dropFirst() + (version.isEmpty ? "" : " \(version)") + suffix
+        let name = family.prefix(1).uppercased() + String(family.dropFirst())
+        return name + (version.isEmpty ? "" : " \(version)") + suffix
     }
 
     /// Context window for a model id when Claude hasn't told us yet (it does, in each turn's `result`).

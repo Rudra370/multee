@@ -611,7 +611,7 @@ final class ChatSession {
             addNotice("Claude is working — press esc to stop it, then rewind."); done(nil); return
         }
         let original = items.first { $0.uuid == uuid }?.text ?? ""
-        let quoted = "“\(original.split(separator: "\n").first.map { $0.count > 60 ? $0.prefix(59) + "…" : $0 } ?? "")”"
+        let quoted = "“\(original.split(separator: "\n").first.map { $0.count > 60 ? String($0.prefix(59)) + "…" : String($0) } ?? "")”"
         let finishConversation = { [weak self] in
             guard let self else { return }
             var fields: JSON = ["target_message_uuid": uuid]
