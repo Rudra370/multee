@@ -5,6 +5,31 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.22] - 2026-09-23
+
+### Added
+- **Claude, rendered natively — a new kind of tab (⌘⇧M).** The same Claude Code you already run, without a
+  terminal in the middle: your messages and its replies as real text you can select, tool calls that fold
+  away when you're done with them, streaming markdown, and background tasks in a panel. Permission requests,
+  questions and plan approvals arrive as cards you answer from the keyboard — ↑↓ to choose, ⏎ to confirm,
+  number keys to jump, esc to decline. Nothing pops up a dialog box.
+  - **Slash commands that work here:** `/rewind` (go back to before one of your messages — restoring the
+    files Claude changed, the conversation, or both), `/fork`, `/resume`, `/copy`, `/export`, `/memory`,
+    `/plan`, `/btw` (a side question answered without joining the conversation), and `/model`.
+  - **`!` runs a shell command** in the project folder; its output joins the conversation without costing a
+    reply.
+  - **Paste an image** — a screenshot, a file from Finder, or from a clipboard manager — and it rides along
+    with your message. The sent message shows the picture itself, and it's still there when you reopen the
+    conversation later.
+  - A tab can switch between Claude's terminal interface and this one in place, so nothing is one-way.
+
+### Fixed
+- **Closing a tab now actually ends what was running in it.** A closed terminal or Claude tab used to leave
+  its shell — and, for Claude, the helper processes it had started — running in the background, sometimes for
+  days. Quitting Multee left them behind too. Now they're stopped properly, along with anything they started.
+- **esc esc clears the message box** in a chat tab, as it does in the terminal. On an empty box it still
+  offers to rewind.
+
 ## [0.1.21] - 2026-08-19
 
 ### Fixed
