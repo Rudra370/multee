@@ -549,6 +549,21 @@ pass (D33) covering it with no change to the virtual list. Thumbnails come from 
 straight to size and is safe off the main thread — history is parsed on a background queue.
 **Status:** built. 57 real transcripts (to 64 MB) still parse in ≤25 ms each with images decoded.
 
+### D40 — A closed tab is hung up on, not asked to stop
+**Decision:** `TerminalStore.close` captures the child's pid before `terminate()`, then `ProcessEnd` sends
+`SIGHUP` to its process group, `SIGKILL`s anything still alive 1.5 s later, and reaps it. `applicationWillTerminate`
+does the same for every open PTY. A view whose process already exited is never signalled.
+**Why:** SwiftTerm's `terminate()` is `kill(shellPid, SIGTERM)`, and an interactive shell ignores SIGTERM —
+measured: closing three terminal tabs left three live shells and three leaked pseudo-terminal descriptors,
+and a four-day-old Multee carried nine `<defunct>` children. A hangup is what a closing terminal actually
+means, the group reaches the `node` and MCP processes Claude started, and once the child is gone the
+descriptor sees EOF and closes itself — so the fd leak needed no separate fix. Rejected: forking SwiftTerm
+(this is five lines at the call site), and closing the descriptor ourselves (DispatchIO still owns it —
+their own comment warns that closing underneath it crashes).
+**Status:** built and verified — three terminal tabs opened and closed return the app's open-PTY count to
+baseline with no survivor and no `Z`; a Claude tab takes its `npm exec @playwright/mcp` child with it;
+quitting with three tabs open leaves nothing behind.
+
 ### D35 — Chat processes drop a parent Claude session's environment markers
 **Decision:** A chat's `claude` is launched without `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
 `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_EFFORT` and the other per-session markers.

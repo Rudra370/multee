@@ -125,7 +125,8 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   none) is read for what it is, and raw single-type bytes are accepted. The box claims the image pasteboard
   types so ⌘V is even *offered*: AppKit greys out Edit ▸ Paste — and swallows the key — when a plain-text
   view says it reads nothing on the clipboard, which made an image-only clipboard a silent no-op.
-- **Input** (`ChatInputView`) — ⏎ send, ⇧⏎/⌥⏎ newline, esc stops Claude (esc esc on an empty box: rewind),
+- **Input** (`ChatInputView`) — ⏎ send, ⇧⏎/⌥⏎ newline, esc stops Claude (esc esc throws away what you
+  typed, images and all; on an empty box it offers rewind),
   ⇧⇥ cycles mode, ↑/↓ history;
   `/` completion (all commands incl. skills, with argument hints + descriptions) and `@` file completion
   (`git ls-files`). Messages sent while Claude works queue above the box and join the transcript when Claude
@@ -143,7 +144,9 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   consecutive blocks stay separate (a spacer line — TextKit merges adjacent equal text blocks).
 - **Rewind** (`/rewind`, esc esc) — pick one of your messages since the last compaction (oldest at the top,
   the latest at the bottom and selected, as in the terminal UI); a dry run
-  (`rewind_files`) shows which files changed since then, then a card (not a modal) asks: restore code and
+  (`rewind_files`) shows which files changed since then — the picker stays up as "Checking what changed…"
+  while Claude answers, so the keyboard never drops back into the message box mid-flight and esc still
+  cancels (a reply to a cancelled or superseded ask is dropped) — then a card (not a modal) asks: restore code and
   conversation / conversation / code / never mind. The conversation rewind is Claude's `rewind_conversation` (cut in place, the message goes
   back into the box to edit); code comes from Claude's file checkpoints (print mode keeps them only with
   `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING`, which chats set). Each sent message carries its own id so
@@ -228,6 +231,14 @@ live in one `launchSpec(for:cwd:)`. **Continue/resume flags are dropped for fold
 (`hasConversation(forCwd:)` checks `~/.claude/projects/<encoded cwd>` for any `.jsonl`) so a default like
 `--continue` starts a *fresh* session on a brand-new project instead of failing with "no conversation to
 continue"; it's kept when the folder has history. A wrong encoding guess only ever means "launch fresh".
+
+**Closing a tab ends what it was running.** `terminate()` alone sends `SIGTERM`, which an interactive shell
+and Claude both ignore, so closed tabs used to leave their shells (and Claude's `node`/MCP children) running
+for days, each still holding a leaked pseudo-terminal. `ProcessEnd` hangs up on the child's whole process
+group, kills a survivor after 1.5 s and reaps it, and `applicationWillTerminate` does the same for every
+open PTY so nothing is handed to launchd. Verified: three tabs opened and closed return the app's open-PTY
+count to baseline with no survivor and no `<defunct>`; a Claude tab takes its MCP server with it; quitting
+with three tabs open leaves nothing. See DECISIONS D40.
 
 **Session end.** Every spawned terminal sets `TerminalStore` as its SwiftTerm `processDelegate`; on
 `processTerminated` it maps the view → id and fires `onExit(tabID)` (AppDelegate → `Session.markExited`,

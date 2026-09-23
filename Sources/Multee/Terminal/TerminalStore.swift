@@ -235,9 +235,26 @@ final class TerminalStore {
     func has(_ id: String) -> Bool { views[id] != nil }
 
     func close(_ id: String) {
+        let pid = pidToEnd(views[id])
         views[id]?.terminate()
         views[id]?.removeFromSuperview()
         views[id] = nil
+        ProcessEnd.end(pid)             // terminate() only asks politely; a shell ignores that
+    }
+
+    /// Every PTY this app owns, ended before we exit — otherwise the children are handed to launchd and
+    /// keep running with nothing to show them.
+    func terminateAll() {
+        let pids = views.values.map { pidToEnd($0) }
+        views.values.forEach { $0.terminate() }
+        views.removeAll()
+        ProcessEnd.endBeforeQuit(pids)
+    }
+
+    /// The pid worth signalling for a view: none once its process has exited and been reaped.
+    private func pidToEnd(_ view: MulteeTerminalView?) -> pid_t {
+        guard let view, !view.processExited else { return 0 }
+        return view.process?.shellPid ?? 0
     }
 
     func focus(_ id: String) {
@@ -299,6 +316,7 @@ extension TerminalStore: LocalProcessTerminalViewDelegate {
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
+        (source as? MulteeTerminalView)?.processExited = true
         // May arrive off the main thread; do the (main-only) `views` lookup + notify on main.
         DispatchQueue.main.async { [weak self] in
             guard let self, let id = self.views.first(where: { $0.value === source })?.key else { return }
@@ -341,6 +359,11 @@ private final class ScrollerCursorOverlay: NSView {
 /// so we can't override it; instead `TerminalStore`'s shared monitor routes events here.
 final class MulteeTerminalView: LocalProcessTerminalView {
     private var scrollAccumulator: CGFloat = 0
+
+    /// Its process has already exited (you typed `exit`, Claude quit), so SwiftTerm has reaped it and its
+    /// pid means nothing any more. Closing the tab must not signal that number — the kernel hands pids out
+    /// again, and by then it could belong to someone else's process group.
+    var processExited = false
 
     /// DEV instrumentation: paint count, sampled by the state dump to detect flicker.
     private(set) var repaintCount: Int = 0

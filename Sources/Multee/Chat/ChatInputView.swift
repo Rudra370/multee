@@ -124,6 +124,13 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         set { textView.string = newValue; textChanged() }
     }
 
+    /// esc esc with something typed: throw the draft away, images and all — what the terminal UI does.
+    func clear() {
+        textView.string = ""
+        historyIndex = nil
+        textChanged()           // releases the images whose markers just went with it
+    }
+
     /// A key typed while a transcript row had focus: focus the box and replay the key here.
     func typeAhead(_ event: NSEvent) {
         focus()

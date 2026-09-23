@@ -82,10 +82,11 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "chatPick:0", "chatChoice:0", "chatSavePath:/tmp/x.md", "dumpClipboard:/tmp/x.txt", "chatOtherModel",
               "chatPasteImage:/tmp/x.png", "chatPasteImageFile:/tmp/x.png", "chatPasteImageData:/tmp/x.png",
               "chatPasteText:hi", "dumpPasteboard:/tmp/x.txt", "dumpPasteEnabled:/tmp/x.txt", "chatMenuPaste",
-              "chatUndo"],
+              "chatUndo", "shot:/tmp/x.png"],
   "live": "/tmp/multee-cmd" }
 ```
-- `shot` → self-screenshot of the window each 1s (no Screen-Recording permission). **Captures
+- `shot` (config key) → self-screenshot of the window each 1s; the `shot:<path>` **action** grabs one on
+  demand, for a state too brief for the timer (e.g. a picker mid-request) (no Screen-Recording permission). **Captures
   standard AppKit (chips, tree, editor, diff, panels) but NOT the SwiftTerm terminal** — it draws via
   CoreText in a way `cacheDisplay` can't grab. **Verify terminal content via `terminalText` in the
   state dump, not the screenshot.** (Corollary: don't make the terminal's ancestor views non-layer
@@ -177,6 +178,17 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   cursor rects to match SwiftTerm. Cursor *shape* can't be checked by the screenshot harness, and the
   sandbox blocks synthetic mouse events (CGEvent/NSEvent) — so this class of bug needs a human to verify.
 
+- **Closing a terminal tab must hang up, not ask politely.** SwiftTerm's `terminate()` sends `SIGTERM` to
+  the child alone and an interactive shell — or Claude — **ignores SIGTERM**: the process kept running, the
+  master PTY descriptor never saw EOF so it leaked with it, and SwiftTerm cancels the monitor that would
+  `waitpid`, so anything that *did* exit stayed `<defunct>` (a four-day-old Multee held nine of them plus a
+  dozen live shells). `TerminalStore.close` now reads `shellPid` first, then `ProcessEnd.end` sends `SIGHUP`
+  to the process **group** (Claude's own `node`/MCP children go with it), `SIGKILL`s a survivor after 1.5 s
+  and reaps it; the descriptor then closes itself. Two rules: never signal a view whose `processExited` is
+  set (pids get reused), and never `kill(-pid)` without `pid > 1` — `kill(-1, …)` hits every process you
+  own. Verify by counting: `lsof -p <app pid> | grep -c ptmx` must return to its baseline after closing
+  tabs, and `ps -eo pid,ppid,stat | awk '$2==<app pid>'` must show no survivor and no `Z`.
+
 - **Chat tab (`Chat/`) gotchas** (see D32–D35):
   - `claude -p` skips the folder-trust dialog → the chat asks itself (`ChatTrust`, exact path only).
   - Text from `JSONSerialization` is a bridged NSString; Swift `count`/character walks on it are ~100× slower.
@@ -257,8 +269,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   and `DockerEvents` streaming `docker events`).
 - `Terminal/` — `TerminalStore` (PTY per tab + scroll; plus one **quick-terminal** PTY per session,
   `quickView(sessionID:cwd:)` under a reserved `__quick__<sid>` id; and **command PTYs** under a reserved
-  `__cmd__` id for one-shot docker actions — `commandView`/`promoteCommand`/`onCommandExit`), `HookServer`
-  (status listener), `Hooks`.
+  `__cmd__` id for one-shot docker actions — `commandView`/`promoteCommand`/`onCommandExit`), `ProcessEnd`
+  (the hangup/kill/reap a closed PTY needs — see D40), `HookServer` (status listener), `Hooks`.
 - `UI/` — `WorkspaceViewController` (split + sidebar; owns the per-mode sidebar width and the **⌘B Files-panel
   on/off**, which removes the FILES pane *and* the session's `RepoStore` — see D30), `CenterViewController` (tab bar + content),
   `TabBarView`, `FileTree` (virtualized tree + a toolbar row: new file / new folder / collapse-all,

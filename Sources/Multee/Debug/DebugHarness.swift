@@ -196,6 +196,8 @@ enum DebugAction {
         case "chatPasteImageFile": chat?.debugPasteImage(arg, asFile: true)   // …as a file (Finder copy)
         case "chatPasteText":  chat?.debugPasteText(arg)                  // plain text still pastes as text
         case "chatPasteImageData": chat?.debugPasteImageData(arg)         // raw bytes under one type (clipboard managers)
+        case "shot":           // capture the window right now (the 1s timer can't catch a brief state)
+            DebugShot.capture(to: arg.isEmpty ? "/tmp/multee-shot.png" : arg)
         case "dumpPasteEnabled": // is Edit ▸ Paste enabled for what's on the clipboard (i.e. would ⌘V fire)
             try? (chat?.debugPasteEnabled() ?? "no chat").write(toFile: arg.isEmpty ? "/tmp/multee-paste-enabled.txt" : arg,
                                                                 atomically: true, encoding: .utf8)

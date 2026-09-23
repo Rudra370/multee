@@ -302,9 +302,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    /// Chat tabs' `claude` processes are plain children (not PTYs) — stop them explicitly so they, and the
-    /// servers/watchers they started, don't outlive the app.
-    func applicationWillTerminate(_ notification: Notification) { ChatStore.shared.terminateAll() }
+    /// Nothing a tab started outlives the app: chat tabs' `claude` processes are plain children (stop them
+    /// explicitly, so the servers/watchers they started go too), and every terminal PTY gets the hangup a
+    /// closing terminal owes it — without that the shells are reparented to launchd and run for days.
+    func applicationWillTerminate(_ notification: Notification) {
+        ChatStore.shared.terminateAll()
+        TerminalStore.shared.terminateAll()
+    }
 
     /// Quit (⌘Q, menu, or the red close button funnelled through here by MainWindowController): confirm
     /// before discarding unsaved edits across every session.

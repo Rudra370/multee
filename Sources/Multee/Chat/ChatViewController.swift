@@ -36,6 +36,8 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
     /// What the picker is showing (nil = hidden).
     private enum PickerKind: String { case resume, rewind, memory }
     private var pickerKind: PickerKind?
+    /// Which /rewind preview is the live one — a reply to an earlier (cancelled, or superseded) ask is dropped.
+    private var rewindRequest = 0
     private var lastEscape: Date?
     private var style: ChatStyle
     private var cancellables = Set<AnyCancellable>()
@@ -316,10 +318,13 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
 
     private func picked(_ id: String) {
         guard let kind = pickerKind else { return }
+        // /rewind has to ask Claude what changed before it can offer the choices — it keeps the picker up
+        // (as "checking…") for that, rather than dropping the keyboard back in the message box meanwhile.
+        if kind == .rewind { confirmRewind(id); return }
         closePicker()
         switch kind {
         case .resume: session.switchConversation(to: id)
-        case .rewind: confirmRewind(id)
+        case .rewind: break         // handled above, before the picker closes
         case .memory:
             guard ChatMemory.ensure(id) else { session.addNotice("Couldn’t create \(id)", error: true); return }
             ChatHook.openFile?(tabID, id)
@@ -336,9 +341,11 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         if session.shellRunning { session.stopShell(); return }
         if session.isWorking || session.prompt != nil { lastEscape = nil; session.interrupt(); return }
         let now = Date()
-        if let last = lastEscape, now.timeIntervalSince(last) < 0.8, input.text.isEmpty {
+        if let last = lastEscape, now.timeIntervalSince(last) < 0.8 {
             lastEscape = nil
-            showPicker(.rewind)
+            // Terminal parity: esc esc throws away what you typed, or — with nothing typed — offers to
+            // rewind the conversation.
+            if input.text.isEmpty { showPicker(.rewind) } else { input.clear() }
         } else {
             lastEscape = now
         }
@@ -346,11 +353,17 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
 
     /// Ask what to restore (code and/or conversation), after a dry run shows what code would change.
     private func confirmRewind(_ uuid: String) {
-        guard let item = session.items.first(where: { $0.uuid == uuid }) else { return }
+        guard let item = session.items.first(where: { $0.uuid == uuid }) else { closePicker(); return }
         let first = item.text.split(separator: "\n").first.map(String.init) ?? item.text
         let short = first.count > 60 ? String(first.prefix(59)) + "…" : first
+        // The picker stays up, emptied to a one-line "checking", so the keyboard never leaves it: esc still
+        // cancels, and nothing you type in the meantime lands in the message box.
+        rewindRequest += 1
+        let request = rewindRequest
+        picker.setEntries([], empty: "Checking what changed…")
         session.previewRewind(uuid) { [weak self] changes, unavailable in
-            guard let self else { return }
+            guard let self, request == self.rewindRequest, self.pickerKind == .rewind else { return }  // esc'd, or asked again
+            self.closePicker()
             let rewind = { [weak self] (code: Bool, conversation: Bool) in
                 self?.session.rewind(to: uuid, code: code, conversation: conversation) { [weak self] prefill in
                     guard let self else { return }
