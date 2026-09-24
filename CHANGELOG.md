@@ -5,6 +5,12 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.26] - 2026-09-24
+
+### Fixed
+- **Multee could crash with a chat open that has a picture you sent** — at launch or while scrolling — whenever
+  that message was only partly on screen with its picture out of view.
+
 ## [0.1.25] - 2026-09-24
 
 ### Added
