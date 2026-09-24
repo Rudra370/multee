@@ -690,7 +690,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
             "inputText": input.text, "suggestion": s.suggestion ?? "", "placeholder": input.debugPlaceholder, "voice": input.debugVoice, "quickLook": debugQuickLook, "queued": s.queuedTexts, "completion": input.completionTitles.prefix(8).map { $0 },
             "historyStart": s.historyStart.map { Int($0) } ?? -1, "canLoadEarlier": s.canLoadEarlier,
             "transcript": transcript.debugState(), "logText": String(tasksPanel.logText.suffix(300)),
-            "contextPopover": lastContextText, "effort": s.effort ?? "", "fastMode": s.fastModeState ?? "",
+            "contextPopover": lastContextText, "windows": NSApp.windows.filter { $0.isVisible }.map { "\(type(of: $0)) \($0.frame) content=\($0.contentView?.subviews.first.map { "\($0.frame)" } ?? "-")" }, "effort": s.effort ?? "", "fastMode": s.fastModeState ?? "",
             "fastReason": s.fastModeReason ?? "", "remoteURL": s.remoteURL ?? "", "modeCycle": s.modeCycle,
             "resumeVisible": pickerKind == .resume, "picker": pickerKind?.rawValue ?? "",
             "pickerEntries": picker.shown.prefix(12).map { "\($0.title) · \($0.detail)" }, "pickerSelected": picker.debugSelected,
@@ -919,11 +919,18 @@ final class ChatContextPopover: NSViewController {
             let total = u["totalTokens"] as? Int ?? 0, max = u["maxTokens"] as? Int ?? 0
             let pct = u["percentage"] as? Int ?? 0
             s.append(NSAttributedString(string: "Context · \(Self.k(total)) / \(Self.k(max)) tokens (\(pct)%)\n", attributes: title))
-            for c in u["categories"] as? [[String: Any]] ?? [] {
-                let name = c["name"] as? String ?? ""
+            // Name, then the count right-aligned on one tab stop past the widest name — spaces can't line up a
+            // proportional font.
+            let categories = u["categories"] as? [[String: Any]] ?? []
+            let names = categories.map { $0["name"] as? String ?? "" }
+            let widest = names.map { ($0 as NSString).size(withAttributes: row).width }.max() ?? 0
+            let column = NSMutableParagraphStyle()
+            column.tabStops = [NSTextTab(textAlignment: .right, location: ceil(widest) + 70)]
+            for (c, name) in zip(categories, names) {
                 let tokens = c["tokens"] as? Int ?? 0
-                let deferred = c["isDeferred"] as? Bool == true
-                s.append(NSAttributedString(string: "\n\(name.padding(toLength: 26, withPad: " ", startingAt: 0))\(Self.k(tokens).leftPad(8))", attributes: deferred ? dim : row))
+                var attrs = c["isDeferred"] as? Bool == true ? dim : row
+                attrs[.paragraphStyle] = column
+                s.append(NSAttributedString(string: "\n\(name)\t\(Self.k(tokens))", attributes: attrs))
             }
             if let t = u["autoCompactThreshold"] as? Int, u["isAutoCompactEnabled"] as? Bool == true {
                 s.append(NSAttributedString(string: "\n\nAuto-compacts at \(Self.k(t)) tokens", attributes: dim))
@@ -943,14 +950,17 @@ final class ChatContextPopover: NSViewController {
             label.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 14),
             label.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -14),
         ])
+        // A popover sizes itself from the view's frame, not its constraints — left at zero, it squeezed the label
+        // to a few points wide (a tall empty sliver). Size it to fit the text.
+        v.frame.size = v.fittingSize
+        preferredContentSize = v.fittingSize
         view = v
     }
 
-    static func k(_ n: Int) -> String { n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)" }
-}
-
-private extension String {
-    func leftPad(_ n: Int) -> String { count >= n ? self : String(repeating: " ", count: n - count) + self }
+    static func k(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000).replacingOccurrences(of: ".0M", with: "M") }
+        return n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)"
+    }
 }
 
 /// Canned answers for the chat's in-card questions (the harness sets them to skip showing the card).

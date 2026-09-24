@@ -229,6 +229,8 @@ enum DebugAction {
         case "chatPasteImageData": chat?.debugPasteImageData(arg)         // raw bytes under one type (clipboard managers)
         case "shot":           // capture the window right now (the 1s timer can't catch a brief state)
             DebugShot.capture(to: arg.isEmpty ? "/tmp/multee-shot.png" : arg)
+        case "shotPopover":    // the open popover (its own window, which `shot` can't see)
+            DebugShot.capture(to: arg.isEmpty ? "/tmp/multee-popover.png" : arg, popover: true)
         case "dumpPasteEnabled": // is Edit ▸ Paste enabled for what's on the clipboard (i.e. would ⌘V fire)
             try? (chat?.debugPasteEnabled() ?? "no chat").write(toFile: arg.isEmpty ? "/tmp/multee-paste-enabled.txt" : arg,
                                                                 atomically: true, encoding: .utf8)
@@ -538,10 +540,11 @@ enum DebugState {
 
 /// Renders the main window's content view to a PNG (no Screen-Recording permission needed).
 enum DebugShot {
-    static func capture(to path: String) {
-        let window = NSApp.keyWindow ?? NSApp.mainWindow
-            ?? NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })
-        guard let window, let view = window.contentView,
+    static func capture(to path: String, popover: Bool = false) {
+        let window = popover ? NSApp.windows.first { $0.isVisible && String(describing: type(of: $0)).contains("Popover") }
+            : NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })
+        // A popover's content view sits inside its frame view (the bubble); draw that whole bubble.
+        guard let window, let view = popover ? window.contentView?.superview ?? window.contentView : window.contentView,
               view.bounds.width > 1,
               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         view.cacheDisplay(in: view.bounds, to: rep)

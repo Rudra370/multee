@@ -82,7 +82,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "chatPick:0", "chatChoice:0", "chatSavePath:/tmp/x.md", "dumpClipboard:/tmp/x.txt", "chatOtherModel",
               "chatPasteImage:/tmp/x.png", "chatPasteImageFile:/tmp/x.png", "chatPasteImageData:/tmp/x.png",
               "chatPasteText:hi", "dumpPasteboard:/tmp/x.txt", "dumpPasteEnabled:/tmp/x.txt", "chatMenuPaste",
-              "chatUndo", "shot:/tmp/x.png"],
+              "chatUndo", "shot:/tmp/x.png", "shotPopover:/tmp/x.png"],
   "live": "/tmp/multee-cmd" }
 ```
 - `shot` (config key) → self-screenshot of the window each 1s; the `shot:<path>` **action** grabs one on
