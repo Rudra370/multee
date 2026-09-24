@@ -50,6 +50,8 @@ brew uninstall --cask multee
 
 - **Run many projects side by side** — each project is a session; switch between them instantly.
 - **Tabs for everything** — Claude sessions, terminals, file viewers, and diffs, together in one window.
+- **Chat with Claude in a real Mac window** — a native chat view for Claude Code, alongside the classic terminal
+  one ([more below](#claude-chat)).
 - **Know what needs you** — a colored dot per session shows whether Claude is working, waiting on you, or
   idle, with an optional sound and a menu-bar indicator when it finishes or needs attention.
 - **Find & jump fast** — go to any file (⌘P), run any command (⌘⇧P), or search the whole project.
@@ -60,6 +62,44 @@ brew uninstall --cask multee
   formatted **preview** (headings, highlighted code, tables, inline images) with a source toggle.
 - **Review &amp; ship** — stage, commit, discard, view diffs, and switch branches without leaving the app.
 - **Pick up where you left off** — sessions, tabs, and Claude conversations come back when you reopen Multee.
+
+## Claude Chat
+
+Besides running Claude Code in a terminal tab, Multee can show it as a **native chat window**: new chat with
+**⌘⇧M** (or the chat bubbles icon in the tab bar). It's the same `claude` you already use underneath (your login,
+settings, skills, MCP servers, and conversations) with a proper Mac interface on top. Switch any Claude tab
+between chat and terminal from its right-click menu; the conversation carries over.
+
+<p align="center">
+  <img src="assets/chat.png" width="880" alt="Claude Chat: an edit shown as a red/green diff, a new test, and a permission card asking to run the tests"><br>
+  <b>Edits as diffs, and permission requests you answer from the keyboard</b>
+</p>
+
+**Reading**
+- Formatted replies: headings, lists, tables, links, and syntax-highlighted code blocks with a copy button.
+- Tool calls shown the way the terminal shows them: edits as red/green diffs, file reads and writes, to-do
+  lists, subagents with their progress.
+- Smooth scrolling through very long conversations; earlier history loads as you scroll up.
+- **Jump to any message you sent** from a rail along the left edge, or with **⌘J**.
+- **Fold Claude's replies** under your message so a long chat reads as the list of what you asked.
+
+**Writing**
+- **Talk instead of typing:** press **fn⌃** or the mic and your words appear as you speak, using Claude
+  Code's own speech-to-text.
+- **Paste or drop images:** they show as thumbnails above the box; click one to preview it full size.
+- `/` completes commands and skills (mid-message too), `@` completes file names, `!` runs a shell command.
+- **Suggested next message:** when the next step is obvious, Claude's guess waits greyed in the box; **Tab**
+  takes it.
+- Messages sent while Claude works wait in a queue and go out one at a time; ↑ then ⏎ takes one back to edit.
+
+**Staying in control**
+- Permission requests, questions, and plan approvals appear as cards you can answer entirely from the keyboard.
+- The status line shows the permission mode (⇧⇥ to cycle), the model and effort, how full the context is
+  (click it for a breakdown), your 5-hour and weekly usage, and the session's cost.
+- **Rewind** (esc esc) to an earlier message, restoring the conversation, the code, or both.
+- **Background tasks** (dev servers, watchers, agents) in one panel with their logs, the ports they listen on,
+  and a Stop button.
+- `/resume`, `/fork`, `/btw` side questions, `/export` to Markdown, Remote Control, and more.
 
 ## See it in action
 
