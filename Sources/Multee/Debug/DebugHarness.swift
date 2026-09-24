@@ -156,6 +156,12 @@ enum DebugAction {
         case "chatVoice":      chat?.debugVoiceFile(arg)                  // dictate from an audio file (any format) in place of the mic
         case "chatVoiceToggle": chat?.toggleVoice()                       // the mic button / fn⌃ (real mic)
         case "chatVoiceDevice": chat?.debugVoiceDeviceChanged()          // the input device changed mid-dictation
+        case "chatPreviewImage":   // Quick Look on image `b` of the a-th message with images ("a|b", default 0|0)
+            let p = arg.split(separator: "|").compactMap { Int($0) }
+            chat?.debugPreviewPicture(message: p.first ?? 0, image: p.count > 1 ? p[1] : 0)
+        case "chatPreviewAttached": chat?.debugPreviewAttached(Int(arg) ?? 0)   // click the i-th thumbnail above the box
+        case "chatRemoveAttached": chat?.debugRemoveAttached(Int(arg) ?? 0)     // its × 
+        case "chatClosePreview": chat?.debugClosePreview()
         case "chordFnCtrl":    // fn⌃ pressed and released, as flagsChanged events through NSApp (needs Multee frontmost);
                                // `:path` dictates that audio file instead of the mic
             if !arg.isEmpty { chat?.debugVoiceAudio(arg) }

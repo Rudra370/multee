@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Quartz
 
 /// Hooks the chat tab needs from the app shell (wired by `CenterViewController`).
 enum ChatHook {
@@ -21,6 +22,8 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
     let tabID: String
     let session: ChatSession
     private let settings: Settings
+    fileprivate var previewFiles: [URL] = []        // what Quick Look shows (see the extension at the end)
+    fileprivate var previewIndex = 0
 
     private var transcript: ChatTranscriptView!
     private let promptPanel = ChatPromptPanel()
@@ -68,6 +71,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         transcript.onToggle = { [weak self] id in self?.session.toggleExpanded(itemID: id) }
         transcript.onLoadEarlier = { [weak self] in self?.session.loadEarlier() }
         transcript.onTypeAhead = { [weak self] e in self?.input.typeAhead(e) }
+        transcript.onPicture = { [weak self] id, i in self?.previewPicture(itemID: id, index: i) }
         root.addSubview(transcript)
 
         promptPanel.onAnswer = { [weak self] a in self?.answer(a) }
@@ -82,6 +86,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         input.onStop = { [weak self] in self?.session.interrupt() }
         input.onCycleMode = { [weak self] in self?.cycleMode() }
         input.onVoiceError = { [weak self] m in self?.session.addNotice("Voice: " + m, error: true) }
+        input.onPreviewImages = { [weak self] files, i in self?.preview(files, at: i) }
         input.queuedCount = { [weak self] in self?.session.queuedTexts.count ?? 0 }
         input.onQueueSelection = { [weak self] _ in self?.refreshChrome() }
         input.onEditQueued = { [weak self] i in
@@ -354,7 +359,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
             lastEscape = nil
             // Terminal parity: esc esc throws away what you typed, or — with nothing typed — offers to
             // rewind the conversation.
-            if input.text.isEmpty { showPicker(.rewind) } else { input.clear() }
+            if input.isDraftEmpty { showPicker(.rewind) } else { input.clear() }
         } else {
             lastEscape = now
         }
@@ -681,7 +686,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
             "tasks": s.tasks.map { ["id": $0.id, "type": $0.type, "desc": $0.description, "status": $0.status,
                                      "ports": $0.ports, "output": $0.outputFile ?? ""] as [String: Any] },
             "footer": footer.snapshot, "activityText": activity.textShown,
-            "inputText": input.text, "voice": input.debugVoice, "queued": s.queuedTexts, "completion": input.completionTitles.prefix(8).map { $0 },
+            "inputText": input.text, "voice": input.debugVoice, "quickLook": debugQuickLook, "queued": s.queuedTexts, "completion": input.completionTitles.prefix(8).map { $0 },
             "historyStart": s.historyStart.map { Int($0) } ?? -1, "canLoadEarlier": s.canLoadEarlier,
             "transcript": transcript.debugState(), "logText": String(tasksPanel.logText.suffix(300)),
             "contextPopover": lastContextText, "effort": s.effort ?? "", "fastMode": s.fastModeState ?? "",
@@ -695,7 +700,9 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         d["items"] = s.items.suffix(40).map { i -> [String: Any] in
             var e: [String: Any] = ["id": i.id, "kind": "\(i.kind)", "text": String(i.text.prefix(300))]
             if let u = i.uuid { e["uuid"] = u }
-            if !i.images.isEmpty { e["images"] = i.images.map { "\(Int($0.size.width))x\(Int($0.size.height))" } }
+            if !i.images.isEmpty {
+                e["images"] = i.images.map { "\(Int($0.thumbnail.size.width))x\(Int($0.thumbnail.size.height)) \($0.file?.lastPathComponent ?? "-")" }
+            }
             if i.kind == .tool {
                 e["tool"] = i.toolName; e["status"] = "\(i.toolStatus)"
                 e["summary"] = ChatRender.toolSummary(i.toolName, i.toolInput, cwd: s.cwd)
@@ -732,6 +739,18 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
     }
 
     func debugVoiceDeviceChanged() { input.voice.debugDeviceChanged() }
+
+    /// Quick Look on the n-th image of the n-th message you sent (as a click on it would).
+    func debugPreviewPicture(message: Int, image: Int) {
+        let users = session.items.filter { $0.kind == .user && !$0.images.isEmpty }
+        guard users.indices.contains(message) else { return }
+        if !transcript.debugClickPicture(itemID: users[message].id, index: image) {
+            session.addNotice("preview: that picture isn't on screen", error: true)
+        }
+    }
+    func debugPreviewAttached(_ i: Int) { input.previewAttachment(i) }
+    func debugRemoveAttached(_ i: Int) { input.removeAttachment(i) }
+    func debugClosePreview() { if QLPreviewPanel.sharedPreviewPanelExists() { QLPreviewPanel.shared()?.orderOut(nil) } }
 
     /// The next dictation (however it's started) plays this file instead of the mic.
     func debugVoiceAudio(_ path: String) {
@@ -804,7 +823,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         _ = view.window?.firstResponder?.tryToPerform(#selector(NSText.paste(_:)), with: nil)
     }
 
-    /// ⌘Z in the box — the marker/attachment bookkeeping has to survive it. `breakUndoCoalescing` first:
+    /// ⌘Z in the box. `breakUndoCoalescing` first:
     /// typing leaves an open undo group, and `undo()` inside one throws.
     func debugUndo() {
         input.focus()
@@ -939,4 +958,58 @@ enum ChatConfirm {
     static var debugText: String?       // the text row's answer
     static var debugChoice: Int?        // → this choice index
     static var debugSavePath: String?   // /export → this path instead of the save panel
+}
+
+// MARK: - Quick Look (a sent or attached image, full size)
+
+/// Clicking a picture in the transcript, or a thumbnail above the box, opens Quick Look on the full images of
+/// that message (←→ between them, space/esc closes). The panel finds its controller up the responder chain —
+/// the clicked text view is first responder by then, and this controller is in its chain.
+extension ChatViewController: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    func previewPicture(itemID: Int, index: Int) {
+        guard let item = session.items.first(where: { $0.id == itemID }) else { return }
+        let files = item.images.compactMap(\.file)
+        guard !files.isEmpty else { return }
+        // A picture that couldn't be written drops out of `files`: count only the ones before it that made it.
+        let at = item.images.prefix(index).filter { $0.file != nil }.count
+        preview(files, at: min(at, files.count - 1))
+    }
+
+    func preview(_ files: [URL], at index: Int) {
+        guard !files.isEmpty, let panel = QLPreviewPanel.shared() else { return }
+        previewFiles = files
+        previewIndex = index
+        if panel.isVisible, panel.dataSource === self {
+            panel.reloadData()
+            panel.currentPreviewItemIndex = index
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { !previewFiles.isEmpty }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+        panel.reloadData()
+        panel.currentPreviewItemIndex = previewIndex
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewFiles.count }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        previewFiles[index] as NSURL
+    }
+
+    var debugQuickLook: [String: Any] {
+        let panel = QLPreviewPanel.sharedPreviewPanelExists() ? QLPreviewPanel.shared() : nil
+        return ["visible": panel?.isVisible ?? false, "ours": panel?.dataSource === self,
+                "index": panel?.currentPreviewItemIndex ?? -1, "files": previewFiles.map(\.lastPathComponent)]
+    }
 }

@@ -73,7 +73,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "chatKey:esc|shiftTab|up|down|enter|tab|optEnter", "chatAllow", "chatAllowAlways", "chatDeny",
               "chatDenyMsg:text", "chatAnswer:label", "chatSubmitAnswers", "chatInterrupt", "chatMode:plan",
               "chatCycleMode", "chatModel:haiku", "chatTasks", "chatLog:0", "chatStopTask:0", "chatClearTasks",
-              "chatScroll:0.5", "chatToggleItem:-1", "chatLoadEarlier", "chatJumpList", "chatVoice:/tmp/x.aiff", "chatVoiceToggle", "chatVoiceDevice", "chordFnCtrl:/tmp/x.aiff", "chatJumpTo:0", "chatFold:0", "chatFoldAll:0", "chatFoldRecord:0|/tmp/x.json", "cursorTrace:1", "chatContext", "chatRestart", "chatTrust",
+              "chatScroll:0.5", "chatToggleItem:-1", "chatLoadEarlier", "chatJumpList", "chatVoice:/tmp/x.aiff", "chatVoiceToggle", "chatVoiceDevice", "chatPreviewImage:0|0", "chatPreviewAttached:0", "chatRemoveAttached:0", "chatClosePreview", "chordFnCtrl:/tmp/x.aiff", "chatJumpTo:0", "chatFold:0", "chatFoldAll:0", "chatFoldRecord:0|/tmp/x.json", "cursorTrace:1", "chatContext", "chatRestart", "chatTrust",
               "chatKill", "chatOpenInTerminal", "switchUI", "chatScrollBench:/tmp/x.json",
               "chatMarkdownSelfTest:/tmp/x.json", "dumpChat:/tmp/x.json", "chatResume", "chatResumePick:0",
               "chatRemote:on|off", "chatEffort:low", "chatModeTo:bypassPermissions", "chatCycleUI", "chatConfirm:ok",
@@ -234,20 +234,12 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
     `result` turn for them, which the session keeps silent by matching their uuids in `command_lifecycle`.
     `/btw` is the `side_question` control request (answer only, nothing joins the conversation).
   - Images ride in the user message as `{"type":"image","source":{"type":"base64",…}}` blocks before the text
-    (print mode accepts them). **The `[Image #n]` markers in the box are the record of what the message
-    carries** — `textChanged` drops any attachment whose marker is gone (cut, selected away, box cleared), so
-    numbering restarts on its own; number a new one from the highest still present, never from the count.
-    **A marker is one character as far as the box is concerned**: the caret steps over it
-    (`willChangeSelectionFromCharacterRange` snaps out of a marker) and an edit that covers part of one
-    covers all of it (`shouldChangeTextIn` grows the range) — otherwise a caret placed inside it deletes a
-    letter, leaving `[Imag #1]`, which names no image and reaches Claude as literal text.
-    Backspace (and ⌦) next to a marker selects the whole marker plus the space after it and lets AppKit
-    delete the selection — `deleteBackward`/`deleteForward` → `markerRange{Before,After}Caret`; editing the
-    text ourselves put the deletion on the undo stack when a plain backspace is **not** undoable in an
-    `NSTextView`, so ⌘Z brought the marker back without its image. The marker helpers live on
-    `ChatAttachment`: number a new image from the highest marker *in the text* (`highestMarker`), and strip
-    markers no attachment claims when sending (`stripMarkers`) so a stray one never reaches Claude as
-    literal text. The transcript shows the picture instead of the marker — `ChatItem.images` holds small
+    (print mode accepts them). The box's images live in `ChatInputView.attachments`, shown by
+    `ChatAttachmentStrip` above the text (D44) — the text carries **no** `[Image #n]` markers any more (the old
+    one-character-marker machinery is gone). An image-only message is allowed: `ClaudeStream.sendUser` then
+    omits the text block (the API refuses an empty one) and `ChatHistory` keeps a user turn with pictures but no
+    text. Older messages still have markers in their text; `stripMarkers` removes them when drawing. The
+    transcript shows the picture instead of the marker — `ChatItem.images` holds small
     thumbnails (`ChatImage.thumbnail`, ImageIO, safe off-main) that `ChatRender.user` draws as text
     attachments, so the exact-height measuring pass covers them for free; `ChatHistory` rebuilds them from
     the transcript's base64 blocks when a chat is reopened.
@@ -275,11 +267,22 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
     list did this). While an overlay is open, turn the rows' cursors off (`ChatRowTextView.cursorsOff`, also on
     rows made meanwhile); `dumpChat` → `transcript.rowCursorsOff`. Same fight **inside** a row: a button over the
     text (the fold ▾, code Copy) — NSTextView sets the I-beam from its own tracking area on every move
-    (`_mouseInside:`, found with `cursorTrace`), so `ChatRowTextView.covered` skips it under the row's buttons.
+    (`_mouseInside:`, found with `cursorTrace`), so `ChatRowTextView.covered` skips it under the row's buttons. A custom
+    cursor over a region **inside** an NSTextView (a sent picture) must be *set* from that
+    view's own `mouseMoved`/`cursorUpdate`/`mouseEntered` — a cursor rect alone never got a turn, and skipping the
+    handlers left AppKit's arrow (`pictureCursor`).
   - **Which `/` commands are skills**: `initialize` flags `builtin: true` on Claude's built-ins **and** on the skills
     bundled with the CLI (claude-api, verify…), so it can't tell them apart; only the `init` event (first reply) has
     a `skills` list. `ChatSession.knownSkills` remembers every list seen (UserDefaults `multee.chatSkills`). Print mode
     doesn't expand a mid-text `/skill` — it arrives as plain text.
+  - **Quick Look finds its controller up the key window's responder chain** (`acceptsPreviewPanelControl` on
+    `ChatViewController`): with Multee in the background there is no key window, so the panel opens empty —
+    `dumpChat` → `quickLook.ours` false. Activate Multee Dev for these tests; a real click is always frontmost. The
+    panel is a system window the `shot` capture can't see — assert on `quickLook` (visible, ours, index, files).
+    **A rich-text `NSTextView` claims Quick Look for itself** (`acceptsPreviewPanelControl` → YES, previewing its
+    selected attachments), so a transcript row made first responder by the click opened an *empty* panel; a
+    plain-text one declines, so the box's image preview worked — the asymmetry. `ChatRowTextView` declines. The
+    harness `chatPreviewImage` goes through the row (first responder = its text) like a real click.
   - **Voice** (D43) speaks Claude Code's private `voice_stream` WebSocket. Test it with `chatVoice:<audio file>`
     (any format; `say -o x.aiff "…"` makes one) — the file plays in place of the mic at speaking pace through the
     real socket; `dumpChat` → `voice` has state, text and a `timeline` (connect/token/open/firstText seconds). With
@@ -364,7 +367,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - `Chat/` — the native chat tab (D32–D35): `ClaudeStream` (process + stream-json transport), `ChatSession`
   (+ `ChatStore`: event reducer, intents, lifecycle), `ChatModel` (items, prompts, tasks), `ChatHistory`
   (transcript tail → items, live branch only), `ChatRender` (+ `ChatMarkdown`, `ChatMeasurer`, `ChatStyle`),
-  `ChatTranscriptView` (virtual list with exact heights), `ChatInputView` (input + `/`/`@` completion),
+  `ChatTranscriptView` (virtual list with exact heights), `ChatInputView` (input + `/`/`@` completion), `ChatAttachmentStrip` (pasted-image thumbnails above it),
   `ChatJumpRail` (the left-edge jump rail + its hover list), `ChatPanels` (prompt card, activity line, status line, background-tasks panel, /btw card), `ChatResume` (past
   conversations + `ChatPickerPanel`, the picker /resume, /rewind and /memory share), `ChatLocalCommands`
   (/export Markdown, /memory files, the `!` shell runner, pasted-image encoding), `ChatTrust`, `ChatViewController` (+ port scanner, the chat's own

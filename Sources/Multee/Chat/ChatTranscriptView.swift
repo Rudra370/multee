@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import Quartz
 
 /// Where a row's text sits for a given list width. Shared by measuring and layout so a precomputed height
 /// is exactly the height the row draws at.
@@ -84,6 +85,14 @@ final class ChatTranscriptView: NSView {
     var onToggle: ((Int) -> Void)?                  // "show more" link → item id
     var onLoadEarlier: (() -> Void)?
     var onTypeAhead: ((NSEvent) -> Void)?           // a key typed while a message is focused → the input
+    var onPicture: ((Int, Int) -> Void)?            // a sent image clicked → item id, image index
+
+    /// The harness's stand-in for clicking a picture: the same path as `ChatRowTextView.mouseDown` — that row's
+    /// text becomes first responder, then the picture opens. False when the row isn't on screen.
+    func debugClickPicture(itemID: Int, index: Int) -> Bool {
+        guard let row = live[itemID] else { return false }
+        return row.debugClickPicture(index)
+    }
 
     // DEV instrumentation
     private(set) var tileCount = 0
@@ -487,6 +496,7 @@ final class ChatTranscriptView: NSView {
         v.onFold = { [weak self] id, all in self?.toggleFold(id, all: all) }
         v.onToggle = { [weak self] id in self?.onToggle?(id) }
         v.onTypeAhead = { [weak self] e in self?.onTypeAhead?(e) }
+        v.onPicture = { [weak self] id, i in self?.onPicture?(id, i) }
         doc.addSubview(v)
         return v
     }
@@ -853,6 +863,7 @@ final class ChatTranscriptView: NSView {
         let clip = scroll.contentView.bounds
         return ["rows": heights.count, "docHeight": Int(doc.frame.height), "scrollY": Int(clip.minY),
                 "viewportH": Int(clip.height), "following": following, "jumpVisible": !jumpButton.isHidden,
+                "pictureRows": live.values.compactMap { $0.debugPictures }, 
                 "liveRows": live.count, "maxTileMs": maxTileMs, "headerHeight": Int(headerHeight),
                 "emptyShown": !emptyLabel.isHidden, "preparing": preparing, "syncAfterPrepare": syncAfterPrepare,
                 "cacheCount": cache.count, "measuredWidth": Int(measuredWidth), "rowWidth": Int(rowWidth),
@@ -955,6 +966,26 @@ final class ChatRowView: NSView, NSTextViewDelegate {
     var onToggle: ((Int) -> Void)?
     var onTypeAhead: ((NSEvent) -> Void)?
     var onFold: ((Int, Bool) -> Void)?              // item id, all (⌥)
+    var onPicture: ((Int, Int) -> Void)?            // item id, image index
+    /// Where a row's pictures are vs its text view — and what a hit test at each picture's centre finds.
+    var debugPictures: [String: Any]? {
+        let pics = textView.pictureFrames()
+        guard !pics.isEmpty else { return nil }
+        func r(_ x: NSRect) -> String { "\(Int(x.minX)),\(Int(x.minY)) \(Int(x.width))x\(Int(x.height))" }
+        return ["row": r(bounds), "textView": r(textView.frame),
+                "pictures": pics.map { i, f -> String in
+                    let c = convert(NSPoint(x: f.midX, y: f.midY), from: textView)
+                    let hit = superview.flatMap { hitTest(convert(c, to: $0)) }
+                    return "\(i): \(r(f)) in text → hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")"
+                }]
+    }
+
+    func debugClickPicture(_ i: Int) -> Bool {
+        guard textView.pictureFrames().contains(where: { $0.0 == i }) else { return false }
+        textView.window?.makeFirstResponder(textView)
+        onPicture?(itemID, i)
+        return true
+    }
     private let foldButton = PointerButton()       // ▾ / ▸ in the bubble's top-right (on hover, or while folded)
     private let stub = PointerButton()             // "Show Claude's reply" under a folded message
     private var fold = (collapsible: false, collapsed: false)
@@ -993,6 +1024,7 @@ final class ChatRowView: NSView, NSTextViewDelegate {
         textView.delegate = self
         textView.onTypeAhead = { [weak self] e in self?.onTypeAhead?(e) }
         textView.copyWhole = { [weak self] in self?.raw ?? "" }
+        textView.onPicture = { [weak self] i in if let self { self.onPicture?(self.itemID, i) } }
         addSubview(textView)
         for b in [foldButton, stub] {
             b.isBordered = false
@@ -1080,6 +1112,10 @@ final class ChatRowView: NSView, NSTextViewDelegate {
         textView.frame = NSRect(x: col.x + ins.left, y: ins.top, width: tw, height: max(1, bounds.height - ins.top - ins.bottom - foldExtra))
         layoutChrome(dotColor: Self.dot(for: item))
         layoutCopyButtons()
+        if textView.hasPictures != !item.images.isEmpty || !item.images.isEmpty {
+            textView.hasPictures = !item.images.isEmpty
+            window?.invalidateCursorRects(for: textView)                    // the pictures' hand
+        }
     }
 
     /// A Copy button in the top-right corner of every code block (tagged `.chatCode` by the renderer),
@@ -1309,9 +1345,79 @@ final class ChatCopyButton: PointerButton {
 
 /// The row's text view: selectable, never editable. Typing while it has focus goes to the chat input (so
 /// selecting text doesn't strand the keyboard); the context menu adds "Copy Message".
+extension NSCursor {
+    /// Over an image that opens in Quick Look: macOS's own zoom-in cursor (15+), looked up at runtime — the
+    /// release build compiles against an older SDK that doesn't declare it — else a drawn magnifier.
+    static let chatPreview: NSCursor = {
+        let sel = NSSelectorFromString("zoomInCursor")
+        if NSCursor.responds(to: sel), let c = NSCursor.perform(sel)?.takeUnretainedValue() as? NSCursor { return c }
+        let size = NSSize(width: 18, height: 18)
+        guard let symbol = NSImage(systemSymbolName: "plus.magnifyingglass", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium)) else { return .pointingHand }
+        let image = NSImage(size: size, flipped: false) { r in
+            // A white halo so it reads on the dark transcript and on light screenshots alike.
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] as [(CGFloat, CGFloat)] {
+                symbol.tinted(.white).draw(in: r.offsetBy(dx: dx, dy: dy).insetBy(dx: 1, dy: 1))
+            }
+            symbol.tinted(.black).draw(in: r.insetBy(dx: 1, dy: 1))
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 7, y: 7))
+    }()
+}
+
+private extension NSImage {
+    func tinted(_ color: NSColor) -> NSImage {
+        NSImage(size: size, flipped: false) { r in
+            self.draw(in: r)
+            color.set()
+            r.fill(using: .sourceAtop)
+            return true
+        }
+    }
+}
+
 final class ChatRowTextView: NSTextView {
     var onTypeAhead: ((NSEvent) -> Void)?
     var copyWhole: (() -> String)?
+    var onPicture: ((Int) -> Void)?
+    var hasPictures = false         // set per item — spares every mouse move over a text row the attribute scan
+
+    /// The sent images in this row (tagged `.chatPicture` by the renderer): index and frame in this view.
+    func pictureFrames() -> [(Int, NSRect)] {
+        guard hasPictures, let storage = textStorage, storage.length > 0, let lm = layoutManager, let tc = textContainer
+        else { return [] }
+        var out: [(Int, NSRect)] = []
+        storage.enumerateAttribute(.chatPicture, in: NSRange(location: 0, length: storage.length)) { v, r, _ in
+            guard let i = v as? Int else { return }
+            let glyphs = lm.glyphRange(forCharacterRange: r, actualCharacterRange: nil)
+            let rect = lm.boundingRect(forGlyphRange: glyphs, in: tc)
+            out.append((i, rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)))
+        }
+        return out
+    }
+
+    private func picture(at windowPoint: NSPoint) -> Int? {
+        let p = convert(windowPoint, from: nil)
+        return pictureFrames().first { $0.1.contains(p) }?.0
+    }
+
+    /// A rich-text NSTextView claims Quick Look for itself (it would preview its selected attachments — none,
+    /// so an empty panel) and sits before the chat in the responder chain once a click makes it first
+    /// responder. Decline, so the panel reaches `ChatViewController` and shows the message's full images.
+    /// (The message box is plain text, which already declines — why the `[Image #n]` preview worked.)
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { false }
+
+    /// A click on a sent image opens it in Quick Look (instead of selecting the attachment character).
+    override func mouseDown(with event: NSEvent) {
+        let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if event.clickCount == 1, mods.isEmpty, let i = picture(at: event.locationInWindow) {
+            window?.makeFirstResponder(self)        // Quick Look looks for its controller up this responder chain
+            onPicture?(i)
+            return
+        }
+        super.mouseDown(with: event)
+    }
 
     override func keyDown(with event: NSEvent) {
         // Printable keys (and Esc) go to the input; navigation/selection keys and shortcuts stay here.
@@ -1347,10 +1453,28 @@ final class ChatRowTextView: NSTextView {
     /// hand/I-beam flicker over the ▾.
     var covered: ((NSPoint) -> Bool)?
     private func quiet(_ e: NSEvent) -> Bool { cursorsOff || covered?(e.locationInWindow) == true }
-    override func resetCursorRects() { if !cursorsOff { super.resetCursorRects() } }
-    override func cursorUpdate(with event: NSEvent) { if !quiet(event) { super.cursorUpdate(with: event) } }
-    override func mouseMoved(with event: NSEvent) { if !quiet(event) { super.mouseMoved(with: event) } }
-    override func mouseEntered(with event: NSEvent) { if !quiet(event) { super.mouseEntered(with: event) } }
+    /// Over a picture, this view's own tracking-area events set the magnifier — a cursor rect alone never got a
+    /// turn (the text view picks its cursor from its tracking area on every move, and staying quiet there
+    /// left AppKit's arrow; traced with `cursorTrace`).
+    private func pictureCursor(_ e: NSEvent) -> Bool {
+        guard !cursorsOff, picture(at: e.locationInWindow) != nil else { return false }
+        NSCursor.chatPreview.set()
+        return true
+    }
+    override func resetCursorRects() {
+        guard !cursorsOff else { return }
+        super.resetCursorRects()
+        for (_, r) in pictureFrames() { addCursorRect(r.intersection(visibleRect), cursor: .chatPreview) }
+    }
+    override func cursorUpdate(with event: NSEvent) {
+        if !pictureCursor(event), !quiet(event) { super.cursorUpdate(with: event) }
+    }
+    override func mouseMoved(with event: NSEvent) {
+        if !pictureCursor(event), !quiet(event) { super.mouseMoved(with: event) }
+    }
+    override func mouseEntered(with event: NSEvent) {
+        if !pictureCursor(event), !quiet(event) { super.mouseEntered(with: event) }
+    }
 }
 
 /// The strip at the top of the transcript: "Load earlier messages" / loading spinner.

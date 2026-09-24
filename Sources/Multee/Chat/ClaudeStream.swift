@@ -150,7 +150,7 @@ final class ClaudeStream {
         var content: [JSON] = images.map {
             ["type": "image", "source": ["type": "base64", "media_type": $0.mediaType, "data": $0.data.base64EncodedString()]]
         }
-        content.append(["type": "text", "text": text])
+        if !text.isEmpty || content.isEmpty { content.append(["type": "text", "text": text]) }   // the API refuses an empty text block
         var msg: JSON = ["type": "user",
                          "message": ["role": "user", "content": content],
                          "parent_tool_use_id": NSNull(), "session_id": "", "uuid": uuid]

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 
 /// `/export`: the conversation as Markdown — your messages, Claude's replies, and a one-line entry per tool
 /// call (thinking and tool output are left out, as in the terminal UI's export).
@@ -182,6 +183,50 @@ enum ChatShell {
     }
 
     private final class Flag { var value = false }
+}
+
+/// Full-size copies of the images in chat messages, for Quick Look — the transcript keeps only thumbnails.
+/// Named by content hash in Multee's cache folder, so the same image (a reopened chat) is written once; files
+/// untouched for 30 days are cleared the first time the cache is used in a launch. Safe off the main thread
+/// (history is parsed there).
+enum ChatImageCache {
+    private static let dir: URL = {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent(Bundle.main.bundleIdentifier ?? "com.multee.native")
+            .appendingPathComponent("chat-images", isDirectory: true)
+    }()
+    private static let prepared: Void = {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        DispatchQueue.global(qos: .background).async { prune(olderThan: 30 * 86_400) }
+    }()
+
+    static func store(_ data: Data, mediaType: String) -> URL? {
+        _ = prepared
+        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let ext = switch mediaType {
+        case "image/jpeg": "jpg"
+        case "image/gif": "gif"
+        case "image/webp": "webp"
+        default: "png"
+        }
+        let url = dir.appendingPathComponent("\(hash.prefix(32)).\(ext)")
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.path) {
+            try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)   // still in use
+            return url
+        }
+        return (try? data.write(to: url, options: .atomic)) != nil ? url : nil
+    }
+
+    private static func prune(olderThan age: TimeInterval) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let cutoff = Date().addingTimeInterval(-age)
+        for f in files {
+            let d = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if d < cutoff { try? fm.removeItem(at: f) }
+        }
+    }
 }
 
 /// A pasted image, encoded for Claude: at most `maxEdge` on the long side (Anthropic's recommended size —

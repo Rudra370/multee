@@ -550,6 +550,7 @@ back without its image. Drawing the image as a text attachment keeps the transcr
 pass (D33) covering it with no change to the virtual list. Thumbnails come from ImageIO, which decodes
 straight to size and is safe off the main thread — history is parsed on a background queue.
 **Status:** built. 57 real transcripts (to 64 MB) still parse in ≤25 ms each with images decoded.
+**Superseded (the marker half) by D44** — the clipboard types and the transcript thumbnails stand.
 
 ### D40 — A closed tab is hung up on, not asked to stop
 **Decision:** `TerminalStore.close` captures the child's pid before `terminate()`, then `ProcessEnd` sends
@@ -588,6 +589,17 @@ then; ours breaks); we never refresh the token (that would race Claude's own cop
 a Claude tab once. The token is read through `/usr/bin/security` (0.02 s) because the item trusts it; Multee's own
 `SecItemCopyMatching` took ~3.7 s every call on an ad-hoc-signed build.
 **Status:** built — file-fed harness runs transcribe exactly; real mic + fn⌃ need a human.
+
+### D44 — Pasted images sit in a thumbnail strip, not as `[Image #n]` in the text
+**Decision:** Images pasted or dropped into the box join a row of 44pt thumbnails above the text
+(`ChatAttachmentStrip`: number badge by position, × on hover, click → Quick Look). The text carries no markers;
+the images go to Claude as image blocks ahead of it, as before. An image alone is a message.
+**Why:** The user asked for something better than `[Image #1]`. Claude never needed the markers — the blocks
+always went ahead of the text — so their position in the text meant little, while keeping them whole cost a
+pile of special cases (caret snapping, whole-marker backspace, undo, renumbering, stripping). Inline chips
+(rich text) were the alternative; rejected as the riskier change — the plain-text box is what keeps paste,
+undo and completion simple. To point at an image, type "image 2"; the badge says which is which.
+**Status:** built — harness: paste, preview, remove, text+image and image-only sends, reopen, esc esc.
 
 ### D35 — Chat processes drop a parent Claude session's environment markers
 **Decision:** A chat's `claude` is launched without `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,

@@ -50,6 +50,8 @@ final class ChatStyle {
 extension NSAttributedString.Key {
     /// On a rendered code block: its source text — the row puts a Copy button on each such block.
     static let chatCode = NSAttributedString.Key("multee.chatCode")
+    /// On a sent image's attachment character: its index in the message's `images` (click → Quick Look).
+    static let chatPicture = NSAttributedString.Key("multee.chatPicture")
 }
 
 extension String {
@@ -377,11 +379,13 @@ enum ChatRender {
         if !item.images.isEmpty {
             let line = NSMutableParagraphStyle()
             line.lineSpacing = 4
-            for image in item.images {
+            for (i, picture) in item.images.enumerated() {
                 let a = NSTextAttachment()
-                a.image = image
-                a.bounds = CGRect(origin: .zero, size: image.size)
-                out.append(NSAttributedString(attachment: a))
+                a.image = picture.thumbnail
+                a.bounds = CGRect(origin: .zero, size: picture.thumbnail.size)
+                let pic = NSMutableAttributedString(attachment: a)
+                pic.addAttribute(.chatPicture, value: i, range: NSRange(location: 0, length: pic.length))
+                out.append(pic)
                 out.append(NSAttributedString(string: " "))
             }
             out.addAttribute(.paragraphStyle, value: line, range: NSRange(location: 0, length: out.length))

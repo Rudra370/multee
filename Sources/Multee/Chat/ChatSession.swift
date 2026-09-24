@@ -84,7 +84,12 @@ final class ChatSession {
     /// until this process sends something — then the newest id in the loaded history stands in.
     private var lastSentUUID: String?
     private var sideRequest: String?
-    var queuedTexts: [String] { queued.map(\.text) }
+    var queuedTexts: [String] {
+        queued.map { q in
+            let pics = q.images.isEmpty ? "" : (q.images.count == 1 ? "[image]" : "[\(q.images.count) images]")
+            return [pics, q.text].filter { !$0.isEmpty }.joined(separator: " ")
+        }
+    }
     var prompt: ChatPrompt? { prompts.first }
 
     // Chrome
@@ -275,13 +280,13 @@ final class ChatSession {
     /// Send a message (or handle a chat-local command). Starts/restarts the process if it isn't running.
     func send(_ raw: String, images: [ChatAttachment] = []) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        if handleLocal(text) { return }
+        guard !text.isEmpty || !images.isEmpty else { return }     // an image alone is a message
+        if !text.isEmpty, handleLocal(text) { return }
         if runState == .needsTrust { addNotice("Trust this folder first (the button above the message box)."); return }
         if runState != .running { runState = .notStarted; start() }
         guard let stream, runState == .running else { return }
         let uuid = UUID().uuidString.lowercased()
-        ChatStore.shared.onPrompt?(tabID, text)
+        ChatStore.shared.onPrompt?(tabID, text.isEmpty ? "Image" : text)
         if isWorking {
             queued.append((text, uuid, images))         // sent when this turn ends — see `sendNextQueued`
         } else {
@@ -1319,7 +1324,7 @@ final class ChatSession {
     private func userItem(_ text: String, uuid: String, images: [ChatAttachment] = []) -> ChatItem {
         var item = ChatItem(id: takeID(), kind: .user, text: text)
         item.uuid = uuid
-        item.images = images.compactMap(\.thumbnail)
+        item.images = images.compactMap(\.picture)
         return item
     }
 

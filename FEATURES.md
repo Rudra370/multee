@@ -107,6 +107,11 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   to 35% down the view (0.35 s; a long way off it snaps to a screen short first; instant under Reduce Motion)
   and blinks its bubble blue twice over ~2 s. While it's open the transcript's text drops its I-beam (see CLAUDE.md). Shown from two messages
   up; covers the messages loaded so far (earlier history loads as you scroll up).
+- **Image preview** — click a picture in a sent message, or a thumbnail above the box, and it opens in **Quick
+  Look** (full size, zoom, share / Open in Preview; ←→ between that message's images; space or esc closes); a
+  hand cursor over them. The transcript keeps only thumbnails, so the full images live in `ChatImageCache`
+  (Multee's Caches folder, `chat-images/`, named by content hash — a reopened chat writes each image once from
+  the transcript's base64; files untouched for 30 days are cleared).
 - **Voice** — `ChatVoice`: **fn⌃** (press both, let go; dropped if another key joins, so fn⌃← still tiles) or
   the mic left of send starts dictation, again stops it. The words stream into the box at the caret (replacing a
   selection) as they're heard and are sent only on ⏎ — ⏎ while listening stops and sends once the last words
@@ -141,13 +146,15 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   Submit step that reviews the answers (a lone question submits directly).
   ExitPlanMode: the plan (page up/down scrolls it) + "Yes, and auto-accept edits" / "Yes, and manually
   approve edits" / "No, keep planning — …" (text row).
-- **Images** — paste or drop one into the box (⌘V from a screenshot, an image file from Finder): it becomes
-  `[Image #n]` in the text and rides along as an image block (`ChatImage` scales it to 1568px on the long
-  side, PNG, or JPEG when that would be heavy). The sent message shows the **picture**, not the marker — a
-  200pt thumbnail drawn as a text attachment, rebuilt from the transcript when the chat is reopened.
-  In the box a marker behaves as **one character**: the caret steps over it instead of landing inside, and
-  backspace, ⌦ or any edit touching it takes the whole marker — and the image with it. So does cutting or
-  clearing the box, after which `[Image #1]` starts over. A pasted
+- **Images** — paste or drop one into the box (⌘V from a screenshot, an image file from Finder): it joins a
+  **thumbnail strip above the text** (`ChatAttachmentStrip`, 44pt tiles numbered by position; hover shows a ×
+  to remove it — or backspace with the caret at the very start of the box takes the last one — a click opens
+  Quick Look) and rides along as an image block ahead of the text (`ChatImage`
+  scales it to 1568px on the long side, PNG, or JPEG when that would be heavy). The text stays plain — no
+  markers (D44); an image alone is a message too. esc esc clears text and images; a queued message taken back
+  brings its images back to the strip. The sent message shows the **picture** — a 200pt thumbnail drawn as a
+  text attachment, rebuilt from the transcript when the chat is reopened (older messages' `[Image #n]` text is
+  stripped when drawn). A pasted
   non-image file inserts its path instead. Clipboard managers work too — their temp file (odd extension or
   none) is read for what it is, and raw single-type bytes are accepted. The box claims the image pasteboard
   types so ⌘V is even *offered*: AppKit greys out Edit ▸ Paste — and swallows the key — when a plain-text
@@ -260,7 +267,9 @@ route (`chatMenuPaste`); ←/→ step over a marker (caret 11 → 10 → 0 → 1
 leaves it intact, one backspace (or ⌦) clears `[Image #1]` whole, numbering restarts after it, and a
 marker no image claims is stripped before sending (typed `[Image #9]` never reached Claude; the real image
 did). A sent image draws as a 200×150 thumbnail in its bubble and comes back the same after the conversation
-is closed and reopened from the transcript (`dumpChat` → `items[].images`).
+is closed and reopened from the transcript (`dumpChat` → `items[].images`). (The marker behaviour above was
+replaced by the thumbnail strip, D44 — verified since: paste 2 → strip, preview #2, × removes one, text + image
+and image-only sends, reopen, esc esc clears.)
 **Not supported yet:** Claude's own `/permissions` `/hooks` editors (use Open in Terminal).
 
 ## Terminal — `Terminal/`

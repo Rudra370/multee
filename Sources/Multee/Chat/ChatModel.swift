@@ -28,9 +28,9 @@ struct ChatItem {
     var subagentSteps = 0               // Agent/Task: tool calls the subagent made
     var subagentLast: String?           // Agent/Task: its latest action ("Bash(echo sub)")
 
-    /// User: thumbnails of the images this message carried, in marker order. Small (built once, ~220pt),
-    /// so the transcript shows the picture instead of a bare `[Image #n]`.
-    var images: [NSImage] = []
+    /// User: the images this message carried, in marker order — a small thumbnail (built once, ~220pt) so the
+    /// transcript shows the picture instead of a bare `[Image #n]`, and the full image's file for Quick Look.
+    var images: [ChatPicture] = []
 
     var streaming = false               // still receiving deltas
     var expanded = false                // long tool output / thinking shown in full
@@ -86,23 +86,22 @@ struct ChatTask {
 }
 
 /// An image pasted (or dropped) into the message box: `[Image #n]` in the text, an image block on the wire.
+/// A picture in a sent message: the thumbnail the transcript draws, and where the full image is on disk
+/// (`ChatImageCache`) — only the path stays in memory. nil when it couldn't be written.
+struct ChatPicture {
+    let thumbnail: NSImage
+    let file: URL?
+}
+
 struct ChatAttachment {
     let number: Int
     let data: Data
     let mediaType: String
     var marker: String { "[Image #\(number)]" }
 
-    /// The biggest `n` in the `[Image #n]` markers a text carries (0 when it carries none).
-    static func highestMarker(in text: String) -> Int {
-        guard text.contains(markerPrefix), let re = try? NSRegularExpression(pattern: "\\[Image #(\\d+)\\]") else { return 0 }
-        let ns = text as NSString
-        return re.matches(in: text, range: NSRange(location: 0, length: ns.length))
-            .compactMap { Int(ns.substring(with: $0.range(at: 1))) }
-            .max() ?? 0
-    }
-
     /// The text with every `[Image #n]` that none of `kept` claims removed, along with the space after it.
-    /// `kept` empty strips them all — what the transcript does before drawing the pictures themselves.
+    /// `kept` empty strips them all — what the transcript does before drawing the pictures themselves (messages
+    /// sent before the thumbnail strip carried markers in their text).
     static func stripMarkers(_ text: String, keeping kept: [ChatAttachment]) -> String {
         guard text.contains(markerPrefix), let re = try? NSRegularExpression(pattern: "\\[Image #\\d+\\] ?") else { return text }
         let keep = Set(kept.map(\.marker))
@@ -135,6 +134,9 @@ struct ChatAttachment {
 
     /// This attachment as that small picture.
     var thumbnail: NSImage? { Self.thumbnail(data) }
+
+    /// Thumbnail + full image on disk, for a message that carries it.
+    var picture: ChatPicture? { thumbnail.map { ChatPicture(thumbnail: $0, file: ChatImageCache.store(data, mediaType: mediaType)) } }
 
     private static let markerPrefix = "[Image #"
 }

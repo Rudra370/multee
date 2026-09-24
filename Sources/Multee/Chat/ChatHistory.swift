@@ -163,7 +163,7 @@ enum ChatHistory {
             return
         }
         var texts: [String] = []
-        var pictures: [NSImage] = []
+        var pictures: [ChatPicture] = []
         var images = 0
         for block in blocks(message["content"]) {
             switch block["type"] as? String {
@@ -178,7 +178,9 @@ enum ChatHistory {
                 // Decode it small (never the full bitmap) so a reopened chat shows the picture, not a marker.
                 if let src = block["source"] as? [String: Any], let b64 = src["data"] as? String,
                    let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters), let thumb = ChatAttachment.thumbnail(data) {
-                    pictures.append(thumb)
+                    // The full image goes to disk (once — the file is named by its content) for Quick Look.
+                    let file = ChatImageCache.store(data, mediaType: src["media_type"] as? String ?? "image/png")
+                    pictures.append(ChatPicture(thumbnail: thumb, file: file))
                 }
             case "tool_result":
                 guard let id = block["tool_use_id"] as? String else { continue }
@@ -200,14 +202,15 @@ enum ChatHistory {
         if unshown > 0, !body.contains("[Image #") {
             body = Array(repeating: "[image]", count: unshown).joined(separator: " ") + (body.isEmpty ? "" : " " + body)
         }
-        if !body.isEmpty { appendUserText(body, uuid: uuid, images: pictures, into: &items) }
+        if !body.isEmpty || !pictures.isEmpty { appendUserText(body, uuid: uuid, images: pictures, into: &items) }
     }
 
     /// A user text turn, minus the transcript's wrapper noise: slash-command echoes become "/cmd args",
     /// command output becomes a notice, reminders/caveats are dropped.
-    private static func appendUserText(_ raw: String, uuid: String?, images: [NSImage] = [], into items: inout [ChatItem]) {
+    private static func appendUserText(_ raw: String, uuid: String?, images: [ChatPicture] = [], into items: inout [ChatItem]) {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.isEmpty || s.hasPrefix("<local-command-caveat>") || s.hasPrefix("<system-reminder>") { return }
+        if s.isEmpty, images.isEmpty { return }          // an image-only message is still a message
+        if s.hasPrefix("<local-command-caveat>") || s.hasPrefix("<system-reminder>") { return }
         if s.hasPrefix("[Request interrupted by user") { items.append(ChatItem(id: 0, kind: .notice, text: "Interrupted")); return }
         // A background task finishing is injected as a user turn (it wakes Claude) — show its one-line summary.
         if s.hasPrefix("<task-notification>") {

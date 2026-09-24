@@ -32,6 +32,9 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     /// Voice input (fn⌃ or the mic): the words land at the caret as they're heard and are sent only on ⏎.
     let voice = ChatVoice()
     var onVoiceError: ((String) -> Void)?
+    var onPreviewImages: (([URL], Int) -> Void)?    // a thumbnail clicked → the box's images, which one
+    private let strip = ChatAttachmentStrip()
+    private var stripHeight: NSLayoutConstraint!
     /// Where the spoken text sits in the box — replaced whole on each update (the service re-sends the
     /// utterance so far). nil once the box moved on (sent, cleared, or an edit ran into it).
     private var voiceSpan: NSRange?
@@ -48,9 +51,9 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     private var history: [String] = []
     private var historyIndex: Int?
     private var fontSize: CGFloat = 13
-    /// Images pasted into this message, `[Image #n]` each. Numbering restarts with every message, as in the
-    /// terminal UI; a marker deleted from the text drops its image.
-    private(set) var attachments: [ChatAttachment] = []
+    /// Images pasted into this message, shown as thumbnails above the text (numbered by position). They go
+    /// to Claude as image blocks ahead of the text, which is plain — no markers in it.
+    private(set) var attachments: [ChatAttachment] = [] { didSet { attachmentsChanged() } }
     var working = false { didSet { updateButton() } }
 
     override init(frame: NSRect) {
@@ -87,6 +90,11 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         scroll.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(scroll)
 
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        strip.onRemove = { [weak self] i in self?.removeAttachment(i) }
+        strip.onPreview = { [weak self] i in self?.previewAttachment(i) }
+        box.addSubview(strip)
+
         placeholder.textColor = NSColor(white: 0.45, alpha: 1)
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(placeholder)
@@ -115,6 +123,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         addSubview(completion)
 
         heightConstraint = scroll.heightAnchor.constraint(equalToConstant: 20)
+        stripHeight = strip.heightAnchor.constraint(equalToConstant: 0)
         completionHeight = completion.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             completion.leadingAnchor.constraint(equalTo: box.leadingAnchor),
@@ -126,7 +135,11 @@ final class ChatInputView: NSView, NSTextViewDelegate {
             box.bottomAnchor.constraint(equalTo: bottomAnchor),
             box.leadingAnchor.constraint(equalTo: leadingAnchor),
             box.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: box.topAnchor, constant: 9),
+            strip.topAnchor.constraint(equalTo: box.topAnchor, constant: 9),
+            strip.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 10),
+            strip.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -10),
+            stripHeight,
+            scroll.topAnchor.constraint(equalTo: strip.bottomAnchor),
             scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -9),
             scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
             scroll.trailingAnchor.constraint(equalTo: micButton.leadingAnchor, constant: -6),
@@ -165,22 +178,13 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         set { dropVoiceSpan(); textView.string = newValue; textChanged() }
     }
 
-    /// A queued message taken back to edit: its text goes above whatever is typed, its images with it —
-    /// renumbered after the box's own, so no two share a marker.
+    /// A queued message taken back to edit: its text goes above whatever is typed, its images ahead of the box's.
     func restore(_ text: String, images: [ChatAttachment]) {
-        var t = text, imgs = images
-        let base = ChatAttachment.highestMarker(in: textView.string)
-        if base > 0, !images.isEmpty {
-            // Highest first: each new number is above every old one still to be renamed, so none collide.
-            for a in images.sorted(by: { $0.number > $1.number }) {
-                t = t.replacingOccurrences(of: a.marker, with: "[Image #\(a.number + base)]")
-            }
-            imgs = images.map { ChatAttachment(number: $0.number + base, data: $0.data, mediaType: $0.mediaType) }
-        }
+        let t = text
         dropVoiceSpan()
         let draft = textView.string
         textView.string = draft.isEmpty ? t : t + "\n" + draft
-        attachments += imgs
+        attachments = images + attachments
         historyIndex = nil
         textView.setSelectedRange(NSRange(location: (t as NSString).length, length: 0))
         textChanged()
@@ -198,8 +202,16 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     func clear() {
         dropVoiceSpan()
         textView.string = ""
+        attachments = []
         historyIndex = nil
-        textChanged()           // releases the images whose markers just went with it
+        textChanged()
+    }
+
+    /// Nothing typed and no images — esc esc then offers /rewind instead of clearing.
+    var isDraftEmpty: Bool { textView.string.isEmpty && attachments.isEmpty }
+
+    private var hasContent: Bool {
+        !attachments.isEmpty || !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// A key typed while a transcript row had focus: focus the box and replay the key here.
@@ -209,7 +221,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     }
 
     private func updateButton() {
-        let empty = textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let empty = !hasContent
         let stop = working && empty
         sendButton.image = NSImage(systemSymbolName: stop ? "stop.circle.fill" : "arrow.up.circle.fill",
                                    accessibilityDescription: stop ? "Stop" : "Send")?
@@ -219,21 +231,17 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     }
 
     @objc private func sendTapped() {
-        if working, textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { onStop?(); return }
+        if working, !hasContent { onStop?(); return }
         submit()
     }
 
     func submit() {
         // Still listening (or the last words are on their way): stop, and send once they're in the box.
         if voice.state != .idle { sendAfterVoice = true; voice.stop(); return }
-        let raw = textView.string
-        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let images = attachments.filter { raw.contains($0.marker) }
-        // A marker with no image behind it (undo put one back, or it was typed by hand) is meaningless to
-        // Claude — send the text without it rather than as literal "[Image #1]".
-        let t = ChatAttachment.stripMarkers(raw, keeping: images)
-        guard !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        history.append(t)
+        guard hasContent else { return }
+        let t = textView.string
+        let images = attachments
+        if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { history.append(t) }
         historyIndex = nil
         dropVoiceSpan()
         textView.string = ""
@@ -242,7 +250,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         onSend?(t, images)
     }
 
-    /// Paste or drop: every image on the pasteboard joins this message as `[Image #n]`. Returns false when
+    /// Paste or drop: every image on the pasteboard joins this message's thumbnails. Returns false when
     /// there was none (the caller pastes text instead).
     @discardableResult
     func attachImages(from pasteboard: NSPasteboard) -> Bool {
@@ -284,107 +292,70 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     @discardableResult
     func attach(_ images: [NSImage]) -> Bool {
         guard !images.isEmpty else { return false }
-        for image in images {
-            guard let e = ChatImage.encoded(image) else { continue }
-            // Number past the highest marker still in the box, not by count — a deleted marker leaves a gap,
-            // and reusing its number would put two identical markers in the text.
-            let next = ChatAttachment.highestMarker(in: textView.string) + 1
-            let a = ChatAttachment(number: next, data: e.data, mediaType: e.mediaType)
-            attachments.append(a)
-            textView.insertText(a.marker + " ", replacementRange: textView.selectedRange())
-        }
-        textChanged()
+        let added = images.compactMap { ChatImage.encoded($0) }
+            .map { ChatAttachment(number: 0, data: $0.data, mediaType: $0.mediaType) }
+        attachments += added
         return true
     }
 
-    /// The `[Image #n]` (plus the space we put after it) that ends just before the caret, if any. Backspace
-    /// selects it and deletes it whole, as the terminal UI does — letting it eat characters would leave
-    /// `[Image #` behind, which matches no attachment and reads as literal text to Claude. The deletion
-    /// itself is left to AppKit, so undo, coalescing and the delegate behave exactly as for any other
-    /// deletion (editing the text here instead made it undoable when a plain backspace is not, and ⌘Z
-    /// then brought the marker back without its image).
-    /// The `[Image #n]` (plus the space after it) that starts at the caret — ⌦'s half of the same rule.
-    func markerRangeAfterCaret() -> NSRange? {
-        guard !attachments.isEmpty else { return nil }
-        let sel = textView.selectedRange()
-        let text = textView.string as NSString
-        guard sel.length == 0, sel.location < text.length else { return nil }
-        let tail = text.substring(from: sel.location)
-        guard let hit = attachments.first(where: { tail.hasPrefix($0.marker) }) else { return nil }
-        var length = (hit.marker as NSString).length
-        if sel.location + length < text.length, text.character(at: sel.location + length) == 32 { length += 1 }
-        return NSRange(location: sel.location, length: length)
+    /// Numbers follow position (the badges read 1, 2, 3 whatever was removed), and the strip opens or closes.
+    private func attachmentsChanged() {
+        if attachments.enumerated().contains(where: { $0.element.number != $0.offset + 1 }) {
+            attachments = attachments.enumerated().map { ChatAttachment(number: $0.offset + 1, data: $0.element.data,
+                                                                        mediaType: $0.element.mediaType) }
+            return                                  // the didSet this assignment fires does the rest
+        }
+        // One tile per attachment, always — a tile index is an attachment index (× and backspace rely on it).
+        strip.set(attachments.map { $0.thumbnail ?? NSImage(size: NSSize(width: 1, height: 1)) })
+        fitStrip()
+        updateButton()
     }
 
-    func markerRangeBeforeCaret() -> NSRange? {
-        guard !attachments.isEmpty else { return nil }
+    /// The strip's height for its current width (it wraps) — on every change and every resize.
+    private func fitStrip() {
+        // From the box (laid out already), not the strip — its own frame is set later in this pass, so it
+        // still holds the old width after a resize.
+        let h = strip.preferredHeight(width: max(0, box.bounds.width - 20))
+        if stripHeight.constant != h { stripHeight.constant = h }
+    }
+
+    override func layout() {
+        super.layout()
+        fitStrip()
+    }
+
+    /// Backspace with the caret at the very start (nothing in front of it to delete) takes the last image —
+    /// the keyboard's way to the strip's ×.
+    fileprivate func removeLastAttachmentFromStart() -> Bool {
         let sel = textView.selectedRange()
-        guard sel.length == 0, sel.location > 0 else { return nil }
-        let text = textView.string as NSString
-        var end = sel.location
-        if text.character(at: end - 1) == 32 { end -= 1 }       // the one space that follows a marker
-        guard end > 0, let hit = attachments.first(where: { text.substring(to: end).hasSuffix($0.marker) })
-        else { return nil }
-        let start = end - (hit.marker as NSString).length
-        return NSRange(location: start, length: sel.location - start)
+        guard !attachments.isEmpty, sel.location == 0, sel.length == 0 else { return false }
+        attachments.removeLast()
+        return true
+    }
+
+    func removeAttachment(_ i: Int) {
+        guard attachments.indices.contains(i) else { return }
+        attachments.remove(at: i)
+        focus()
+    }
+
+    /// Quick Look on the box's images, starting at the i-th.
+    func previewAttachment(_ i: Int) {
+        let files = attachments.compactMap { ChatImageCache.store($0.data, mediaType: $0.mediaType) }
+        guard files.indices.contains(i) else { return }
+        window?.makeFirstResponder(textView)        // Quick Look finds its controller up this responder chain
+        onPreviewImages?(files, i)
     }
 
     func textDidChange(_ notification: Notification) { textChanged() }
 
-    /// Where the live `[Image #n]` markers sit in the box. Each stands for a picture, so the box treats one
-    /// as a single character: the caret steps over it and any edit that touches part of it takes all of it.
-    /// A marker broken in half would name no image and reach Claude as literal text.
-    private func markerRanges() -> [NSRange] {
-        guard !attachments.isEmpty, textView.string.contains("[Image #"),
-              let re = try? NSRegularExpression(pattern: "\\[Image #(\\d+)\\]") else { return [] }
-        let numbers = Set(attachments.map(\.number))
-        let ns = textView.string as NSString
-        return re.matches(in: textView.string, range: NSRange(location: 0, length: ns.length)).compactMap { m in
-            guard let n = Int(ns.substring(with: m.range(at: 1))), numbers.contains(n) else { return nil }
-            return m.range
-        }
-    }
-
-    /// Grow a range so it never cuts a marker in half.
-    private func rounded(_ range: NSRange, _ markers: [NSRange]) -> NSRange {
-        var start = range.location, end = NSMaxRange(range)
-        for m in markers {
-            if m.location < start, start < NSMaxRange(m) { start = m.location }
-            if m.location < end, end < NSMaxRange(m) { end = NSMaxRange(m) }
-        }
-        return NSRange(location: start, length: end - start)
-    }
-
-    /// The caret never lands inside a marker — it steps to the side it was heading for.
-    func textView(_ view: NSTextView, willChangeSelectionFromCharacterRange old: NSRange,
-                  toCharacterRange new: NSRange) -> NSRange {
-        let markers = markerRanges()
-        guard !markers.isEmpty else { return new }
-        guard new.length == 0 else { return rounded(new, markers) }
-        guard let inside = markers.first(where: { $0.location < new.location && new.location < NSMaxRange($0) })
-        else { return new }
-        let forward = new.location > old.location
-        return NSRange(location: forward ? NSMaxRange(inside) : inside.location, length: 0)
-    }
-
-    /// An edit that covers part of a marker covers the whole of it instead.
     func textView(_ view: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
-        let markers = markerRanges()
-        let whole = markers.isEmpty ? range : rounded(range, markers)
-        // Grown to a whole marker: redo the edit over that range (which comes back through here).
-        guard whole == range else { view.insertText(text ?? "", replacementRange: whole); return false }
         if !applyingVoice { userEdited(range, (text ?? "") as NSString) }
         return true
     }
 
     private func textChanged() {
         queueSelection = nil
-        // The markers in the box are the record of which images this message carries — cut one, select it
-        // away or clear the box, and its image goes with it (and `[Image #1]` starts over next time).
-        if !attachments.isEmpty {
-            let text = textView.string
-            attachments.removeAll { !text.contains($0.marker) }
-        }
         placeholder.isHidden = !textView.string.isEmpty
         tintForMode()
         resize()
@@ -742,17 +713,9 @@ final class ChatInputTextView: NSTextView {
         .init("com.compuserve.gif"), .init("com.microsoft.bmp"), .init("public.image"),
     ]
 
-    /// One press removes a whole `[Image #n]`, never a piece of it: select the marker, then let AppKit
-    /// delete the selection (so undo, coalescing and the delegate all behave as they normally would).
     override func deleteBackward(_ sender: Any?) {
-        if let range = owner?.markerRangeBeforeCaret() { setSelectedRange(range) }
+        if owner?.removeLastAttachmentFromStart() == true { return }
         super.deleteBackward(sender)
-    }
-
-    /// ⌦ in front of a marker, same rule from the other side.
-    override func deleteForward(_ sender: Any?) {
-        if let range = owner?.markerRangeAfterCaret() { setSelectedRange(range) }
-        super.deleteForward(sender)
     }
 
     // Plain-text paste (no rich formatting from the clipboard).
