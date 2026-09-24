@@ -270,7 +270,8 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
     (`_mouseInside:`, found with `cursorTrace`), so `ChatRowTextView.covered` skips it under the row's buttons. A custom
     cursor over a region **inside** an NSTextView (a sent picture) must be *set* from that
     view's own `mouseMoved`/`cursorUpdate`/`mouseEntered` — a cursor rect alone never got a turn, and skipping the
-    handlers left AppKit's arrow (`pictureCursor`).
+    handlers left AppKit's arrow (`pictureCursor`). Clip such a rect to `visibleRect` **and skip it when empty**: a region scrolled
+    out of view intersects to `.null` (infinite origin) and `addCursorRect` throws — that crashed 0.1.25 at launch.
   - **Which `/` commands are skills**: `initialize` flags `builtin: true` on Claude's built-ins **and** on the skills
     bundled with the CLI (claude-api, verify…), so it can't tell them apart; only the `init` event (first reply) has
     a `skills` list. `ChatSession.knownSkills` remembers every list seen (UserDefaults `multee.chatSkills`). Print mode

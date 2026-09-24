@@ -1464,7 +1464,12 @@ final class ChatRowTextView: NSTextView {
     override func resetCursorRects() {
         guard !cursorsOff else { return }
         super.resetCursorRects()
-        for (_, r) in pictureFrames() { addCursorRect(r.intersection(visibleRect), cursor: .chatPreview) }
+        // A picture scrolled out of view while its row is still on screen intersects to `.null` (an infinite
+        // origin), which `addCursorRect` rejects with an exception that kills the app — skip it.
+        for (_, r) in pictureFrames() {
+            let shown = r.intersection(visibleRect)
+            if !shown.isEmpty { addCursorRect(shown, cursor: .chatPreview) }
+        }
     }
     override func cursorUpdate(with event: NSEvent) {
         if !pictureCursor(event), !quiet(event) { super.cursorUpdate(with: event) }
