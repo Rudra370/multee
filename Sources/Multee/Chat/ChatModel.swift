@@ -139,7 +139,12 @@ struct ChatAttachment {
     private static let markerPrefix = "[Image #"
 }
 
-struct ChatCommand { let name: String; let description: String; let hint: String }
+struct ChatCommand {
+    let name: String; let description: String; let hint: String
+    /// A skill or custom command — something Claude can also pick up mid-message (with its Skill tool). The rest
+    /// (Claude's built-ins, Multee's own) only mean something at the start of a message.
+    var skill = false
+}
 struct ChatModelOption {
     let value: String; let displayName: String; let description: String; let resolved: String
     var effortLevels: [String] = []     // empty = effort not supported (Haiku)

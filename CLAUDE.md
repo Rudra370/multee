@@ -276,6 +276,10 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
     rows made meanwhile); `dumpChat` → `transcript.rowCursorsOff`. Same fight **inside** a row: a button over the
     text (the fold ▾, code Copy) — NSTextView sets the I-beam from its own tracking area on every move
     (`_mouseInside:`, found with `cursorTrace`), so `ChatRowTextView.covered` skips it under the row's buttons.
+  - **Which `/` commands are skills**: `initialize` flags `builtin: true` on Claude's built-ins **and** on the skills
+    bundled with the CLI (claude-api, verify…), so it can't tell them apart; only the `init` event (first reply) has
+    a `skills` list. `ChatSession.knownSkills` remembers every list seen (UserDefaults `multee.chatSkills`). Print mode
+    doesn't expand a mid-text `/skill` — it arrives as plain text.
   - **Voice** (D43) speaks Claude Code's private `voice_stream` WebSocket. Test it with `chatVoice:<audio file>`
     (any format; `say -o x.aiff "…"` makes one) — the file plays in place of the mic at speaking pace through the
     real socket; `dumpChat` → `voice` has state, text and a `timeline` (connect/token/open/firstText seconds). With

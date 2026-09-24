@@ -625,10 +625,16 @@ final class ChatInputView: NSView, NSTextViewDelegate {
             start -= 1
         }
         let token = s.substring(with: NSRange(location: start, length: caret - start))
-        if token.hasPrefix("/"), start == 0, !s.substring(to: caret).contains(" ") {
+        if token.hasPrefix("/") {
+            // At the start of the message: every command. After a space: skills only — a built-in (/clear) means
+            // nothing mid-sentence, a skill is something Claude can reach for (as the terminal UI suggests them).
+            let atStart = start == 0
             let q = String(token.dropFirst()).lowercased()
             let matches = commands()
-                .filter { q.isEmpty || $0.name.lowercased().hasPrefix(q) || $0.name.lowercased().contains(q) }
+                .filter { atStart || $0.skill }
+                // Mid-text, by prefix only: a path being typed ("see /api/…") mustn't turn up a skill that merely
+                // contains it — ⏎ would then take the suggestion instead of sending.
+                .filter { q.isEmpty || $0.name.lowercased().hasPrefix(q) || (atStart && $0.name.lowercased().contains(q)) }
                 .sorted { a, b in
                     let ap = a.name.lowercased().hasPrefix(q), bp = b.name.lowercased().hasPrefix(q)
                     return ap != bp ? ap : a.name < b.name

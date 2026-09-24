@@ -155,7 +155,9 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
 - **Input** (`ChatInputView`) — ⏎ send, ⇧⏎/⌥⏎ newline, esc stops Claude (esc esc throws away what you
   typed, images and all; on an empty box it offers rewind),
   ⇧⇥ cycles mode, ↑/↓ history;
-  `/` completion (all commands incl. skills, with argument hints + descriptions) and `@` file completion
+  `/` completion (all commands incl. skills, with argument hints + descriptions; after a space mid-message, skills
+  only, matched by prefix — print mode sends a mid-text `/skill` as plain text and Claude picks it up with its Skill
+  tool; which commands are skills is learned from `init` and remembered across chats) and `@` file completion
   (`git ls-files`). Messages sent while Claude works queue above the box — **held by Multee**, not Claude, and sent one per
   turn as each turn ends (esc'd ones too), so each gets its own answer; Claude would merge everything in its own
   queue into one message. The trade: no steering a running turn mid-task — esc, then send.

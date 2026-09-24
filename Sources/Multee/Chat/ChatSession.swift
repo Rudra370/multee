@@ -339,6 +339,26 @@ final class ChatSession {
         "statusline", "theme", "vim", "terminal-setup", "ide", "doctor", "agents", "mcp", "model",
         "output-style", "tasks", "bashes"]
 
+    /// Which commands are skills. `initialize` (at startup) flags Claude's commands `builtin`, but that covers the
+    /// skills bundled with the CLI (claude-api, verify…) too; only the `init` event (with the first reply) lists
+    /// the skills. So every chat's list is remembered — skills rarely change, and it's only ever matched against
+    /// this chat's own commands — and a new chat knows them before its first message.
+    private static let skillsKey = "multee.chatSkills"
+    private(set) static var knownSkills = Set(UserDefaults.standard.stringArray(forKey: skillsKey) ?? [])
+
+    private static func rememberSkills(_ names: [String]) {
+        let all = knownSkills.union(names)
+        guard all != knownSkills else { return }
+        knownSkills = all
+        UserDefaults.standard.set(all.sorted(), forKey: skillsKey)
+    }
+
+    private func markSkills() {
+        for i in commands.indices where !commands[i].skill && Self.knownSkills.contains(commands[i].name) {
+            commands[i].skill = true
+        }
+    }
+
     /// Commands the chat implements itself (print mode doesn't offer them) — merged into `/` completion.
     static let localCommands: [ChatCommand] = [
         ChatCommand(name: "rewind", description: "Go back to an earlier message — restore the code, the conversation, or both (esc esc)", hint: ""),
@@ -911,6 +931,7 @@ final class ChatSession {
             if commands.isEmpty, let cmds = o["slash_commands"] as? [String] {
                 commands = cmds.map { ChatCommand(name: $0, description: "", hint: "") }
             }
+            if let sk = o["skills"] as? [String] { Self.rememberSkills(sk); markSkills() }
             turnSilent = batchSilent && !batchReal
             batchSilent = false; batchReal = false
             if !isWorking, !turnSilent { beginTurn() }
@@ -1239,8 +1260,10 @@ final class ChatSession {
         if let cmds = r["commands"] as? [JSON] {
             commands = cmds.compactMap { c in
                 guard let n = c["name"] as? String else { return nil }
-                return ChatCommand(name: n, description: c["description"] as? String ?? "", hint: c["argumentHint"] as? String ?? "")
+                return ChatCommand(name: n, description: c["description"] as? String ?? "", hint: c["argumentHint"] as? String ?? "",
+                                   skill: c["builtin"] as? Bool != true)
             }
+            markSkills()
         }
         if let ms = r["models"] as? [JSON] {
             models = ms.compactMap { m in
