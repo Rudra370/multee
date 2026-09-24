@@ -10,6 +10,9 @@ commits/PRs since the last tag. Newest first.
 ### Fixed
 - **Multee could crash with a chat open that has a picture you sent** — at launch or while scrolling — whenever
   that message was only partly on screen with its picture out of view.
+- **The context breakdown opens properly again.** Clicking **ctx** in a chat's status line showed a thin, empty
+  sliver; it now shows the full breakdown — what's using the context window, in a neatly aligned column, with
+  a 1M-token window written as "1M".
 
 ## [0.1.25] - 2026-09-24
 
