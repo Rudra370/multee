@@ -401,11 +401,13 @@ final class CenterViewController: NSViewController, NSSplitViewDelegate {
         }
     }
 
-    /// Debug harness: the chat tab that's actually mounted and active.
-    func debugActiveChat() -> ChatViewController? {
+    /// The chat tab that's mounted and active (⌘J's target), if the active tab is a chat.
+    var activeChat: ChatViewController? {
         guard let id = model.activeSession?.activeTabID else { return nil }
         return contentVCs[id] as? ChatViewController
     }
+    /// Debug harness: the chat tab that's actually mounted and active.
+    func debugActiveChat() -> ChatViewController? { activeChat }
 
     /// Debug harness: state of the search tab that's actually mounted (see `SearchTabFocus`).
     func debugActiveSearchState() -> [String: Any]? {

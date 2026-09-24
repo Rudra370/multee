@@ -468,8 +468,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         filesPanel.keyEquivalentModifierMask = [.command]
         filesPanel.target = self
 
+        // ⌘J opens the active chat's jump list with keyboard focus (↑↓ ⏎ esc); grayed out outside a chat.
+        viewMenu.addItem(.separator())
+        let jump = viewMenu.addItem(withTitle: "Jump to Message…", action: #selector(toggleJumpList), keyEquivalent: "j")
+        jump.keyEquivalentModifierMask = [.command]
+        jump.target = self
+
         NSApp.mainMenu = mainMenu
     }
+
+    @objc private func toggleJumpList() { CenterViewController.current?.activeChat?.toggleJumpList() }
 
     @objc private func toggleQuickTerminal() { QuickTerminalHook.toggle?() }
     @objc private func toggleDockerPanel() { DockerHook.toggle?() }
@@ -479,6 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// status-bar icon hides in that state, so the toggle has nothing to show either.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleDockerPanel) { return model.dockerAvailable }
+        if item.action == #selector(toggleJumpList) { return CenterViewController.current?.activeChat != nil }
         return true
     }
     @objc private func quickAskItem() { QuickAskHook.toggle?() }

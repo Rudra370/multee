@@ -43,6 +43,17 @@ final class ChatTranscriptView: NSView {
     private let header = ChatHistoryHeader()
     private let jumpButton = PointerButton()
     private let emptyLabel = NSTextField(labelWithString: "")
+    private let rail = ChatJumpRail()
+    private let jumpList = ChatJumpList()
+    private var userRows: [Int] = []               // row index of each message you sent, in order (the rail's lines)
+    private var overRail = false, overList = false
+    private var jumpedTo: Int?                     // the message a jump landed on — current until you scroll
+    private var jumpGliding = false                // a jump's animated scroll is running (its bounds changes aren't "you scrolled")
+    private var jumpToken = 0                      // the latest jump — an earlier glide cut short doesn't finish it
+    private var collapsed = Set<Int>()             // item ids of your messages whose reply is folded away
+    private var folds: [Fold] = []                 // parallel to rowIDs
+    private enum Fold { case shown, hidden, head } // head = a collapsed message (row grows by the stub)
+    private var hoverWork: DispatchWorkItem?
 
     private weak var session: ChatSession?
     private(set) var style: ChatStyle
@@ -122,6 +133,15 @@ final class ChatTranscriptView: NSView {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyLabel)
 
+        rail.onJump = { [weak self] i in self?.jump(toMessage: i) }
+        rail.onHover = { [weak self] on in self?.overRail = on; self?.hoverChanged() }
+        addSubview(rail)
+        jumpList.onJump = { [weak self] i in self?.jump(toMessage: i) }
+        jumpList.onClose = { [weak self] in self?.hideJumpList() }
+        jumpList.onHover = { [weak self] on in self?.overList = on; self?.hoverChanged() }
+        jumpList.isHidden = true
+        addSubview(jumpList)
+
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -164,6 +184,8 @@ final class ChatTranscriptView: NSView {
         live.removeAll()
         rowIDs.removeAll(); heights.removeAll(); offsets = [0]
         following = true
+        setUserRows([])
+        collapsed.removeAll(); folds.removeAll()
     }
 
     func appended(_ range: Range<Int>) {
@@ -176,7 +198,8 @@ final class ChatTranscriptView: NSView {
             heights.append(row(for: items[i], width: width).height)
             rowIDs.append(items[i].id)
         }
-        rebuildOffsets(from: range.lowerBound)
+        setUserRows(userRows + range.filter { items[$0].kind == .user })
+        rebuildOffsets(from: min(range.lowerBound, rebuildFolds() ?? .max))
         updateEmptyState()
         if wasFollowing { scrollToBottom() } else { tile() }
     }
@@ -223,6 +246,8 @@ final class ChatTranscriptView: NSView {
         }
         heights = items.map { row(for: $0, width: width).height }
         rowIDs = items.map(\.id)
+        setUserRows(items.indices.filter { items[$0].kind == .user })
+        _ = rebuildFolds()
         measuredWidth = width
         let a = pendingAnchor
         pendingAnchor = nil
@@ -370,6 +395,7 @@ final class ChatTranscriptView: NSView {
             tile()
         }
         layoutJump()
+        layoutRail()
     }
 
     override func viewDidEndLiveResize() {
@@ -381,7 +407,7 @@ final class ChatTranscriptView: NSView {
         let n = heights.count
         if offsets.count != n + 1 { offsets = [CGFloat](repeating: 0, count: n + 1); return rebuildOffsets(from: 0) }
         var acc = start == 0 ? 0 : offsets[start]
-        for i in start..<n { offsets[i] = acc; acc += heights[i] }
+        for i in start..<n { offsets[i] = acc; acc += shownHeight(i) }
         offsets[n] = acc
         let total = headerHeight + acc + bottomPad
         let h = max(total, scroll.contentView.bounds.height)
@@ -419,17 +445,18 @@ final class ChatTranscriptView: NSView {
         let a = rowIndex(atY: max(0, vis.minY))
         let b = rowIndex(atY: vis.maxY)
         let width = rowWidth
-        let keep = Set(rowIDs[a...b])
+        let keep = Set((a...b).lazy.filter { !self.isHidden($0) }.map { self.rowIDs[$0] })
         for (id, v) in live where !keep.contains(id) {
             recycle(v)
             live[id] = nil
         }
         let items = session.items
-        for i in a...b {
+        for i in a...b where !isHidden(i) {
             let id = rowIDs[i]
-            let f = NSRect(x: 0, y: headerHeight + offsets[i], width: width, height: heights[i])
+            let f = NSRect(x: 0, y: headerHeight + offsets[i], width: width, height: shownHeight(i))
             if let v = live[id] {
                 if v.frame != f { v.frame = f }
+                v.setFold(foldState(i))
                 continue
             }
             guard let idx = session.index(of: id) else { continue }
@@ -437,9 +464,11 @@ final class ChatTranscriptView: NSView {
             v.frame = f
             let c = cache[id] ?? row(for: items[idx], width: width)
             v.configure(items[idx], cache: c.attr, width: width)
+            v.setFold(foldState(i))
             v.isHidden = false
             live[id] = v
         }
+        rail.set(count: userRows.count, current: currentMessage())
         tileCount += 1
         maxTileMs = max(maxTileMs, (CACurrentMediaTime() - t0) * 1000)
     }
@@ -454,6 +483,8 @@ final class ChatTranscriptView: NSView {
 
     private func makeRow() -> ChatRowView {
         let v = ChatRowView()
+        v.cursorsOff = jumpList.isOpen
+        v.onFold = { [weak self] id, all in self?.toggleFold(id, all: all) }
         v.onToggle = { [weak self] id in self?.onToggle?(id) }
         v.onTypeAhead = { [weak self] e in self?.onTypeAhead?(e) }
         doc.addSubview(v)
@@ -512,13 +543,16 @@ final class ChatTranscriptView: NSView {
         let resized = abs(clip.height - lastViewportHeight) > 0.5
         lastViewportHeight = clip.height
         if resized, following, !adjusting { setScrollY(.greatestFiniteMagnitude); return }
+        if !adjusting, !jumpGliding { jumpedTo = nil }   // you scrolled: the highlight follows the view again
         tile()
         guard !adjusting else { return }
         let atBottom = clip.maxY >= doc.frame.height - 40
         if atBottom != following { following = atBottom }
         jumpButton.isHidden = following
-        // Reaching the top pulls in earlier history (the header's button does the same).
-        if clip.minY < 300, session?.canLoadEarlier == true { onLoadEarlier?() }
+        // Reaching the top pulls in earlier history (the header's button does the same) — not mid-glide: the
+        // taller header and the rows landing above would move the content under a jump still heading for the
+        // old spot. The jump checks once it lands.
+        if clip.minY < 300, !jumpGliding, session?.canLoadEarlier == true { onLoadEarlier?() }
     }
 
     private func layoutJump() { jumpButton.isHidden = following }
@@ -548,6 +582,239 @@ final class ChatTranscriptView: NSView {
             .font: NSFont.systemFont(ofSize: style.size - 1), .foregroundColor: ChatStyle.faint, .paragraphStyle: p]))
         s.addAttribute(.paragraphStyle, value: p, range: NSRange(location: 0, length: s.length))
         emptyLabel.attributedStringValue = s
+    }
+
+    // MARK: - Folding replies
+
+    /// Rows inside a collapsed reply get no height and are never mounted; the message itself grows by the
+    /// stub ("Show Claude's reply"). Rows stay in `rowIDs`, so ids, history and rewind are untouched.
+    private func shownHeight(_ i: Int) -> CGFloat {
+        guard i < folds.count else { return heights[i] }
+        switch folds[i] {
+        case .shown: return heights[i]
+        case .hidden: return 0
+        case .head: return heights[i] + ChatRowView.stubHeight
+        }
+    }
+    private func isHidden(_ i: Int) -> Bool { i < folds.count && folds[i] == .hidden }
+
+    /// (has a reply to fold, is folded) for a row — only your messages have either.
+    private func foldState(_ i: Int) -> (collapsible: Bool, collapsed: Bool) {
+        var lo = 0, hi = userRows.count - 1, found: Int?        // runs per mounted row while scrolling: binary search
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if userRows[mid] == i { found = mid; break }
+            if userRows[mid] < i { lo = mid + 1 } else { hi = mid - 1 }
+        }
+        guard let k = found else { return (false, false) }
+        let end = k + 1 < userRows.count ? userRows[k + 1] : rowIDs.count
+        return (end > i + 1, i < folds.count && folds[i] == .head)
+    }
+
+    /// Recompute `folds` from `collapsed`; returns the first row whose fold changed (offsets redo from there).
+    @discardableResult
+    private func rebuildFolds() -> Int? {
+        var new = [Fold](repeating: .shown, count: rowIDs.count)
+        if !collapsed.isEmpty {
+            for (k, r) in userRows.enumerated() where r < new.count && collapsed.contains(rowIDs[r]) {
+                let end = min(k + 1 < userRows.count ? userRows[k + 1] : new.count, new.count)
+                guard end > r + 1 else { continue }          // nothing to fold yet
+                new[r] = .head
+                for j in (r + 1)..<end { new[j] = .hidden }
+            }
+        }
+        defer { folds = new }
+        if new.count != folds.count { return 0 }
+        return new.indices.first { new[$0] != folds[$0] }
+    }
+
+    /// Fold / unfold the reply under message `id` — or, with ⌥, every reply the same way — keeping that
+    /// message where it is on screen.
+    func toggleFold(_ id: Int, all: Bool) {
+        guard let r = rowPosition(of: id) else { return }
+        let fold = !collapsed.contains(id)
+        let oldOffsets = offsets, oldFolds = folds, oldMinY = scroll.contentView.bounds.minY
+        let screenY = headerHeight + offsets[r] - oldMinY
+        if all {
+            collapsed = fold ? Set(userRows.filter { foldState($0).collapsible }.map { rowIDs[$0] }) : []
+        } else if fold { collapsed.insert(id) } else { collapsed.remove(id) }
+        guard let low = rebuildFolds() else { return }
+        rebuildOffsets(from: low)
+        for (lid, v) in live { if let i = rowPosition(of: lid) { v.setFold(foldState(i)) } }
+        following = false
+        setScrollY(headerHeight + offsets[r] - screenY)
+        following = scroll.contentView.bounds.maxY >= doc.frame.height - 40
+        jumpButton.isHidden = following
+        animateFold(oldOffsets: oldOffsets, oldFolds: oldFolds, oldMinY: oldMinY)
+    }
+
+    /// The layout already changed; make it look like it moved: rows that stayed visible slide from where they
+    /// were on screen (a layer transform — no relayout per frame), rows a fold just revealed fade in.
+    private func animateFold(oldOffsets: [CGFloat], oldFolds: [Fold], oldMinY: CGFloat) {
+        guard !Motion.reduceMotion else { return }
+        // Row layers use the view's own top-down y (measured — `isGeometryFlipped` reads false, and trusting it
+        // slid every row in from the wrong side).
+        let minY = scroll.contentView.bounds.minY
+        let now = CACurrentMediaTime()
+        for (id, v) in live {
+            guard let i = rowPosition(of: id), let layer = v.layer else { continue }
+            let a: CABasicAnimation
+            if i < oldFolds.count, oldFolds[i] == .hidden {
+                // Fade in once the rows below have slid out of the way (recorded: any earlier and the ease-out
+                // tail of the slide still covers the reply's last lines).
+                a = CABasicAnimation(keyPath: "opacity")
+                a.fromValue = 0; a.toValue = 1
+                a.beginTime = now + 0.25
+                a.fillMode = .backwards
+            } else {
+                guard i < oldOffsets.count else { continue }
+                let dy = (oldOffsets[i] - oldMinY) - (offsets[i] - minY)
+                guard abs(dy) > 0.5 else { continue }
+                a = CABasicAnimation(keyPath: "transform")
+                a.fromValue = CATransform3DMakeTranslation(0, dy, 0)
+                a.toValue = CATransform3DIdentity
+            }
+            a.duration = 0.25
+            a.timingFunction = Motion.easeOut
+            layer.add(a, forKey: "fold")
+        }
+    }
+
+    // MARK: - Jump rail
+
+    private func setUserRows(_ rows: [Int]) {
+        guard rows != userRows else { return }
+        userRows = rows
+        jumpedTo = nil
+        hideJumpList()                             // its rows point at the old list
+        layoutRail()
+    }
+
+    /// Lines evenly spaced up from the bottom-left corner (newest lowest — nearest the input, where the mouse
+    /// usually is); shown from two messages up (one has nowhere to jump).
+    private func layoutRail() {
+        let n = userRows.count
+        rail.isHidden = n < 2
+        if rail.isHidden { hideJumpList() }
+        let spacing = ChatJumpRail.spacing(count: n, height: max(0, bounds.height - 24))
+        let h = spacing * CGFloat(n) + 8
+        rail.frame = NSRect(x: 2, y: 8, width: ChatJumpRail.width, height: h)
+        rail.set(count: n, current: currentMessage())
+    }
+
+    /// The message you're reading: the last one you sent that starts above 40% of the way down the view (a jump
+    /// lands it at 35%) — or, scrolled to the bottom, anywhere on screen (a short last reply can't scroll up that
+    /// far). Right after a jump it's the one you picked, even when the scroll stopped short.
+    private func currentMessage() -> Int? {
+        guard !userRows.isEmpty, userRows.last! < offsets.count else { return nil }
+        if let j = jumpedTo, userRows.indices.contains(j) { return j }
+        let clip = scroll.contentView.bounds
+        let atBottom = clip.maxY >= doc.frame.height - 40
+        let line = (atBottom ? clip.maxY - 30 : clip.minY + clip.height * 0.4) - headerHeight
+        var lo = 0, hi = userRows.count - 1, found: Int?
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if offsets[userRows[mid]] <= line { found = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        return found ?? 0
+    }
+
+    /// Glide so the n-th message you sent sits a little above the middle (35% down — easier to read than the
+    /// top edge), then blink its bubble. A long way
+    /// off, it first snaps to a screen short of the target so the glide never lays out the whole chat between.
+    func jump(toMessage n: Int) {
+        hideJumpList()
+        guard userRows.indices.contains(n), userRows[n] < offsets.count else { return }
+        let clip = scroll.contentView
+        let id = rowIDs[userRows[n]]
+        let target = min(max(0, headerHeight + offsets[userRows[n]] - clip.bounds.height * 0.35),
+                         max(0, doc.frame.height - clip.bounds.height))
+        following = false
+        jumpedTo = n
+        rail.set(count: userRows.count, current: n)
+        let from = clip.bounds.minY, span = clip.bounds.height
+        if abs(target - from) > span * 2 { setScrollY(target + (target > from ? -span : span)) }
+        jumpGliding = true
+        jumpToken += 1
+        let token = jumpToken
+        Motion.animate(0.35, timing: Motion.easeInOut, { _ in
+            clip.animator().setBoundsOrigin(NSPoint(x: 0, y: target))
+        }, completion: { [weak self] in
+            guard let self, self.jumpToken == token else { return }
+            self.jumpGliding = false
+            self.scroll.reflectScrolledClipView(clip)
+            self.tile()
+            self.following = clip.bounds.maxY >= self.doc.frame.height - 40
+            self.jumpButton.isHidden = self.following
+            self.live[id]?.flash()
+            if clip.bounds.minY < 300, self.session?.canLoadEarlier == true { self.onLoadEarlier?() }
+        })
+    }
+
+    /// Open on a short hover (passing the mouse over the edge shouldn't pop it), close once the mouse has
+    /// left both the rail and the list — the gap lets it travel from one to the other.
+    private func hoverChanged() {
+        hoverWork?.cancel()
+        let work: DispatchWorkItem
+        if overRail || overList {
+            guard !jumpList.isOpen, overRail else { return }
+            work = DispatchWorkItem { [weak self] in if self?.overRail == true { self?.showJumpList() } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        } else {
+            work = DispatchWorkItem { [weak self] in
+                guard let self, !self.overRail, !self.overList else { return }
+                self.hideJumpList()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+        }
+        hoverWork = work
+    }
+
+    /// ⌘J: open with keyboard focus (selection on the message you're reading), or close.
+    func toggleJumpListFromKeyboard() {
+        if jumpList.isOpen { hideJumpList(); return }
+        showJumpList(keyboard: true)
+    }
+
+    func showJumpList(keyboard: Bool = false) {
+        guard !rail.isHidden, let session else { return }
+        let items = session.items
+        let previews = userRows.map { r -> String in
+            guard r < rowIDs.count, let i = session.index(of: rowIDs[r]) else { return "" }
+            let line = items[i].text.split(whereSeparator: \.isNewline).lazy
+                .map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+            return line ?? (items[i].images.isEmpty ? "(empty)" : "(image)")
+        }
+        // The whole height, beside the rail; the rows sit at the bottom, level with the lines.
+        let x = rail.frame.maxX + 2
+        jumpList.frame = NSRect(x: x, y: 0, width: max(160, min(ChatJumpList.maxWidth, bounds.width - x - 16)), height: bounds.height)
+        jumpList.show(previews, current: currentMessage(), fontSize: style.size - 1, bottomInset: rail.frame.minY)
+        jumpList.present()
+        setRowCursors(off: true)
+        // Keyboard-opened: the list takes the keys and hands focus back when it closes. A hover-opened list
+        // leaves focus alone — your typing in the input isn't interrupted by moving the mouse.
+        if keyboard, let w = window {
+            jumpList.returnFocus = w.firstResponder
+            jumpList.select(currentMessage() ?? userRows.count - 1)
+            w.makeFirstResponder(jumpList)
+        }
+    }
+
+    func hideJumpList() {
+        hoverWork?.cancel()
+        overList = false
+        guard jumpList.isOpen else { return }
+        jumpList.dismiss()
+        setRowCursors(off: false)
+        if window?.firstResponder === jumpList {
+            window?.makeFirstResponder(jumpList.returnFocus.flatMap { ($0 as? NSView)?.window === window ? $0 : nil })
+        }
+        jumpList.returnFocus = nil
+    }
+
+    private func setRowCursors(off: Bool) {
+        for v in live.values { v.cursorsOff = off }
+        for v in pool { v.cursorsOff = off }
     }
 
     // MARK: - DEV harness
@@ -591,7 +858,52 @@ final class ChatTranscriptView: NSView {
                 "cacheCount": cache.count, "measuredWidth": Int(measuredWidth), "rowWidth": Int(rowWidth),
                 "rowViews": doc.subviews.filter { $0 is ChatRowView }.count,
                 "shownRowViews": doc.subviews.filter { $0 is ChatRowView && !$0.isHidden }.count,
-                "pool": pool.count]
+                "pool": pool.count, "railShown": !rail.isHidden, "railCount": rail.count, "railCurrent": rail.current ?? -1,
+                "rowCursorsOff": (Array(live.values) + pool).filter(\.cursorsOff).count,
+                "flashing": live.values.filter(\.isFlashing).map(\.itemID),
+                "collapsed": collapsed.count,                 "foldAnim": live.values.compactMap { v -> [String: Any]? in
+                    guard let l = v.layer, let a = l.animation(forKey: "fold") else { return nil }
+                    return ["id": v.itemID, "key": (a as? CABasicAnimation)?.keyPath ?? "",
+                            "modelY": Int(l.frame.minY), "shownY": Int(l.presentation()?.frame.minY ?? -1)] }, "hiddenRows": folds.filter { $0 == .hidden }.count,
+                "jumpList": jumpList.isOpen ? jumpList.previews : [], "jumpListViewHidden": jumpList.isHidden, "jumpListFade": jumpList.debugFade,
+                "jumpListSelected": jumpList.selected ?? -1, "jumpListFocused": window?.firstResponder === jumpList,
+                "jumpListAlpha": Double(jumpList.layer?.presentation()?.opacity ?? jumpList.layer?.opacity ?? 0)]
+    }
+
+    /// Fold the n-th message you sent (as the chevron would; `all` = ⌥-click).
+    func debugFold(_ n: Int, all: Bool) {
+        guard userRows.indices.contains(n) else { return }
+        toggleFold(rowIDs[userRows[n]], all: all)
+        CATransaction.flush()     // commit now, so a dump in the same tick reads the animations' first frame
+    }
+
+    /// Fold the n-th message and record where each mounted row is actually drawn (presentation layer, in
+    /// transcript-top coordinates) ~120×/s for half a second — the check for a fold animation that jumps.
+    func debugFoldRecord(_ n: Int, path: String) {
+        guard userRows.indices.contains(n) else { return }
+        var frames: [[String: Any]] = []
+        let t0 = CACurrentMediaTime()
+        func sample() {
+            let top = scroll.contentView.bounds.minY
+            let rows = live.values.sorted { $0.frame.minY < $1.frame.minY }.map { v -> [String: Any] in
+                let p = v.layer?.presentation() ?? v.layer
+                let f = p?.frame ?? v.frame
+                let y = f.minY - top                                   // row layers are top-down, like the views
+                return ["id": v.itemID, "y": Double(y), "h": Double(f.height), "a": Double(p?.opacity ?? 1),
+                        "modelY": Double(v.frame.minY - top)]
+            }
+            frames.append(["t": CACurrentMediaTime() - t0, "rows": rows])
+        }
+        sample()
+        toggleFold(rowIDs[userRows[n]], all: false)
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { t in
+            sample()
+            if CACurrentMediaTime() - t0 > 0.5 {
+                t.invalidate()
+                if let d = try? JSONSerialization.data(withJSONObject: frames) { try? d.write(to: URL(fileURLWithPath: path)) }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func debugScroll(toFraction f: CGFloat) {
@@ -642,7 +954,15 @@ final class ChatRowView: NSView, NSTextViewDelegate {
     private var raw = ""
     var onToggle: ((Int) -> Void)?
     var onTypeAhead: ((NSEvent) -> Void)?
+    var onFold: ((Int, Bool) -> Void)?              // item id, all (⌥)
+    private let foldButton = PointerButton()       // ▾ / ▸ in the bubble's top-right (on hover, or while folded)
+    private let stub = PointerButton()             // "Show Claude's reply" under a folded message
+    private var fold = (collapsible: false, collapsed: false)
+    private var hovering = false
+    static let stubHeight: CGFloat = 26
+    private var foldExtra: CGFloat { fold.collapsed ? Self.stubHeight : 0 }
     var text: String { textView.string }
+    var cursorsOff: Bool { get { textView.cursorsOff } set { textView.cursorsOff = newValue } }
 
     init() {
         let storage = NSTextStorage()
@@ -659,7 +979,7 @@ final class ChatRowView: NSView, NSTextViewDelegate {
         wantsLayer = true
         layerContentsRedrawPolicy = .never
         bubble.cornerRadius = 8
-        bubble.backgroundColor = NSColor(white: 0.175, alpha: 1).cgColor
+        bubble.backgroundColor = Self.bubbleColor
         dot.cornerRadius = 3.5
         layer?.addSublayer(bubble)
         layer?.addSublayer(dot)
@@ -674,7 +994,71 @@ final class ChatRowView: NSView, NSTextViewDelegate {
         textView.onTypeAhead = { [weak self] e in self?.onTypeAhead?(e) }
         textView.copyWhole = { [weak self] in self?.raw ?? "" }
         addSubview(textView)
+        for b in [foldButton, stub] {
+            b.isBordered = false
+            b.bezelStyle = .inline
+            b.setButtonType(.momentaryChange)
+            b.target = self
+            b.action = #selector(foldTapped)
+            b.isHidden = true
+            addSubview(b)
+        }
+        foldButton.imagePosition = .imageOnly
+        foldButton.contentTintColor = NSColor(white: 0.6, alpha: 1)
+        foldButton.toolTip = "Collapse or expand Claude’s reply (⌥-click: all replies)"
+        stub.toolTip = "Show Claude’s reply (⌥-click: all replies)"
+        stub.alignment = .left
+        textView.covered = { [weak self] p in
+            guard let self else { return false }
+            let local = self.convert(p, from: nil)
+            return ([self.foldButton, self.stub] + self.copyButtons).contains { !$0.isHidden && $0.frame.contains(local) }
+        }
     }
+
+    /// Show the fold controls for this row: the chevron on hover (always while folded), the stub while folded.
+    func setFold(_ f: (collapsible: Bool, collapsed: Bool)) {
+        guard f != fold || foldButton.isHidden == shouldHideChevron(f) else { return }
+        let grew = f.collapsed != fold.collapsed
+        fold = f
+        foldButton.image = NSImage(systemSymbolName: f.collapsed ? "chevron.right" : "chevron.down",
+                                   accessibilityDescription: f.collapsed ? "Expand reply" : "Collapse reply")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+        foldButton.isHidden = shouldHideChevron(f)
+        stub.isHidden = !f.collapsed
+        if f.collapsed {
+            stub.attributedTitle = NSAttributedString(string: "▸  Show Claude’s reply", attributes: [
+                .foregroundColor: NSColor(white: 0.55, alpha: 1), .font: NSFont.systemFont(ofSize: 12)])
+        }
+        if grew { resizeSubviews(withOldSize: bounds.size) }
+        layoutFoldControls()
+        if grew, f.collapsed, !Motion.reduceMotion {
+            let a = CABasicAnimation(keyPath: "opacity")
+            a.fromValue = 0; a.toValue = 1; a.duration = 0.25
+            stub.layer?.add(a, forKey: "fold")
+        }
+    }
+    private func shouldHideChevron(_ f: (collapsible: Bool, collapsed: Bool)) -> Bool {
+        kind != .user || !f.collapsible || !(hovering || f.collapsed)
+    }
+    private func layoutFoldControls() {
+        guard kind == .user else { return }
+        let col = ChatRowGeometry.column(bounds.width)
+        foldButton.frame = NSRect(x: col.x + col.w - 30, y: 12 + 5, width: 24, height: 24)
+        let top = bounds.height - foldExtra - 8 + 4
+        stub.frame = NSRect(x: col.x + 12, y: top, width: 200, height: Self.stubHeight - 6)
+    }
+    @objc private func foldTapped() {
+        onFold?(itemID, NSApp.currentEvent?.modifierFlags.contains(.option) == true)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.filter { $0.owner === self && $0.options.contains(.mouseEnteredAndExited) }.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeInActiveApp, .mouseEnteredAndExited, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = true; foldButton.isHidden = shouldHideChevron(fold) }
+    override func mouseExited(with event: NSEvent) { hovering = false; foldButton.isHidden = shouldHideChevron(fold) }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
@@ -693,7 +1077,7 @@ final class ChatRowView: NSView, NSTextViewDelegate {
         if let storage = textView.textStorage {
             if incremental, sameItem { Self.replaceTail(storage, with: attr) } else { storage.setAttributedString(attr) }
         }
-        textView.frame = NSRect(x: col.x + ins.left, y: ins.top, width: tw, height: max(1, bounds.height - ins.top - ins.bottom))
+        textView.frame = NSRect(x: col.x + ins.left, y: ins.top, width: tw, height: max(1, bounds.height - ins.top - ins.bottom - foldExtra))
         layoutChrome(dotColor: Self.dot(for: item))
         layoutCopyButtons()
     }
@@ -753,7 +1137,7 @@ final class ChatRowView: NSView, NSTextViewDelegate {
         CATransaction.setDisableActions(true)
         let col = ChatRowGeometry.column(bounds.width)
         bubble.isHidden = kind != .user
-        if kind == .user { bubble.frame = NSRect(x: col.x, y: 12, width: col.w, height: max(0, bounds.height - 12 - 8)) }
+        if kind == .user { bubble.frame = NSRect(x: col.x, y: 12, width: col.w, height: max(0, bounds.height - 12 - 8 - foldExtra)) }
         if let c = dotColor, kind != .user {
             let ins = ChatRowGeometry.insets(kind)
             let lineH = (textView.textStorage?.length ?? 0) > 0
@@ -780,20 +1164,61 @@ final class ChatRowView: NSView, NSTextViewDelegate {
     override func prepareForReuse() {
         super.prepareForReuse()
         textView.setSelectedRange(NSRange(location: 0, length: 0))
+        endFlash(animated: false)
+        fold = (false, false); hovering = false
+        layer?.removeAnimation(forKey: "fold")
+        foldButton.isHidden = true; stub.isHidden = true
+    }
+
+    private static let bubbleColor = NSColor(white: 0.175, alpha: 1).cgColor
+    private static let flashColor = NSColor(srgbRed: 0.20, green: 0.33, blue: 0.55, alpha: 1).cgColor
+    private var flashToken = 0
+    private(set) var isFlashing = false
+
+    /// Blink the bubble twice over ~2 s — the message a jump landed on.
+    func flash() {
+        guard kind == .user else { return }
+        flashToken += 1
+        let token = flashToken
+        isFlashing = true
+        setBubble(Self.flashColor, fade: 0.15)
+        let steps: [(TimeInterval, CGColor?)] = [(0.65, Self.bubbleColor), (1.0, Self.flashColor), (1.65, nil)]
+        for (t, color) in steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) { [weak self] in
+                guard let self, self.flashToken == token else { return }   // reused or re-flashed since
+                if let color { self.setBubble(color, fade: 0.25) } else { self.endFlash(animated: true) }
+            }
+        }
+    }
+
+    private func endFlash(animated: Bool) {
+        flashToken += 1
+        guard isFlashing else { return }
+        isFlashing = false
+        setBubble(Self.bubbleColor, fade: animated ? 0.4 : 0)
+    }
+
+    private func setBubble(_ color: CGColor, fade: CFTimeInterval) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(fade)
+        CATransaction.setDisableActions(fade == 0)
+        bubble.backgroundColor = color
+        CATransaction.commit()
     }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         let ins = ChatRowGeometry.insets(kind)
         var f = textView.frame
-        f.size.height = max(1, bounds.height - ins.top - ins.bottom)
+        f.size.height = max(1, bounds.height - ins.top - ins.bottom - foldExtra)
         textView.frame = f
         if !copyButtons.isEmpty { layoutCopyButtons() }
         if kind == .user {
             CATransaction.begin(); CATransaction.setDisableActions(true)
             let col = ChatRowGeometry.column(bounds.width)
-            bubble.frame = NSRect(x: col.x, y: 12, width: col.w, height: max(0, bounds.height - 12 - 8))
+            bubble.frame = NSRect(x: col.x, y: 12, width: col.w, height: max(0, bounds.height - 12 - 8 - foldExtra))
             CATransaction.commit()
+            layoutFoldControls()
         }
     }
 
@@ -911,6 +1336,21 @@ final class ChatRowTextView: NSTextView {
 
     // Scrolling belongs to the transcript, not this (non-scrolling) text view.
     override func scrollWheel(with event: NSEvent) { nextResponder?.scrollWheel(with: event) }
+
+    /// Off while something floats over the transcript (the jump list): cursor rects and tracking areas
+    /// ignore what's on top, so the I-beam would fight the overlay's own cursor on every mouse move.
+    var cursorsOff = false {
+        didSet { if oldValue != cursorsOff { window?.invalidateCursorRects(for: self) } }
+    }
+    /// Whether a button of the row (fold chevron, copy) sits over this window point. NSTextView sets the I-beam
+    /// from its own tracking area on every enter/move (`_mouseInside:`), button on top or not — traced as the
+    /// hand/I-beam flicker over the ▾.
+    var covered: ((NSPoint) -> Bool)?
+    private func quiet(_ e: NSEvent) -> Bool { cursorsOff || covered?(e.locationInWindow) == true }
+    override func resetCursorRects() { if !cursorsOff { super.resetCursorRects() } }
+    override func cursorUpdate(with event: NSEvent) { if !quiet(event) { super.cursorUpdate(with: event) } }
+    override func mouseMoved(with event: NSEvent) { if !quiet(event) { super.mouseMoved(with: event) } }
+    override func mouseEntered(with event: NSEvent) { if !quiet(event) { super.mouseEntered(with: event) } }
 }
 
 /// The strip at the top of the transcript: "Load earlier messages" / loading spinner.

@@ -299,7 +299,9 @@ enum ChatMarkdown {
 
     /// Inline Markdown (bold, italic, `code`, links, strikethrough) over `base` attributes.
     static func inline(_ text: String, _ base: [NSAttributedString.Key: Any], _ style: ChatStyle) -> NSAttributedString {
-        guard text.contains(where: { "*_`[~<".contains($0) }) else { return NSAttributedString(string: text, attributes: base) }
+        guard text.contains(where: { "*_`[~<".contains($0) }) else {
+            return ChatRender.autolinked(NSMutableAttributedString(string: text, attributes: base))
+        }
         var options = AttributedString.MarkdownParsingOptions()
         options.interpretedSyntax = .inlineOnlyPreservingWhitespace
         options.failurePolicy = .returnPartiallyParsedIfPossible
@@ -328,7 +330,7 @@ enum ChatMarkdown {
             }
             out.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attrs))
         }
-        return out
+        return ChatRender.autolinked(out)
     }
 }
 
@@ -398,6 +400,22 @@ enum ChatRender {
         for m in d.matches(in: s.string, range: NSRange(location: 0, length: s.length)) {
             guard let url = m.url, url.scheme?.hasPrefix("http") == true else { continue }
             s.addAttributes([.link: url, .foregroundColor: ChatStyle.link], range: m.range)
+        }
+        return s
+    }
+
+    /// Bare web addresses in Claude's prose become clickable (the row opens them in the browser) — except
+    /// inside `code` (literal text) and inside a `[text](url)` link that already has one.
+    static func autolinked(_ s: NSMutableAttributedString) -> NSAttributedString {
+        guard s.string.contains("://"), let d = linkDetector else { return s }
+        let all = NSRange(location: 0, length: s.length)
+        for m in d.matches(in: s.string, range: all) {
+            guard let url = m.url, url.scheme?.hasPrefix("http") == true else { continue }
+            var skip = false
+            s.enumerateAttributes(in: m.range) { a, _, stop in
+                if a[.link] != nil || (a[.backgroundColor] as? NSColor) == ChatStyle.inlineCodeBg { skip = true; stop.pointee = true }
+            }
+            if !skip { s.addAttributes([.link: url, .foregroundColor: ChatStyle.link], range: m.range) }
         }
         return s
     }

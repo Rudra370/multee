@@ -14,8 +14,9 @@ struct ChatItem {
     var text = ""                       // user text · assistant markdown · thinking · notice/error text
     var uuid: String?                   // user: the message's id in Claude's transcript (what /rewind targets);
                                         // a `!` shell row: its output message's id
-    var compaction = false              // notice: the conversation was compacted here — Claude no longer holds
-                                        // the messages above, so /rewind can't go back past it
+    var compaction = false              // notice: the conversation was compacted here — once Claude restarts it
+                                        // no longer holds the messages above, so /rewind can't go back past it
+    var synthetic = false               // assistant: a built-in command's output (`/cost`), not the model's reply
     var version = 0
 
     // Tool calls
@@ -176,4 +177,42 @@ enum ModelName {
 
     /// Context window for a model id when Claude hasn't told us yet (it does, in each turn's `result`).
     static func contextWindow(_ id: String) -> Int { id.contains("[1m]") ? 1_000_000 : 200_000 }
+}
+
+/// How long compactions take here, to say "usually about 15s" while one runs. Claude reports only a
+/// compaction's start and end — no progress — so the only honest hint is what past ones of a similar size, on
+/// the same model, took. Duration is driven mostly by how long a summary the model writes, so this stays a hint.
+enum CompactTiming {
+    struct Sample: Codable, Equatable { let model: String; let tokens: Int; let seconds: Double }
+
+    static let key = "multee.chat.compactTimes"
+    static let kept = 30
+
+    /// Typical seconds for compacting `tokens` of context on `model`: the median of past compactions within 2×
+    /// of that size on the same model — nil until there are two, so a first guess never poses as knowledge.
+    static func estimate(tokens: Int, model: String, from samples: [Sample]) -> Int? {
+        guard tokens > 0 else { return nil }
+        let near = samples.filter { $0.model == model && $0.tokens * 2 >= tokens && $0.tokens <= tokens * 2 }
+            .map(\.seconds).sorted()
+        guard near.count >= 2 else { return nil }
+        let mid = near.count / 2
+        let median = near.count % 2 == 1 ? near[mid] : (near[mid - 1] + near[mid]) / 2
+        return rounded(median)
+    }
+
+    /// Whole seconds under 20, then to the nearest 5 — "about 45s", not "about 43s".
+    static func rounded(_ s: Double) -> Int { s < 20 ? max(1, Int(s.rounded())) : Int((s / 5).rounded()) * 5 }
+
+    /// The newest `kept` samples after adding one (oldest dropped first).
+    static func adding(_ sample: Sample, to samples: [Sample]) -> [Sample] { Array((samples + [sample]).suffix(kept)) }
+
+    static func load() -> [Sample] {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
+        return (try? JSONDecoder().decode([Sample].self, from: data)) ?? []
+    }
+
+    static func record(_ sample: Sample) {
+        guard sample.tokens > 0, sample.seconds > 0 else { return }
+        if let data = try? JSONEncoder().encode(adding(sample, to: load())) { UserDefaults.standard.set(data, forKey: key) }
+    }
 }

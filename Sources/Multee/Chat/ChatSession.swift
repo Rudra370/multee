@@ -47,6 +47,9 @@ final class ChatSession {
     /// events. Skip those; real new output always streams first (`message_start`), which ends the replay —
     /// so an auto-compaction mid-turn never hides what comes next.
     private var replayingAfterCompact = false
+    /// Compactions the running process did itself. It still holds the full messages above those — /rewind
+    /// can go back past them; a restarted (`--resume`d) process loads only what follows a compaction.
+    private var liveCompactions = Set<Int>()
 
     // Run state
     private var stream: ClaudeStream?
@@ -55,15 +58,18 @@ final class ChatSession {
     private(set) var turnStartedAt: Date?
     private(set) var activity: String?            // "Thinking", "Running Bash", …
     private(set) var thinkingTokens = 0
+    /// A compaction under way: when it began, when Claude said it ended (the size arrives just after, on
+    /// `compact_boundary`, which is when it's timed), and what past ones of its size took (`CompactTiming`).
+    private var compactingSince: Date?, compactingEnded: Date?
+    private(set) var compactEstimate: Int?
     private(set) var turnOutputTokens = 0
     private(set) var prompts: [ChatPrompt] = []   // pending can_use_tool requests; the first is shown
-    /// Messages sent while Claude was busy. Claude already has them; they join the transcript when Claude
-    /// starts them (`command_lifecycle` "started", by the id we sent), so they never sit above a reply
-    /// that's still streaming. Claude often takes several queued messages into one turn — those share a
-    /// bubble, as they share one message in Claude's transcript.
+    /// Messages sent while Claude was busy. They wait here, not in Claude's own queue — Claude merges
+    /// everything waiting there into one message when its next turn starts (whatever `priority` says), so
+    /// three questions got one answer. Held here, each goes out when the turn before it ends
+    /// (`sendNextQueued`) and gets its own. The cost: Claude can't fold a message into a turn still running
+    /// (steering mid-task) — esc, then send.
     private var queued: [(text: String, uuid: String, images: [ChatAttachment])] = []
-    private var batchItemID: Int?           // the bubble queued messages started together are joining
-    private var sawLifecycle = false        // Claude reports `command_lifecycle` (else: one per turn, the old way)
     /// `!` shell output goes to Claude as messages that don't ask the model (`shouldQuery: false`) — Claude
     /// still runs an empty turn for them (init → result). Those turns are silent: no "working", no "done".
     private var silentUUIDs = Set<String>()
@@ -152,7 +158,9 @@ final class ChatSession {
                     args.append("--fork-session")
                     if items.isEmpty { addNotice("Forked conversation — what you do here doesn’t change the original.") }
                 }
-                if historyPath == nil { loadHistory(path: path) }
+                // Not over a conversation this tab already shows (a restart of a chat begun here) — that
+                // would draw it twice, and /rewind would cut at the older copy.
+                if historyPath == nil, !items.contains(where: { $0.uuid != nil }) { loadHistory(path: path) }
             } else if items.isEmpty {
                 // Claude only saves a conversation once it has done some work; a very new one can't resume.
                 addNotice(claudeSessionId == nil
@@ -168,6 +176,10 @@ final class ChatSession {
         // Print mode keeps file checkpoints (what /rewind restores code from) only when asked; the terminal
         // UI keeps them by default. `CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING` still wins inside Claude.
         env["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "1"
+        // Same for the Artifact tool: off by default in print mode ("sdk_default_off" — measured, 2.1.280), on in
+        // the terminal UI, so a conversation that made artifacts in a terminal tab lost them here. Your own
+        // `CLAUDE_CODE_ARTIFACT` (e.g. 0) and Claude's own artifacts-off setting still win.
+        if env["CLAUDE_CODE_ARTIFACT"] == nil { env["CLAUDE_CODE_ARTIFACT"] = "1" }
         let s = ClaudeStream(executable: exe, arguments: args, cwd: cwd, environment: env)
         s.onMessages = { [weak self, weak s] batch in
             guard let self, let s, self.stream === s else { return }
@@ -184,6 +196,8 @@ final class ChatSession {
         }
         stream = s
         runState = .running
+        liveCompactions = []                // a new process reads compactions from the file, like any resume
+        compactingSince = nil; compactingEnded = nil; compactEstimate = nil
         s.control("initialize") { [weak self] resp, _ in self?.applyInitialize(resp ?? [:]) }
         notify()
     }
@@ -267,16 +281,26 @@ final class ChatSession {
         if runState != .running { runState = .notStarted; start() }
         guard let stream, runState == .running else { return }
         let uuid = UUID().uuidString.lowercased()
+        ChatStore.shared.onPrompt?(tabID, text)
         if isWorking {
-            queued.append((text, uuid, images))
+            queued.append((text, uuid, images))         // sent when this turn ends — see `sendNextQueued`
         } else {
             append(userItem(text, uuid: uuid, images: images))
+            stream.sendUser(text, uuid: uuid, images: images)
+            lastSentUUID = uuid
+            beginTurn()
         }
-        stream.sendUser(text, uuid: uuid, images: images)
-        lastSentUUID = uuid
-        ChatStore.shared.onPrompt?(tabID, text)
-        if !isWorking { beginTurn(dequeue: false) }
         notify()
+    }
+
+    /// A turn ended: send the oldest message that waited for it, as a turn of its own.
+    private func sendNextQueued() {
+        guard !isWorking, runState == .running, let stream, !queued.isEmpty else { return }
+        let q = queued.removeFirst()
+        append(userItem(q.text, uuid: q.uuid, images: q.images))
+        stream.sendUser(q.text, uuid: q.uuid, images: q.images)
+        lastSentUUID = q.uuid
+        beginTurn()
     }
 
     /// Commands the chat handles itself: `/model <name>` maps to the model switch; commands that need the
@@ -328,6 +352,15 @@ final class ChatSession {
         ChatCommand(name: "remote-control", description: "Continue this session from claude.ai or the Claude app", hint: "[off]"),
         ChatCommand(name: "tasks", description: "Show background tasks", hint: ""),
     ]
+
+    /// Take queued message `i` back to edit it (↑ in the box, as in the terminal UI). Claude hasn't seen it yet —
+    /// it's still waiting here — so this just removes it.
+    func retractQueued(_ i: Int) -> (text: String, images: [ChatAttachment])? {
+        guard queued.indices.contains(i) else { return nil }
+        let q = queued.remove(at: i)
+        notify()
+        return (q.text, q.images)
+    }
 
     func interrupt() {
         guard isWorking || !prompts.isEmpty else { return }
@@ -477,7 +510,7 @@ final class ChatSession {
         items.removeAll(); toolItems.removeAll(); orphanResults.removeAll()
         historyPath = nil; historyStart = nil; historyLoading = false
         blockItems.removeAll(); assistantCursor.removeAll(); toolJSON.removeAll()
-        prompts.removeAll(); queued.removeAll(); tasks.removeAll(); batchItemID = nil
+        prompts.removeAll(); queued.removeAll(); tasks.removeAll()
         lastSentUUID = nil
         historyBranch = .find
         contextUsed = 0; totalCostUSD = 0; remoteURL = nil; activity = nil
@@ -576,13 +609,38 @@ final class ChatSession {
         }
     }
 
+    /// What the activity line says while Claude compacts — the terminal UI's words. Print mode reports only the
+    /// start and end of a compaction, no progress, so the line shows the elapsed time and, once past compactions
+    /// of this size have been timed, what they usually took (`compactEstimate`).
+    static let compactingActivity = "Compacting conversation"
+
     // MARK: - Rewind
 
-    /// Messages /rewind can go back to, newest first: your own prompts (not slash commands) that Claude has
-    /// an id for, since the last compaction (Claude no longer holds the ones before it).
+    /// Messages /rewind can go back to, newest first: your own prompts that Claude has an id for, since the
+    /// last compaction this process read from the file. Claude drops the messages above one of those, but not
+    /// above a compaction it did itself while running (measured: `target_not_found` only after a restart).
+    /// A slash command counts when Claude answered it (a skill, a custom command); a built-in one (`/model`,
+    /// `/compact`) only leaves a notice, and going back to before it would undo nothing it did.
     var rewindTargets: [ChatItem] {
-        let start = items.lastIndex(where: \.compaction).map { $0 + 1 } ?? 0
-        return items[start...].reversed().filter { $0.kind == .user && $0.uuid != nil && !$0.text.hasPrefix("/") }
+        let start = items.lastIndex { $0.compaction && !liveCompactions.contains($0.id) }.map { $0 + 1 } ?? 0
+        return items.indices[start...].reversed().filter { i in
+            items[i].kind == .user && items[i].uuid != nil && (!items[i].text.hasPrefix("/") || answered(i))
+        }.map { items[$0] }
+    }
+
+    /// Whether the model replied to the user message at `i` — anything of its own before the next user message.
+    /// A built-in command's output doesn't count: it arrives as a `<synthetic>` reply, and some of those
+    /// commands (`/release-notes`) never reach the transcript, so a rewind to them finds nothing. Nor does a
+    /// `!` shell row that follows — that's your command, not a reply.
+    private func answered(_ i: Int) -> Bool {
+        items[(i + 1)...].prefix { $0.kind != .user }.contains {
+            switch $0.kind {
+            case .assistant: return !$0.synthetic
+            case .thinking: return true
+            case .tool: return $0.toolName != ChatItem.shellTool
+            case .user, .notice, .error: return false
+            }
+        }
     }
 
     struct FileChanges { let files: [String]; let insertions: Int; let deletions: Int }
@@ -629,7 +687,8 @@ final class ChatSession {
                 self.addNotice(code ? "Rewound the conversation and code to before \(quoted)"
                                     : "Rewound the conversation to before \(quoted) — files are unchanged")
                 self.fetchContextUsage { [weak self] r, _ in self?.applyContextUsage(r) }
-                done(resp["prefillText"] as? String ?? original)
+                // Claude's prefill for a slash command is its `<command-name>` markup — put back what was typed.
+                done(original.hasPrefix("/") ? original : resp["prefillText"] as? String ?? original)
             }
         }
         guard code else { finishConversation(); return }
@@ -856,11 +915,25 @@ final class ChatSession {
             batchSilent = false; batchReal = false
             if !isWorking, !turnSilent { beginTurn() }
         case "status":
+            if o["status"] as? String == "compacting" {
+                if compactingSince == nil {         // Claude repeats the status every 30 s while it compacts
+                    compactingSince = Date(); compactingEnded = nil
+                    compactEstimate = CompactTiming.estimate(tokens: contextUsed, model: model ?? "", from: CompactTiming.load())
+                }
+            } else if compactingSince != nil, compactingEnded == nil {
+                compactingEnded = Date()
+                compactEstimate = nil
+            }
             if let s = o["status"] as? String {
-                activity = s == "requesting" ? (activity ?? "Thinking") : s.capitalized
-            } else if activity == "Compacting" { activity = "Thinking" }
+                activity = s == "requesting" ? (activity ?? "Thinking") : s == "compacting" ? Self.compactingActivity : s.capitalized
+            } else if activity == Self.compactingActivity { activity = "Thinking" }
         case "compact_boundary":
             let meta = o["compact_metadata"] as? JSON
+            if let since = compactingSince, let pre = meta?["pre_tokens"] as? Int {
+                let secs = (compactingEnded ?? Date()).timeIntervalSince(since)
+                CompactTiming.record(.init(model: model ?? "", tokens: pre, seconds: secs))
+            }
+            compactingSince = nil; compactingEnded = nil; compactEstimate = nil
             if let pre = meta?["pre_tokens"] as? Int, let post = meta?["post_tokens"] as? Int {
                 addNotice("Conversation compacted (\(ChatActivityBar.compact(pre)) → \(ChatActivityBar.compact(post)) tokens)")
                 contextUsed = post
@@ -868,6 +941,7 @@ final class ChatSession {
                 addNotice("Conversation compacted")
             }
             items[items.count - 1].compaction = true
+            liveCompactions.insert(items[items.count - 1].id)
             replayingAfterCompact = true
         case "thinking_tokens":
             thinkingTokens = o["estimated_tokens"] as? Int ?? thinkingTokens
@@ -1014,7 +1088,9 @@ final class ChatSession {
                     items[i].text = text; items[i].streaming = false; bump(i)
                 } else if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                           text != "No response requested." {
-                    append(ChatItem(id: takeID(), kind: .assistant, text: text))
+                    var item = ChatItem(id: takeID(), kind: .assistant, text: text)
+                    item.synthetic = msg["model"] as? String == "<synthetic>"
+                    append(item)
                 }
             case "tool_use":
                 let input = block["input"] as? JSON ?? [:]
@@ -1083,6 +1159,7 @@ final class ChatSession {
     }
 
     private func handleResult(_ o: JSON) {
+        compactingSince = nil; compactingEnded = nil; compactEstimate = nil   // stopped, or failed: nothing to time
         if turnSilent { turnSilent = false; return }     // shell output joined the conversation — nothing ran
         let subtype = o["subtype"] as? String ?? ""
         if let cost = o["total_cost_usd"] as? Double { totalCostUSD = cost }
@@ -1105,7 +1182,9 @@ final class ChatSession {
         turnStartedAt = nil
         replayingAfterCompact = false
         blockItems.removeAll(); assistantCursor.removeAll(); toolJSON.removeAll()
-        ChatStore.shared.onStatus?(tabID, .idle)
+        // The next queued message goes straight out (an interrupted turn's too — the terminal UI keeps its queue
+        // past esc); only a turn with nothing after it is "idle", so no "done" notice fires in between.
+        if queued.isEmpty || runState != .running { ChatStore.shared.onStatus?(tabID, .idle) } else { sendNextQueued() }
     }
 
     private func handleRateLimit(_ o: JSON) {
@@ -1192,38 +1271,21 @@ final class ChatSession {
 
     // MARK: - Helpers
 
-    private func beginTurn(dequeue: Bool = true) {
+    private func beginTurn() {
         isWorking = true
         turnStartedAt = Date()
         thinkingTokens = 0
         turnOutputTokens = 0
         activity = "Thinking"
-        batchItemID = nil
-        if dequeue, !sawLifecycle, !queued.isEmpty {
-            let q = queued.removeFirst()
-            append(userItem(q.text, uuid: q.uuid, images: q.images))
-        }
         ChatStore.shared.onStatus?(tabID, prompts.isEmpty ? .working : .needs)
     }
 
-    /// A queued message was started: show it now — joining the bubble of messages started along with it
-    /// (Claude sends one message for them all, under the first one's id).
+    /// Which messages a turn is starting on (`command_lifecycle` "started"): a `!` command's output alone makes
+    /// a silent turn. Queued prompts never reach Claude's own queue — see `queued`.
     private func handleLifecycle(_ o: JSON) {
-        sawLifecycle = true
         guard o["state"] as? String == "started", let cu = o["command_uuid"] as? String else { return }
         if silentUUIDs.remove(cu) != nil { batchSilent = true; return }
         batchReal = true
-        guard let qi = queued.firstIndex(where: { $0.uuid == cu }) else { return }
-        let q = queued.remove(at: qi)
-        if let id = batchItemID, items.last?.id == id, let i = index(of: id) {
-            items[i].text += "\n" + q.text
-            items[i].images += q.images.compactMap(\.thumbnail)
-            bump(i)
-        } else {
-            let item = userItem(q.text, uuid: q.uuid, images: q.images)
-            append(item)
-            batchItemID = item.id
-        }
     }
 
     private func setToolStatus(_ toolUseID: String?, _ status: ChatItem.ToolStatus) {
@@ -1272,7 +1334,7 @@ extension ChatItem {
     /// The same item under a new id (history is re-id'd as it's prepended).
     init(copying o: ChatItem, id: Int) {
         self.init(id: id, kind: o.kind, text: o.text)
-        uuid = o.uuid; compaction = o.compaction
+        uuid = o.uuid; compaction = o.compaction; synthetic = o.synthetic
         toolName = o.toolName; toolUseID = o.toolUseID; toolInput = o.toolInput
         toolResult = o.toolResult; toolStatus = o.toolStatus
         subagentSteps = o.subagentSteps; subagentLast = o.subagentLast

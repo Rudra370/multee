@@ -516,8 +516,10 @@ file. Reading it linearly would show messages Claude no longer has. Rejected: re
 /fork uses `--resume <id> --fork-session` in a new chat tab (the `fork_conversation` request needs a Remote
 Control server) and names the fork with `rename_session`, so `ClaudeTranscript.title` now prefers
 `custom-title` over `ai-title`.
-**Status:** built. Rewind can't reach past a compaction (Claude no longer holds those messages), so the
-picker lists only messages after the last one.
+**Status:** built. Rewind reaches past a compaction only while the process that compacted is still running —
+it keeps the full messages in memory; a restarted (`--resume`d) process loads only what follows the compaction
+and answers `target_not_found` (measured). So the picker stops at the last compaction this process *read from
+the file*, not at the last one on screen.
 
 ### D38 — `!` shell mode runs in Multee; its output reaches Claude as the terminal UI records it
 **Decision:** A chat's `!command` runs in your `$SHELL -c` in the chat's folder (120 s cap, esc stops it) and
@@ -563,6 +565,17 @@ their own comment warns that closing underneath it crashes).
 **Status:** built and verified — three terminal tabs opened and closed return the app's open-PTY count to
 baseline with no survivor and no `Z`; a Claude tab takes its `npm exec @playwright/mcp` child with it;
 quitting with three tabs open leaves nothing behind.
+
+### D41 — The chat holds queued messages itself and sends one per turn
+**Decision:** A message sent while Claude works waits in `ChatSession.queued` and goes to Claude only when the
+running turn ends (`sendNextQueued`, esc'd turns included), one per turn. Editing one (↑ ⏎) just takes it out.
+**Why:** Claude merges everything in its own queue into one user message when its next turn starts — measured
+with no `priority` and with `next` and `later`: three questions, one message, one answer. The user wants an answer
+each. Held here, the queue is also trivially editable (earlier builds withdrew with `cancel_async_message` and had
+to handle "already started"). **Cost, accepted:** Claude can no longer fold a message into a turn still running
+at a tool boundary (mid-task steering) — the correction waits for the turn, or esc first.
+**Status:** built — three queued, the middle one taken back: the other two got a turn and an answer each; a queued
+message sent after an esc'd turn runs on its own.
 
 ### D35 — Chat processes drop a parent Claude session's environment markers
 **Decision:** A chat's `claude` is launched without `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,

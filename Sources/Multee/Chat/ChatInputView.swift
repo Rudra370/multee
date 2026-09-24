@@ -8,6 +8,15 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     var onSend: ((String, [ChatAttachment]) -> Void)?
     var onEscape: (() -> Void)?
     var onCycleMode: (() -> Void)?
+    /// Messages sent while Claude works wait in its queue; ↑ walks them (newest first) instead of history, ⏎
+    /// takes the highlighted one back to edit, esc leaves — the terminal UI's "select a queued message".
+    var queuedCount: () -> Int = { 0 }
+    var onQueueSelection: ((Int?) -> Void)?
+    var onEditQueued: ((Int) -> Void)?
+    private(set) var queueSelection: Int? {
+        didSet { if queueSelection != oldValue { onQueueSelection?(queueSelection) } }
+    }
+    private var lastQueuedCount = 0
     var onStop: (() -> Void)?
     /// Completion sources, pulled on demand.
     var commands: () -> [ChatCommand] = { [] }
@@ -118,10 +127,39 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     }
 
     func focus() { window?.makeFirstResponder(textView) }
+    var textViewForFocus: NSResponder { textView }
 
     var text: String {
         get { textView.string }
         set { textView.string = newValue; textChanged() }
+    }
+
+    /// A queued message taken back to edit: its text goes above whatever is typed, its images with it —
+    /// renumbered after the box's own, so no two share a marker.
+    func restore(_ text: String, images: [ChatAttachment]) {
+        var t = text, imgs = images
+        let base = ChatAttachment.highestMarker(in: textView.string)
+        if base > 0, !images.isEmpty {
+            // Highest first: each new number is above every old one still to be renamed, so none collide.
+            for a in images.sorted(by: { $0.number > $1.number }) {
+                t = t.replacingOccurrences(of: a.marker, with: "[Image #\(a.number + base)]")
+            }
+            imgs = images.map { ChatAttachment(number: $0.number + base, data: $0.data, mediaType: $0.mediaType) }
+        }
+        let draft = textView.string
+        textView.string = draft.isEmpty ? t : t + "\n" + draft
+        attachments += imgs
+        historyIndex = nil
+        textView.setSelectedRange(NSRange(location: (t as NSString).length, length: 0))
+        textChanged()
+        focus()
+    }
+
+    /// The queue moved on (a message started, or one was taken back): a highlight by position would now point
+    /// at a different message, so drop it.
+    func queueChanged() {
+        let n = queuedCount()
+        if n != lastQueuedCount { lastQueuedCount = n; queueSelection = nil }
     }
 
     /// esc esc with something typed: throw the draft away, images and all — what the terminal UI does.
@@ -304,6 +342,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     }
 
     private func textChanged() {
+        queueSelection = nil
         // The markers in the box are the record of which images this message carries — cut one, select it
         // away or clear the box, and its image goes with it (and `[Image #1]` starts over next time).
         if !attachments.isEmpty {
@@ -339,12 +378,14 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         switch selector {
         case #selector(NSResponder.insertNewline(_:)):
             if !completion.isHidden { acceptCompletion(completion.selected); return true }
+            if let s = queueSelection { queueSelection = nil; onEditQueued?(s); return true }
             if shift { textView.insertText("\n", replacementRange: textView.selectedRange()); return true }
             submit(); return true
         case #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             textView.insertText("\n", replacementRange: textView.selectedRange()); return true
         case #selector(NSResponder.cancelOperation(_:)):
             if !completion.isHidden { hideCompletion(); return true }
+            if queueSelection != nil { queueSelection = nil; return true }
             onEscape?(); return true
         case #selector(NSResponder.insertBacktab(_:)):
             onCycleMode?(); return true
@@ -353,16 +394,33 @@ final class ChatInputView: NSView, NSTextViewDelegate {
             return true
         case #selector(NSResponder.moveUp(_:)):
             if !completion.isHidden { completion.move(-1); return true }
-            return recallHistory(-1)
+            return selectQueued(-1) || recallHistory(-1)
         case #selector(NSResponder.moveDown(_:)):
             if !completion.isHidden { completion.move(1); return true }
-            return recallHistory(1)
+            return selectQueued(1) || recallHistory(1)
         default:
             return false
         }
     }
 
     fileprivate func cycleModeKey() { onCycleMode?() }
+
+    /// ↑ from the first line (not while browsing history) highlights the newest queued message; ↑/↓ then move
+    /// through them, and ↓ past the newest lets go.
+    private func selectQueued(_ dir: Int) -> Bool {
+        let n = queuedCount()
+        guard n > 0 else { queueSelection = nil; return false }
+        if let s = queueSelection {
+            queueSelection = dir < 0 ? max(0, min(s, n - 1) - 1) : (s + 1 < n ? s + 1 : nil)
+            return true
+        }
+        guard dir < 0, historyIndex == nil else { return false }
+        let caret = textView.selectedRange().location
+        if (textView.string as NSString).substring(to: caret).contains("\n") { return false }
+        lastQueuedCount = n                 // the chrome may not have caught up with the queue yet
+        queueSelection = n - 1
+        return true
+    }
 
     /// ↑/↓ walk sent messages — only when the caret is on the first/last line, so multi-line editing works.
     private func recallHistory(_ dir: Int) -> Bool {

@@ -153,6 +153,13 @@ enum DebugAction {
         case "chatScroll":     chat?.debugScroll(CGFloat(Double(arg) ?? 0))   // 0 = top … 1 = bottom
         case "chatToggleItem": chat?.debugToggleItem(Int(arg) ?? -1)      // expand/collapse (negative = from the end)
         case "chatLoadEarlier": chat?.session.loadEarlier()
+        case "chatJumpList":   chat?.debugJumpList(arg != "0")            // open (or `:0` close) the jump rail's list
+        case "chatJumpTo":     chat?.debugJump(Int(arg) ?? 0)             // scroll to the n-th message you sent
+        case "chatFold":       chat?.debugFold(Int(arg) ?? 0, all: false) // fold/unfold the reply under the n-th message you sent
+        case "chatFoldRecord":  // n|path: fold, then record drawn row positions for 0.5 s (animation check)
+            let parts = arg.split(separator: "|", maxSplits: 1).map(String.init)
+            chat?.debugFoldRecord(Int(parts.first ?? "") ?? 0, path: parts.count > 1 ? parts[1] : "/tmp/multee-foldrec.json")
+        case "chatFoldAll":    chat?.debugFold(Int(arg) ?? 0, all: true)  // ⌥-click that message's chevron: all replies
         case "chatContext":    chat?.debugContext()
         case "chatRestart":    chat?.session.restart()
         case "chatTrust":      chat?.session.trustAndStart()
@@ -180,6 +187,7 @@ enum DebugAction {
                 // it to the window itself then (same responder path; only menu key equivalents are skipped).
                 if NSApp.keyWindow != nil { NSApp.sendEvent(ev) } else { win.sendEvent(ev) }
             }
+        case "cursorTrace":     CursorTrace.enable(arg != "0")            // log every cursor change + who set it → /tmp/multee-cursor.log
         case "dumpResponder":   // what has keyboard focus (class names up the chain)
             var chain: [String] = []
             var r = Self.harnessWindow?.firstResponder
@@ -243,7 +251,22 @@ enum DebugAction {
                     times["case\(n)"] = (CFAbsoluteTimeGetCurrent() - t) * 1000
                 }
                 let total = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-                let r: [String: Any] = ["cases": cases.count, "totalMs": total, "maxMs": times.values.max() ?? 0, "perCaseMs": times]
+                // Links: which text ends up clickable, per case.
+                let linkCases = ["Built: https://claude.ai/artifact/W9kDZ (Present mode, then click)",
+                                 "**Bold** then https://a.com/x.", "code `https://code.example/x` stays", "[named](https://m.com) link",
+                                 "- item https://list.example/p?q=1", "| h |\n|---|\n| https://t.example |", "no scheme www.x.com",
+                                 "# Heading https://h.example"]
+                var links: [String: [String]] = [:]
+                for c in linkCases {
+                    let s = ChatMarkdown.render(c, style: style)
+                    var found: [String] = []
+                    s.enumerateAttribute(.link, in: NSRange(location: 0, length: s.length)) { v, r, _ in
+                        if v != nil { found.append((s.string as NSString).substring(with: r)) }
+                    }
+                    links[c] = found
+                }
+                let r: [String: Any] = ["cases": cases.count, "totalMs": total, "maxMs": times.values.max() ?? 0, "perCaseMs": times,
+                                        "links": links]
                 if let d = try? JSONSerialization.data(withJSONObject: r, options: [.sortedKeys]) { try? d.write(to: URL(fileURLWithPath: out)) }
             }
         case "dumpChat":       // full chat state (items, prompt, tasks, footer, transcript geometry) + visible text
@@ -501,5 +524,57 @@ enum DebugShot {
         view.cacheDisplay(in: view.bounds, to: rep)
         guard let data = rep.representation(using: .png, properties: [:]) else { return }
         try? data.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+/// DEV: logs each cursor *change* with the view under the mouse and the call stack that set it — cursor
+/// flicker only happens under a real mouse, so this is how a hover bug gets evidence (have the user hover,
+/// then read the log). Swizzles `-[NSCursor set]`.
+enum CursorTrace {
+    static let path = "/tmp/multee-cursor.log"
+    private static var swizzled = false
+    static var on = false
+    static var last: String?
+
+    static func enable(_ enable: Bool) {
+        if !swizzled, let a = class_getInstanceMethod(NSCursor.self, #selector(NSCursor.set)),
+           let b = class_getInstanceMethod(NSCursor.self, #selector(NSCursor.multeeTracedSet)) {
+            method_exchangeImplementations(a, b)
+            swizzled = true
+        }
+        on = enable
+        last = nil
+        if enable { try? "".write(toFile: path, atomically: true, encoding: .utf8) }
+    }
+
+    static func name(_ c: NSCursor) -> String {
+        c == .arrow ? "arrow" : c == .iBeam ? "iBeam" : c == .pointingHand ? "hand" : "other"
+    }
+
+    static func log(_ c: NSCursor) {
+        let n = name(c)
+        guard on, n != last else { return }
+        last = n
+        var under = "?"
+        if let w = NSApp.windows.first(where: { $0.isVisible && $0.frame.contains(NSEvent.mouseLocation) }),
+           let v = w.contentView?.hitTest(w.contentView!.convert(w.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)) {
+            var chain: [String] = []
+            var x: NSView? = v
+            while let y = x, chain.count < 4 { chain.append(String(describing: type(of: y))); x = y.superview }
+            under = chain.joined(separator: "<")
+        }
+        let stack = Thread.callStackSymbols.dropFirst(2).prefix(9).map { line -> String in
+            let parts = line.split(separator: " ", maxSplits: 3)
+            return parts.count > 3 ? String(parts[3]).components(separatedBy: " + ").first ?? "" : line
+        }
+        let entry = String(format: "%.3f %@ under=%@\n    %@\n", CACurrentMediaTime(), n, under, stack.joined(separator: "\n    "))
+        if let h = FileHandle(forWritingAtPath: path) { h.seekToEndOfFile(); h.write(entry.data(using: .utf8)!); h.closeFile() }
+    }
+}
+
+extension NSCursor {
+    @objc func multeeTracedSet() {
+        CursorTrace.log(self)
+        multeeTracedSet()   // swizzled: the original -set
     }
 }

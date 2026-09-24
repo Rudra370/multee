@@ -83,6 +83,11 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         input.onEscape = { [weak self] in self?.escape() }
         input.onStop = { [weak self] in self?.session.interrupt() }
         input.onCycleMode = { [weak self] in self?.cycleMode() }
+        input.queuedCount = { [weak self] in self?.session.queuedTexts.count ?? 0 }
+        input.onQueueSelection = { [weak self] _ in self?.refreshChrome() }
+        input.onEditQueued = { [weak self] i in
+            if let got = self?.session.retractQueued(i) { self?.input.restore(got.text, images: got.images) }
+        }
         input.commands = { [weak self] in
             let claude = self?.session.commands ?? []
             let names = Set(claude.map { $0.name.lowercased() })
@@ -164,7 +169,11 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         }
     }
 
+    /// ⌘J: open the jump list with keyboard focus, or close it (focus back to the input).
+    func toggleJumpList() { transcript.toggleJumpListFromKeyboard() }
+
     func focusInput() {
+        if case .needsTrust = session.runState, activity.focusTrust() { return }   // space accepts; then the input
         if !confirmPanel.isHidden { confirmPanel.focusCard() }
         else if session.prompt != nil { view.window?.makeFirstResponder(promptPanel) } else { input.focus() }
     }
@@ -532,11 +541,21 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
     }
     private var chromePending = false
 
+    private var trustFocusGiven = false            // focused the trust button for this prompt already
+
     private func refreshChrome() {
         guard isViewLoaded else { return }
         let size = CGFloat(settings.fontSize)
-        activity.update(session, fontSize: size)
+        input.queueChanged()
+        activity.update(session, fontSize: size, queueSelection: input.queueSelection)
         activity.isHidden = activity.textShown.isEmpty
+        // The trust prompt just appeared: focus its button (so space accepts) if the input had focus — i.e. the
+        // user is here, not typing elsewhere in the window.
+        if case .needsTrust = session.runState {
+            if !trustFocusGiven, view.window?.firstResponder === input.textViewForFocus {
+                trustFocusGiven = activity.focusTrust()
+            }
+        } else { trustFocusGiven = false }
         input.working = session.isWorking
         footer.update(session, branch: repo?.gitBranch, fontSize: max(10, size - 2))
         transcript.stateChanged()
@@ -583,7 +602,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
     }
 
     private func onTick() {
-        activity.update(session, fontSize: CGFloat(settings.fontSize))
+        activity.update(session, fontSize: CGFloat(settings.fontSize), queueSelection: input.queueSelection)
         activity.isHidden = activity.textShown.isEmpty
         if tasksVisible {
             tasksSignature = ""
@@ -706,6 +725,13 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
     func debugStopTask(_ index: Int) { if session.tasks.indices.contains(index) { session.stopTask(session.tasks[index].id) } }
     func debugScrollBenchmark() -> [String: Any] { transcript.debugScrollBenchmark() }
     func debugScroll(_ f: CGFloat) { transcript.debugScroll(toFraction: f) }
+    func debugJumpList(_ open: Bool) {
+        open ? transcript.showJumpList() : transcript.hideJumpList()
+        CATransaction.flush()     // commit now, so a dump in the same tick reads the first frame of the fade
+    }
+    func debugJump(_ n: Int) { transcript.jump(toMessage: n) }
+    func debugFold(_ n: Int, all: Bool) { transcript.debugFold(n, all: all) }
+    func debugFoldRecord(_ n: Int, path: String) { transcript.debugFoldRecord(n, path: path) }
     func debugVisibleText() -> String { transcript.debugVisibleText() }
     func debugToggleItem(_ index: Int) {
         let items = session.items

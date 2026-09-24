@@ -96,8 +96,26 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   off-main in parallel. Streaming updates only the changed row (~16/s), replacing just the tail of its text.
   Follows the bottom unless you scroll up (then a ↓ button). History: a resumed tab reads Claude's
   transcript tail (2 MB chunks) and loads earlier chunks when you reach the top.
+- **Jump rail** — `ChatJumpRail`: one thin line per message you sent, evenly spaced up from the transcript's
+  bottom-left corner (newest lowest, squeezed closer when they don't fit), the one you're reading brighter —
+  the last one starting above 40% down the view, or on screen at the bottom, or the one you just jumped to.
+  Hovering (0.15 s) opens `ChatJumpList` beside it (fades in while sliding out from the rail, 0.14 s; fades out in
+  0.08 s). **⌘J** (View ▸ Jump to Message) opens it with keyboard focus — ↑↓ (home/end) move a selection that
+  starts on the message you're reading, ⏎ jumps there, esc or ⌘J closes; focus returns to where it was. A
+  hover-opened list leaves focus alone., the transcript's full height on a slightly see-through
+  background: a one-line preview of each, the rows level with the lines; a row or a line glides that message
+  to 35% down the view (0.35 s; a long way off it snaps to a screen short first; instant under Reduce Motion)
+  and blinks its bubble blue twice over ~2 s. While it's open the transcript's text drops its I-beam (see CLAUDE.md). Shown from two messages
+  up; covers the messages loaded so far (earlier history loads as you scroll up).
+- **Folding replies** — hovering one of your messages shows a ▾ in its bubble's top-right: it folds away
+  everything Claude did in reply (text, tools, thinking) down to a "▸ Show Claude's reply" stub; ⌥-click folds
+  or unfolds every reply at once, so a long chat reads as the list of what you asked. Folded rows stay in the
+  list with no height and are never mounted (ids, history, rewind untouched); the message you clicked keeps its
+  place on screen, and the rest slides there (0.25 s layer transforms from each row's old screen position;
+  revealed rows fade in once the slide ends; off under Reduce Motion). A reply still arriving under a folded message stays folded. Per tab, not saved.
 - **Rendering** — `ChatRender`/`ChatMarkdown`: headings, lists, task lists, quotes, tables, rules, inline
-  code/bold/italic/links, fenced code with the TextMate highlighter. Tool rows mimic the terminal UI:
+  code/bold/italic/links (bare `http(s)://` addresses too, except inside `code`; a click opens the browser),
+  fenced code with the TextMate highlighter. Tool rows mimic the terminal UI:
   `Tool(summary)` + a `⎿` preview (4 lines, "show more"), Edit as a red/green diff, Write/Read line
   counts, TodoWrite checklist, Agent rows with the subagent's step count + latest action and a cleaned
   report, background shells as a one-liner. Rows are selectable text; "Copy Message" in the context menu.
@@ -129,20 +147,31 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   typed, images and all; on an empty box it offers rewind),
   ⇧⇥ cycles mode, ↑/↓ history;
   `/` completion (all commands incl. skills, with argument hints + descriptions) and `@` file completion
-  (`git ls-files`). Messages sent while Claude works queue above the box and join the transcript when Claude
-  starts them (`command_lifecycle`); several it takes into one turn share one bubble, as in its transcript. `/model` opens the model menu, `/tasks` the tasks panel, `/context` the context popover;
+  (`git ls-files`). Messages sent while Claude works queue above the box — **held by Multee**, not Claude, and sent one per
+  turn as each turn ends (esc'd ones too), so each gets its own answer; Claude would merge everything in its own
+  queue into one message. The trade: no steering a running turn mid-task — esc, then send.
+  **Edit a queued message** (the terminal UI's select mode): ↑ from the box's first line highlights the newest
+  queued one, ↑/↓ move, ⏎ takes it back into the box (above any draft, images renumbered after the draft's), esc
+  leaves. Claude never saw it, so nothing needs withdrawing. `/model` opens the model menu, `/tasks` the tasks panel, `/context` the context popover;
   the chat's own commands (below) join `/` completion; commands needing the terminal UI (`/permissions`,
   `/hooks`, `/login`…) explain themselves instead.
 - **Status line** (`ChatFooterView`) — permission mode (click or ⇧⇥: ask → accept edits → plan → auto (models
   that support it) → bypass; chats launch with `--allow-dangerously-skip-permissions`, and turning bypass on
   asks once per install), folder, branch, model ▾ (the models, **effort** low…max for the picked model, fast
-  mode with its real availability, "Other model…"), live context % (click → Claude's own breakdown), 5h / 7d
+  mode with its real availability, "Other model…"), live context meter — a bar going blue → yellow → red as it fills, exact % in the tooltip (click → Claude's own breakdown), 5h / 7d
   usage with reset countdowns (kept across launches), background tasks (shells, agents, ports), cost,
   **Remote Control** (antenna; green while on — open/copy the session link, stop), **Resume** (clock), and
   **Open in Terminal**. Model and effort picks are saved on the tab (`--model` / `--effort`).
+- **Compacting** — while Claude compacts (`/compact`, or on its own mid-reply) the activity line reads
+  "Compacting conversation… · 12s · usually about 15s · esc to stop". No progress bar: print mode reports only the
+  start and end of a compaction (the terminal UI's bar is a time curve, not measured progress). The "usually" hint
+  is the median time of past compactions within 2× of this size on the same model (`CompactTiming`, last 30 kept in
+  defaults as `multee.chat.compactTimes`); it appears once two such have been timed.
 - **Code blocks** get a copy icon in their top-right corner (a green ✓ for a moment after copying);
   consecutive blocks stay separate (a spacer line — TextKit merges adjacent equal text blocks).
-- **Rewind** (`/rewind`, esc esc) — pick one of your messages since the last compaction (oldest at the top,
+- **Rewind** (`/rewind`, esc esc) — pick one of your messages — a skill or custom `/command` Claude answered counts,
+  a built-in one like `/compact` doesn't (a compaction done since Claude last started doesn't
+  stop it; one from before a restart does — oldest at the top,
   the latest at the bottom and selected, as in the terminal UI); a dry run
   (`rewind_files`) shows which files changed since then — the picker stays up as "Checking what changed…"
   while Claude answers, so the keyboard never drops back into the message box mid-flight and esc still
@@ -177,7 +206,8 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
 - **Switching** — right-click a Claude/chat tab ▸ "Open as Chat" / "Open in Terminal UI" (or the status-line
   button / palette) converts the tab in place, same conversation (`Session.switchClaudeUI`).
 - **Folder trust** (`ChatTrust`) — print mode skips Claude's "trust this folder?" prompt, so a chat asks
-  first unless Claude already trusts that exact folder.
+  first unless Claude already trusts that exact folder. The "Trust folder & start" button takes keyboard focus
+  when the prompt appears (white ring; space or ⏎ accepts), then focus moves to the message box.
 - **Crash/exit** — "Claude stopped (…) — Restart resumes this conversation" with a Restart button.
 **Verified (harness, live `claude` 2.1.278):** tool calls/markdown/streaming; permission allow / deny with
 feedback / always-allow (rule written to settings.local.json); questions (single, multi-select, two

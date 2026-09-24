@@ -73,7 +73,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "chatKey:esc|shiftTab|up|down|enter|tab|optEnter", "chatAllow", "chatAllowAlways", "chatDeny",
               "chatDenyMsg:text", "chatAnswer:label", "chatSubmitAnswers", "chatInterrupt", "chatMode:plan",
               "chatCycleMode", "chatModel:haiku", "chatTasks", "chatLog:0", "chatStopTask:0", "chatClearTasks",
-              "chatScroll:0.5", "chatToggleItem:-1", "chatLoadEarlier", "chatContext", "chatRestart", "chatTrust",
+              "chatScroll:0.5", "chatToggleItem:-1", "chatLoadEarlier", "chatJumpList", "chatJumpTo:0", "chatFold:0", "chatFoldAll:0", "chatFoldRecord:0|/tmp/x.json", "cursorTrace:1", "chatContext", "chatRestart", "chatTrust",
               "chatKill", "chatOpenInTerminal", "switchUI", "chatScrollBench:/tmp/x.json",
               "chatMarkdownSelfTest:/tmp/x.json", "dumpChat:/tmp/x.json", "chatResume", "chatResumePick:0",
               "chatRemote:on|off", "chatEffort:low", "chatModeTo:bypassPermissions", "chatCycleUI", "chatConfirm:ok",
@@ -97,6 +97,9 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
 - `live` → a file the app polls (0.3 s): append action lines while it runs and each executes once. Use it for
   chat tests — LLM turns take variable time, so poll the `chat` block of the state dump between steps instead
   of guessing delays. Chat tests are cheap on Haiku: `chatModel:haiku` (the pick persists on the tab).
+- `cursorTrace:1` logs every cursor **change** to `/tmp/multee-cursor.log` with the view under the mouse and the
+  call stack that set it (swizzled `-[NSCursor set]`). Cursor flicker needs a real mouse, so turn it on, have the
+  user hover where it glitches, then read the log — evidence instead of guessing which view is fighting.
 - `DebugHarness.swift` holds it all; `TerminalStore.debugText/debugState` inspect terminals.
 - Clear stale dev state between runs: `defaults delete com.multee.native.dev multee.state`.
 
@@ -198,6 +201,11 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   - Never drop an off-main measuring pass — the transcript reconciles rows with the session by item id.
   - After `/compact`, Claude replays kept messages as un-streamed assistant events — skip them until the next
     `message_start`.
+  - A compaction reports only `status: "compacting"` (repeated every 30 s) → `status: null` in print mode — the
+    terminal's `compact_progress`/`stream_mode` events are on an internal list that's never written to stdout. There
+    is no real progress to show; the terminal's own bar is `1 − e^(−t/90)` of elapsed time. We show the timer plus
+    "usually about Ns" from past compactions (`CompactTiming`, timed from the first `compacting` to the `status: null`,
+    sized by `compact_boundary.pre_tokens`; a stopped or failed one is never recorded).
   - **⇧⇥ arrives as `insertTab:` in an NSTextView**, not `insertBacktab:` — catch it in `keyDown` from the
     event (keyCode 48 + shift). Test keys with `keyEvent:` (a real event through `NSApp.sendEvent`), not a
     direct `doCommand` — that skipped the key-binding step and hid this bug. Note `NSApp.currentEvent` isn't
@@ -207,8 +215,18 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   - **A transcript is a tree** (D37): /rewind and retracted prompts leave dead branches in the `.jsonl`.
     `ChatHistory` shows only the live branch (`parentUuid` chain from the leaf) — never read it linearly.
     Standalone check: `swiftc ChatModel.swift ChatHistory.swift <test>.swift` runs it outside the app.
+  - **Print mode switches some tools off that the terminal UI has on.** The Artifact tool is `sdk_default_off`
+    under any `sdk-*` entrypoint unless `CLAUDE_CODE_ARTIFACT` is truthy — a conversation that made artifacts in a
+    terminal tab then got "No such tool available: Artifact" in the chat. The chat sets it (unless you set it).
+    Check a tool's availability from the `init` event's `tools` list, not from the transcript.
   - Print mode keeps file checkpoints (what `rewind_files` restores) only with
     `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`; the `uuid` we send on a user message becomes its id.
+  - Rewind crosses a compaction the **running** process did (it still holds those messages) but not one it read
+    on `--resume` (`target_not_found`) — `ChatSession.liveCompactions`, cleared on every process start. It also
+    accepts slash-command messages; the picker offers those the *model* answered (skills), and puts back the typed
+    `/cmd` — Claude's `prefillText` for one is `<command-name>` markup. A built-in command's output arrives as an
+    assistant message with `model: "<synthetic>"` (`ChatItem.synthetic`) and doesn't count — some of those
+    (`/release-notes`) are never written to the transcript, so a rewind to them would find nothing.
   - `rewind_conversation` to anything but the newest message needs `last_seen_user_message_uuid` (the newest
     user message the chat sent — `!` output included), else Claude refuses "stale target". Claude matches ids
     by **prefix**, so test with random uuids, never look-alike ones.
@@ -244,12 +262,24 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
     as text). `ChatInputTextView` claims the image types back. Test it with `dumpPasteEnabled:` (validation +
     the matched type) and `chatMenuPaste` (paste down the responder chain) — the `chatPaste*` actions call
     `paste(_:)` directly and skip the validation step, which is why they hid this for a whole round.
-  - Messages sent mid-turn are **not** one turn each: Claude merges whatever is queued when a turn starts
-    into one user message. `command_lifecycle` (`queued`/`started`/`completed`, by our uuid) says which —
-    never assume one `init` per queued message (that left messages stuck as "queued").
+  - **Claude merges its queue**: everything sent mid-turn becomes one user message (one answer) when the next turn
+    starts — `priority` `next`/`later` doesn't change that (measured). So the chat holds queued messages itself and
+    sends one as each turn ends (`ChatSession.queued` / `sendNextQueued`); editing one (↑ ⏎) just removes it. If
+    they ever go back to Claude's queue: `command_lifecycle` says which started together, and
+    `cancel_async_message {message_uuid}` withdraws one (`{cancelled: false}` = already dequeued).
   - **`NSView.prepareForReuse()` un-hides the view** (its default resets `isHidden`/`alphaValue`). Recycle a row
     as prepare → hide → pool (`ChatTranscriptView.recycle`); the other order left ghost rows drawn after a
     rewind / resume switch. `dumpChat` → `transcript.shownRowViews` must equal `liveRows`.
+  - **An overlay on the transcript fights the text's I-beam**: cursor rects are window-wide and ignore what's on
+    top, so an `NSTextView` underneath keeps setting its cursor — hand and I-beam flicker on every move (the jump
+    list did this). While an overlay is open, turn the rows' cursors off (`ChatRowTextView.cursorsOff`, also on
+    rows made meanwhile); `dumpChat` → `transcript.rowCursorsOff`. Same fight **inside** a row: a button over the
+    text (the fold ▾, code Copy) — NSTextView sets the I-beam from its own tracking area on every move
+    (`_mouseInside:`, found with `cursorTrace`), so `ChatRowTextView.covered` skips it under the row's buttons.
+  - **A row's layer uses top-down y like its view even though the doc's `isGeometryFlipped` reads false** —
+    trusting the flag slid the fold animation in from the wrong side. Check motion with `chatFoldRecord` (drawn
+    positions ~120×/s from the presentation layer) rather than a screenshot, which only shows model values. The `shot` capture **exaggerates see-through
+    layers** (98% opaque showed the text behind plainly) — judge transparency on the real screen.
   - A view's frame change posts **no** `boundsDidChangeNotification` (only scrolling does) — the transcript
     sees its viewport shrink (a prompt card opening below) in `layout()` and re-pins to the bottom there.
   - `keyEvent:` works with Multee in the background (no key/main window then — it targets the visible
@@ -321,7 +351,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
   (+ `ChatStore`: event reducer, intents, lifecycle), `ChatModel` (items, prompts, tasks), `ChatHistory`
   (transcript tail → items, live branch only), `ChatRender` (+ `ChatMarkdown`, `ChatMeasurer`, `ChatStyle`),
   `ChatTranscriptView` (virtual list with exact heights), `ChatInputView` (input + `/`/`@` completion),
-  `ChatPanels` (prompt card, activity line, status line, background-tasks panel, /btw card), `ChatResume` (past
+  `ChatJumpRail` (the left-edge jump rail + its hover list), `ChatPanels` (prompt card, activity line, status line, background-tasks panel, /btw card), `ChatResume` (past
   conversations + `ChatPickerPanel`, the picker /resume, /rewind and /memory share), `ChatLocalCommands`
   (/export Markdown, /memory files, the `!` shell runner, pasted-image encoding), `ChatTrust`, `ChatViewController` (+ port scanner, the chat's own
   commands).

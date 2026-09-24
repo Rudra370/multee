@@ -42,6 +42,34 @@ final class ChatActionButton: PointerButton {
 
     @objc private func fire() { handler() }
     func press() { handler() }
+
+    /// Opt-in keyboard focus (the trust button): a white ring while focused, space or ⏎ presses it. NSButton
+    /// only takes focus with the system's Full Keyboard Access on, so this doesn't lean on that.
+    var takesKeyboard = false
+    // Other action buttons keep NSButton's own rules (focusable with Full Keyboard Access).
+    override var acceptsFirstResponder: Bool { takesKeyboard ? !isHidden : super.acceptsFirstResponder }
+    override var canBecomeKeyView: Bool { takesKeyboard ? !isHidden : super.canBecomeKeyView }
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder() || takesKeyboard
+        if ok, takesKeyboard { setRing(true) }
+        return ok
+    }
+    override func resignFirstResponder() -> Bool {
+        if takesKeyboard { setRing(false) }
+        return super.resignFirstResponder() || takesKeyboard
+    }
+    private func setRing(_ on: Bool) {
+        layer?.borderWidth = on ? 2 : 0
+        layer?.borderColor = NSColor(white: 1, alpha: 0.85).cgColor
+    }
+    var hasRing: Bool { (layer?.borderWidth ?? 0) > 0 }
+    override func keyDown(with event: NSEvent) {
+        guard takesKeyboard else { super.keyDown(with: event); return }
+        switch event.keyCode {
+        case 49, 36, 76: press()                  // space, return, keypad enter
+        default: super.keyDown(with: event)
+        }
+    }
 }
 
 // MARK: - Prompt panel (permission · question · plan)
@@ -750,6 +778,7 @@ final class ChatActivityBar: NSView {
         restart = ChatActionButton("Restart", kind: .secondary, size: 11) { restartRef?() }
         trust = ChatActionButton("Trust folder & start", kind: .primary, size: 11) { trustRef?() }
         super.init(frame: frame)
+        trust.takesKeyboard = true
         restartRef = { [weak self] in self?.onRestart?() }
         trustRef = { [weak self] in self?.onTrust?() }
         spinner.style = .spinning
@@ -773,7 +802,15 @@ final class ChatActivityBar: NSView {
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
-    func update(_ s: ChatSession, fontSize: CGFloat) {
+    /// Put keyboard focus on "Trust folder & start" (space accepts). False when it isn't showing.
+    @discardableResult
+    func focusTrust() -> Bool {
+        guard !trust.isHidden, let w = window else { return false }
+        return w.makeFirstResponder(trust)
+    }
+    var trustFocused: Bool { window?.firstResponder === trust }
+
+    func update(_ s: ChatSession, fontSize: CGFloat, queueSelection: Int? = nil) {
         var text = ""
         var color: NSColor = ChatStyle.dim
         var spin = false
@@ -802,6 +839,7 @@ final class ChatActivityBar: NSView {
                 spin = true
                 let secs = s.turnStartedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
                 var parts = ["\(s.activity ?? "Working")…", Self.duration(secs)]
+                if let est = s.compactEstimate { parts.append("usually about " + Self.duration(est)) }
                 if s.thinkingTokens > 0 || s.turnOutputTokens > 0 {
                     parts.append("↓ \(Self.compact(max(s.thinkingTokens, 0) + s.turnOutputTokens)) tokens")
                 }
@@ -812,13 +850,26 @@ final class ChatActivityBar: NSView {
             }
         }
         let attr = NSMutableAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: fontSize - 1.5), .foregroundColor: color])
-        for q in s.queuedTexts.prefix(3) {   // sent while busy — Claude runs each after this turn
-            let line = q.replacingOccurrences(of: "\n", with: " ")
-            attr.append(NSAttributedString(string: (attr.length > 0 ? "\n" : "") + "↳ queued: " + (line.count > 120 ? String(line.prefix(119)) + "…" : line),
-                                           attributes: [.font: NSFont.systemFont(ofSize: fontSize - 1.5), .foregroundColor: ChatStyle.faint]))
+        // Sent while busy — Claude runs each after this turn. Three at a time; the window follows the highlight.
+        let queued = s.queuedTexts
+        let small = NSFont.systemFont(ofSize: fontSize - 1.5)
+        func line(_ text: String, _ color: NSColor, bold: Bool = false) {
+            attr.append(NSAttributedString(string: (attr.length > 0 ? "\n" : "") + text, attributes: [
+                .font: bold ? NSFont.systemFont(ofSize: fontSize - 1.5, weight: .semibold) : small, .foregroundColor: color]))
         }
-        if s.queuedTexts.count > 3 {
-            attr.append(NSAttributedString(string: "\n↳ +\(s.queuedTexts.count - 3) more queued", attributes: [.font: NSFont.systemFont(ofSize: fontSize - 1.5), .foregroundColor: ChatStyle.faint]))
+        if !queued.isEmpty {
+            let sel = queueSelection.map { min($0, queued.count - 1) }
+            let first = sel.map { max(0, min($0 - 1, queued.count - 3)) } ?? 0
+            let shown = first..<min(queued.count, first + 3)
+            if shown.lowerBound > 0 { line("↳ \(shown.lowerBound) more above", ChatStyle.faint) }
+            for i in shown {
+                let one = queued[i].replacingOccurrences(of: "\n", with: " ")
+                let text = one.count > 120 ? String(one.prefix(119)) + "…" : one
+                if i == sel { line("❯ queued: " + text, NSColor(white: 0.92, alpha: 1), bold: true) }
+                else { line("↳ queued: " + text, ChatStyle.faint) }
+            }
+            if shown.upperBound < queued.count { line("↳ +\(queued.count - shown.upperBound) more queued", ChatStyle.faint) }
+            line(sel == nil ? "↑ to edit a queued message" : "⏎ edit · ↑↓ choose · esc cancel", ChatStyle.faint)
         }
         label.attributedStringValue = attr
         text = attr.string
@@ -873,6 +924,7 @@ final class ChatFooterView: NSView {
     private var fastReason: String?
     private var remoteURL: String?
     private var fontSize: CGFloat = 12
+    private var ctxMeter: (Int, CGFloat) = (-2, 0)     // what the context bar image shows (-1 = not measured)
     private(set) var snapshot: [String: String] = [:]   // DEV: what each item shows
 
     override init(frame: NSRect) {
@@ -891,7 +943,7 @@ final class ChatFooterView: NSView {
         modelButton.target = self; modelButton.action = #selector(modelTapped)
         modelButton.toolTip = "Switch model"
         ctxButton.target = self; ctxButton.action = #selector(ctxTapped)
-        ctxButton.toolTip = "Context window usage — click for a breakdown"
+        ctxButton.imagePosition = .imageRight
         tasksButton.target = self; tasksButton.action = #selector(tasksTapped)
         tasksButton.toolTip = "Background tasks Claude started"
         terminalButton.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: "Open in Terminal")?
@@ -969,6 +1021,36 @@ final class ChatFooterView: NSView {
         pct >= 85 ? ChatStyle.red : pct >= 60 ? ChatStyle.amber : NSColor(white: 0.6, alpha: 1)
     }
 
+    /// The context meter: a short bar filled to `pct` (nil = not measured yet — empty track).
+    static func contextBar(_ pct: Int?, fontSize: CGFloat) -> NSImage {
+        let size = NSSize(width: (fontSize * 4).rounded(), height: (fontSize * 0.5).rounded())
+        return NSImage(size: size, flipped: false) { r in
+            let radius = r.height / 2
+            NSColor(white: 1, alpha: 0.12).setFill()
+            NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).fill()
+            guard let pct, pct > 0 else { return true }
+            let fill = NSRect(x: 0, y: 0, width: max(r.height, r.width * CGFloat(pct) / 100), height: r.height)
+            contextColor(pct).setFill()
+            NSBezierPath(roundedRect: fill, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+    }
+
+    /// Deep blue while there's room, lightening toward the middle, then yellow → orange → red as it fills. Blue
+    /// and yellow are opposites — a straight blend goes grey-green — so the hand-off passes through a bright pale step.
+    static func contextColor(_ pct: Int) -> NSColor {
+        let stops: [(Double, (Double, Double, Double))] = [
+            (0, (0.24, 0.44, 0.95)), (45, (0.45, 0.74, 1.0)), (53, (0.84, 0.88, 0.86)),
+            (62, (0.97, 0.84, 0.32)), (80, (0.98, 0.58, 0.22)), (100, (0.94, 0.30, 0.30)),
+        ]
+        let p = Double(min(100, max(0, pct)))
+        let hi = stops.firstIndex { $0.0 >= p } ?? stops.count - 1
+        let lo = max(0, hi - 1)
+        let t = stops[hi].0 == stops[lo].0 ? 0 : (p - stops[lo].0) / (stops[hi].0 - stops[lo].0)
+        let (a, b) = (stops[lo].1, stops[hi].1)
+        return NSColor(srgbRed: a.0 + (b.0 - a.0) * t, green: a.1 + (b.1 - a.1) * t, blue: a.2 + (b.2 - a.2) * t, alpha: 1)
+    }
+
     /// "23m" / "4h12m" / "1d22h" until `date`.
     static func until(_ date: Date) -> String {
         let s = max(0, Int(date.timeIntervalSinceNow))
@@ -998,7 +1080,14 @@ final class ChatFooterView: NSView {
         let extras = [effortShown, s.fastModeState == "on" ? "fast" : nil].compactMap { $0 }
         set(modelButton, modelName + (extras.isEmpty ? "" : " · " + extras.joined(separator: " · ")) + " ▾", NSColor(white: 0.78, alpha: 1))
         let pct = s.contextPercent
-        set(ctxButton, s.contextUsed > 0 ? "ctx \(pct)%" : "ctx —", Self.usageColor(pct))
+        set(ctxButton, "ctx", dim)
+        let meter = (s.contextUsed > 0 ? pct : -1, fontSize)
+        if meter != ctxMeter {      // this runs on every chat update — redraw the bar only when it changes
+            ctxMeter = meter
+            ctxButton.image = Self.contextBar(s.contextUsed > 0 ? pct : nil, fontSize: fontSize)
+        }
+        ctxButton.toolTip = (s.contextUsed > 0 ? "Context \(pct)% used" : "Context not measured yet") + " — click for a breakdown"
+        ctxButton.setAccessibilityValue(s.contextUsed > 0 ? "\(pct)%" : nil)
         if let w = s.fiveHour {
             let p = Int((w.utilization * 100).rounded())
             set(fiveHour, "5h \(p)% ·\(Self.until(w.resetsAt))", Self.usageColor(p))
@@ -1024,7 +1113,7 @@ final class ChatFooterView: NSView {
         remoteButton.toolTip = s.remoteURL.map { "Remote Control is on — \($0)" }
             ?? "Remote Control — continue this session from claude.ai or the Claude app"
         snapshot = ["mode": modeButton.title, "folder": folder.stringValue, "branch": branch.stringValue,
-                    "model": modelButton.title, "ctx": ctxButton.title, "5h": fiveHour.stringValue,
+                    "model": modelButton.title, "ctx": s.contextUsed > 0 ? "\(pct)%" : "—", "5h": fiveHour.stringValue,
                     "7d": sevenDay.stringValue, "tasks": tasksButton.isHidden ? "" : tasksButton.title,
                     "cost": cost.stringValue, "remote": s.remoteURL ?? ""]
     }
