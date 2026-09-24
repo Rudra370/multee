@@ -121,6 +121,12 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   ⌘Z. Mic: grey idle, amber connecting (~1.4 s, the audio meanwhile is kept), pulsing red
   listening. Uses Claude Code's own speech-to-text (the `voice_stream` WebSocket, claude.ai login from the Keychain
   via `/usr/bin/security`) — see D43. Errors land in the transcript as a red "Voice: …" line.
+- **Suggested next message** — like the terminal UI, after a reply the empty box shows Claude's guess at what you'll
+  type next, greyed with a "⇥ tab" hint; **Tab** puts it in the box (to send or edit), typing hides it, and it's
+  dropped as soon as anything is sent, rewound, or the process stops. Claude's own `--prompt-suggestions`
+  (`prompt_suggestion` event, a small cache-reusing request per turn). Claude decides when to stay quiet: not before
+  its 2nd reply, not in plan mode or near usage limits, not after an error; the terminal's "Prompt suggestions"
+  setting (`promptSuggestionEnabled: false`) turns it off here too.
 - **Folding replies** — hovering one of your messages shows a ▾ in its bubble's top-right: it folds away
   everything Claude did in reply (text, tools, thinking) down to a "▸ Show Claude's reply" stub; ⌥-click folds
   or unfolds every reply at once, so a long chat reads as the list of what you asked. Folded rows stay in the
@@ -221,6 +227,7 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   `/fast` map to the same settings as the menu.
 - **Background tasks** (`ChatTasksPanel`) — every `run_in_background` shell and async agent: status,
   elapsed time, listening ports (found under the task's process tree, click to open), live log tail, Stop.
+  "Clear finished" drops the ended ones; past 10 tasks that happens by itself (running ones always stay).
 - **Switching** — right-click a Claude/chat tab ▸ "Open as Chat" / "Open in Terminal UI" (or the status-line
   button / palette) converts the tab in place, same conversation (`Session.switchClaudeUI`).
 - **Folder trust** (`ChatTrust`) — print mode skips Claude's "trust this folder?" prompt, so a chat asks

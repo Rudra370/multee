@@ -150,6 +150,8 @@ enum DebugAction {
         case "chatLog":        chat?.debugShowLog(Int(arg) ?? 0)
         case "chatStopTask":   chat?.debugStopTask(Int(arg) ?? 0)
         case "chatClearTasks": chat?.session.clearFinishedTasks()
+        case "chatEvent":      // a raw stream-json event, e.g. {"type":"system","subtype":"task_started",…}
+            if let o = (try? JSONSerialization.jsonObject(with: Data(arg.utf8))) as? [String: Any] { chat?.session.debugFeed(o) }
         case "chatScroll":     chat?.debugScroll(CGFloat(Double(arg) ?? 0))   // 0 = top … 1 = bottom
         case "chatToggleItem": chat?.debugToggleItem(Int(arg) ?? -1)      // expand/collapse (negative = from the end)
         case "chatLoadEarlier": chat?.session.loadEarlier()

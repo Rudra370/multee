@@ -562,6 +562,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
             }
         } else { trustFocusGiven = false }
         input.working = session.isWorking
+        input.suggestion = session.suggestion
         footer.update(session, fontSize: max(10, size - 2))
         transcript.stateChanged()
 
@@ -686,7 +687,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
             "tasks": s.tasks.map { ["id": $0.id, "type": $0.type, "desc": $0.description, "status": $0.status,
                                      "ports": $0.ports, "output": $0.outputFile ?? ""] as [String: Any] },
             "footer": footer.snapshot, "activityText": activity.textShown,
-            "inputText": input.text, "voice": input.debugVoice, "quickLook": debugQuickLook, "queued": s.queuedTexts, "completion": input.completionTitles.prefix(8).map { $0 },
+            "inputText": input.text, "suggestion": s.suggestion ?? "", "placeholder": input.debugPlaceholder, "voice": input.debugVoice, "quickLook": debugQuickLook, "queued": s.queuedTexts, "completion": input.completionTitles.prefix(8).map { $0 },
             "historyStart": s.historyStart.map { Int($0) } ?? -1, "canLoadEarlier": s.canLoadEarlier,
             "transcript": transcript.debugState(), "logText": String(tasksPanel.logText.suffix(300)),
             "contextPopover": lastContextText, "effort": s.effort ?? "", "fastMode": s.fastModeState ?? "",

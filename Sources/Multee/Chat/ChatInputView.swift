@@ -55,6 +55,9 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     /// to Claude as image blocks ahead of the text, which is plain — no markers in it.
     private(set) var attachments: [ChatAttachment] = [] { didSet { attachmentsChanged() } }
     var working = false { didSet { updateButton() } }
+    /// Claude's guess at your next message, shown greyed where the placeholder sits while the box is empty; Tab
+    /// puts it in the box (to send or edit). The session clears it once anything happens.
+    var suggestion: String? { didSet { if suggestion != oldValue { updatePlaceholder() } } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -97,6 +100,8 @@ final class ChatInputView: NSView, NSTextViewDelegate {
 
         placeholder.textColor = NSColor(white: 0.45, alpha: 1)
         placeholder.translatesAutoresizingMaskIntoConstraints = false
+        placeholder.lineBreakMode = .byTruncatingTail
+        placeholder.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         box.addSubview(placeholder)
 
         sendButton.isBordered = false
@@ -146,6 +151,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
             heightConstraint,
             placeholder.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
             placeholder.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 2),
+            placeholder.trailingAnchor.constraint(lessThanOrEqualTo: scroll.trailingAnchor),
             sendButton.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -8),
             sendButton.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -7),
             sendButton.widthAnchor.constraint(equalToConstant: 24),
@@ -166,6 +172,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         fontSize = size
         textView.font = .systemFont(ofSize: size)
         placeholder.font = .systemFont(ofSize: size)
+        updatePlaceholder()
         completion.fontSize = size
         resize()
     }
@@ -399,7 +406,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         case #selector(NSResponder.insertBacktab(_:)):
             onCycleMode?(); return true
         case #selector(NSResponder.insertTab(_:)):
-            if !completion.isHidden { acceptCompletion(completion.selected) }
+            if !completion.isHidden { acceptCompletion(completion.selected) } else { acceptSuggestion() }
             return true
         case #selector(NSResponder.moveUp(_:)):
             if !completion.isHidden { completion.move(-1); return true }
@@ -413,6 +420,29 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     }
 
     fileprivate func cycleModeKey() { onCycleMode?() }
+
+    /// Tab in an empty box takes Claude's suggestion — into the box, not sent, the way the terminal UI does it.
+    private func acceptSuggestion() {
+        guard let s = suggestion, textView.string.isEmpty, !dictating else { return }
+        historyIndex = nil
+        textView.insertText(s, replacementRange: NSRange(location: 0, length: 0))
+    }
+
+    /// The grey line in the empty box: "Listening…" while dictating, else Claude's suggestion with a Tab hint,
+    /// else the usual help.
+    private func updatePlaceholder() {
+        let font = NSFont.systemFont(ofSize: fontSize)
+        func plain(_ t: String) -> NSAttributedString {
+            NSAttributedString(string: t, attributes: [.font: font, .foregroundColor: NSColor(white: 0.45, alpha: 1)])
+        }
+        if voice.state != .idle { placeholder.attributedStringValue = plain("Listening…   fn⌃ or the mic to stop"); return }
+        guard let s = suggestion else { placeholder.attributedStringValue = plain(Self.placeholderText); return }
+        let line = NSMutableAttributedString(string: s, attributes: [.font: font, .foregroundColor: NSColor(white: 0.55, alpha: 1)])
+        line.append(NSAttributedString(string: "   ⇥ tab", attributes: [.font: NSFont.systemFont(ofSize: max(10, fontSize - 2)),
+                                                                       .foregroundColor: NSColor(white: 0.35, alpha: 1)]))
+        placeholder.attributedStringValue = line
+    }
+    var debugPlaceholder: String { placeholder.isHidden ? "" : placeholder.stringValue }
 
     /// ↑ from the first line (not while browsing history) highlights the newest queued message; ↑/↓ then move
     /// through them, and ↓ past the newest lets go.
@@ -481,7 +511,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
             if sendAfterVoice { sendAfterVoice = false; submit() }
         case .recording, .finishing: break
         }
-        placeholder.stringValue = state == .idle ? Self.placeholderText : "Listening…   fn⌃ or the mic to stop"
+        updatePlaceholder()
         updateMic()
     }
 

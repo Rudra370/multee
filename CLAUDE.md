@@ -72,7 +72,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "newChat", "chatOpenSession:<cid>", "chatSend:text", "chatType:text", "chatSubmit",
               "chatKey:esc|shiftTab|up|down|enter|tab|optEnter", "chatAllow", "chatAllowAlways", "chatDeny",
               "chatDenyMsg:text", "chatAnswer:label", "chatSubmitAnswers", "chatInterrupt", "chatMode:plan",
-              "chatCycleMode", "chatModel:haiku", "chatTasks", "chatLog:0", "chatStopTask:0", "chatClearTasks",
+              "chatCycleMode", "chatModel:haiku", "chatTasks", "chatLog:0", "chatStopTask:0", "chatClearTasks", "chatEvent:{json}",
               "chatScroll:0.5", "chatToggleItem:-1", "chatLoadEarlier", "chatJumpList", "chatVoice:/tmp/x.aiff", "chatVoiceToggle", "chatVoiceDevice", "chatPreviewImage:0|0", "chatPreviewAttached:0", "chatRemoveAttached:0", "chatClosePreview", "chordFnCtrl:/tmp/x.aiff", "chatJumpTo:0", "chatFold:0", "chatFoldAll:0", "chatFoldRecord:0|/tmp/x.json", "cursorTrace:1", "chatContext", "chatRestart", "chatTrust",
               "chatKill", "chatOpenInTerminal", "switchUI", "chatScrollBench:/tmp/x.json",
               "chatMarkdownSelfTest:/tmp/x.json", "dumpChat:/tmp/x.json", "chatResume", "chatResumePick:0",
@@ -293,6 +293,10 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
     system break undo** (earlier steps then point at the wrong characters — ⌘Z after typing + dictating deleted the
     typing): `ChatInputTextView.undoManager` is nil while `dictating`, and `commitVoice` re-applies the words through
     `shouldChangeText`/`didChangeText` as one step. `insertText` would instead join the open "Typing" group.
+  - **Prompt suggestions** (`--prompt-suggestions`, print + stream-json only) arrive as a `prompt_suggestion` event a
+    second or two **after** `result`, and never before the conversation's 2nd assistant reply (`early_conversation`),
+    in plan mode, near rate limits, or when the last turn had >10k uncached tokens — so a one-turn harness test sees
+    none. Test with two short turns, then `dumpChat` → `suggestion` / `placeholder`, and `keyEvent:tab`.
   - **A row's layer uses top-down y like its view even though the doc's `isGeometryFlipped` reads false** —
     trusting the flag slid the fold animation in from the wrong side. Check motion with `chatFoldRecord` (drawn
     positions ~120×/s from the presentation layer) rather than a screenshot, which only shows model values. The `shot` capture **exaggerates see-through

@@ -57,6 +57,9 @@ final class ChatSession {
     private(set) var isWorking = false
     private(set) var turnStartedAt: Date?
     private(set) var activity: String?            // "Thinking", "Running Bash", …
+    /// What Claude predicts you'll type next (`--prompt-suggestions`), shown greyed in the empty box — Tab takes
+    /// it. It arrives a moment after a turn ends and goes stale as soon as anything else happens.
+    private(set) var suggestion: String?
     private(set) var thinkingTokens = 0
     /// A compaction under way: when it began, when Claude said it ended (the size arrives just after, on
     /// `compact_boundary`, which is when it's timed), and what past ones of its size took (`CompactTiming`).
@@ -156,6 +159,9 @@ final class ChatSession {
         args += Self.userArgs(launchArgs)
         // Lets the mode menu / ⇧⇥ switch into bypass later without starting in it (the terminal UI's flag).
         if !args.contains("--dangerously-skip-permissions") { args.append("--allow-dangerously-skip-permissions") }
+        // The terminal's next-prompt suggestions. Claude itself honours the user's `promptSuggestionEnabled: false`
+        // setting and `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=0`, and stays quiet early on, in plan mode, near limits.
+        if !args.contains(where: { $0.hasPrefix("--prompt-suggestions") }) { args.append("--prompt-suggestions") }
         if let cid = claudeSessionId ?? forkParentId {
             if let path = ClaudeTranscript.file(forSessionId: cid) {
                 args += ["--resume", cid]
@@ -243,10 +249,12 @@ final class ChatSession {
         stream = nil
         if runState == .running { runState = .notStarted }
         isWorking = false
+        suggestion = nil
     }
 
     private func processEnded(code: Int32, signaled: Bool, stderr: String) {
         stream = nil
+        suggestion = nil
         silentUUIDs.removeAll(); batchSilent = false; batchReal = false; turnSilent = false
         sideRequest = nil
         let wasWorking = isWorking
@@ -281,6 +289,7 @@ final class ChatSession {
     func send(_ raw: String, images: [ChatAttachment] = []) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }     // an image alone is a message
+        suggestion = nil
         if !text.isEmpty, handleLocal(text) { return }
         if runState == .needsTrust { addNotice("Trust this folder first (the button above the message box)."); return }
         if runState != .running { runState = .notStarted; start() }
@@ -693,6 +702,8 @@ final class ChatSession {
         guard !isWorking, prompts.isEmpty else {
             addNotice("Claude is working — press esc to stop it, then rewind."); done(nil); return
         }
+        suggestion = nil
+        notify()
         let original = items.first { $0.uuid == uuid }?.text ?? ""
         let quoted = "“\(original.split(separator: "\n").first.map { $0.count > 60 ? String($0.prefix(59)) + "…" : String($0) } ?? "")”"
         let finishConversation = { [weak self] in
@@ -911,6 +922,12 @@ final class ChatSession {
         case "rate_limit_event": handleRateLimit(o)
         case "control_request": handleControlRequest(o)
         case "command_lifecycle": handleLifecycle(o)
+        case "prompt_suggestion":
+            // Only while nothing is going on — one landing after the next message went out would be stale.
+            guard !isWorking, queued.isEmpty, let text = o["suggestion"] as? String,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            suggestion = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            notify()
         case "control_cancel_request":
             // Claude withdrew a prompt (answered from Remote Control, or the turn ended) — drop its card.
             guard let rid = o["request_id"] as? String, let i = prompts.firstIndex(where: { $0.requestID == rid }) else { return }
@@ -1030,8 +1047,15 @@ final class ChatSession {
             var t = ChatTask(id: id, type: "", description: "")
             update(&t)
             tasks.append(t)
+            // A long session piles up finished tasks: past the cap, the finished ones go (as "Clear finished"
+            // would) — never the one just added, whose end notice may be what's adding it.
+            if tasks.count > Self.taskCap { tasks.removeAll { !$0.isRunning && $0.id != id } }
         }
     }
+    static let taskCap = 10
+
+    /// Dev harness: feed one stream-json event as if Claude had sent it.
+    func debugFeed(_ o: JSON) { handle(o); notify() }
 
     private func handleStreamEvent(_ e: JSON) {
         switch e["type"] as? String {
@@ -1301,6 +1325,7 @@ final class ChatSession {
 
     private func beginTurn() {
         isWorking = true
+        suggestion = nil
         turnStartedAt = Date()
         thinkingTokens = 0
         turnOutputTokens = 0
