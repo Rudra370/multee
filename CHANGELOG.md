@@ -5,6 +5,35 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.23] - 2026-09-24
+
+### Added
+- **Jump to any message you sent.** A thin line for each of your messages runs up the chat's bottom-left edge,
+  the one you're reading lit up. Hover them for a list of what you asked and click one — the chat glides
+  there and the message blinks. **⌘J** opens the same list from the keyboard: ↑↓ to choose, ⏎ to go, esc to
+  close.
+- **Fold Claude's replies away.** Hover one of your messages and click the ▾ to hide everything Claude did in
+  reply behind a one-line "Show Claude's reply". ⌥-click folds every reply at once, so a long chat reads as
+  the list of what you asked.
+- **Messages you send while Claude is busy now wait their turn** — each one goes out after the previous
+  answer and gets its own reply, instead of all of them being merged into one. ↑ picks a waiting message and
+  ⏎ takes it back into the box to edit.
+- **Context usage is a small bar** in the chat's footer, going from blue through yellow to red as it fills;
+  hover for the exact percentage.
+- **Compacting shows how long it usually takes** ("usually about 40s"), learned from your earlier
+  compactions — Claude doesn't report real progress, so there's no fake progress bar.
+- **Links in Claude's replies are clickable** and open in your browser.
+
+### Fixed
+- **Claude's Artifact tool works in chat tabs.** Claude switches it off by default in the mode chat tabs run
+  in, so a conversation that made artifacts in a terminal tab hit "No such tool available: Artifact" once you
+  continued it here.
+- **/rewind offers your older messages again** after Multee restarts, and includes skills you ran (like
+  `/short`) — not only the latest message.
+- **A reopened chat no longer shows its conversation twice** after Claude restarts.
+- **Trusting a new folder takes one key** — the "Trust folder & start" button has focus, so space accepts,
+  and then you're straight in the message box.
+
 ## [0.1.22] - 2026-09-23
 
 ### Added
