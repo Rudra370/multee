@@ -21,7 +21,6 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
     let tabID: String
     let session: ChatSession
     private let settings: Settings
-    private weak var repo: Session?
 
     private var transcript: ChatTranscriptView!
     private let promptPanel = ChatPromptPanel()
@@ -52,7 +51,6 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
 
     init(tab: Tab, repo: Session, settings: Settings) {
         self.tabID = tab.id
-        self.repo = repo
         self.settings = settings
         self.session = ChatStore.shared.session(for: tab, cwd: repo.url, args: tab.args)
         self.style = ChatStyle(size: CGFloat(settings.fontSize))
@@ -83,6 +81,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         input.onEscape = { [weak self] in self?.escape() }
         input.onStop = { [weak self] in self?.session.interrupt() }
         input.onCycleMode = { [weak self] in self?.cycleMode() }
+        input.onVoiceError = { [weak self] m in self?.session.addNotice("Voice: " + m, error: true) }
         input.queuedCount = { [weak self] in self?.session.queuedTexts.count ?? 0 }
         input.onQueueSelection = { [weak self] _ in self?.refreshChrome() }
         input.onEditQueued = { [weak self] i in
@@ -101,7 +100,6 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
         footer.onPickEffort = { [weak self] l in self?.session.setEffort(l) }
         footer.onFastMode = { [weak self] on in self?.session.setFastMode(on) }
         footer.onOtherModel = { [weak self] in self?.askOtherModel() }
-        footer.onResume = { [weak self] in self?.showPicker(.resume) }
         footer.onRemote = { [weak self] on in self?.session.setRemoteControl(on) }
         picker.onPick = { [weak self] id in self?.picked(id) }
         picker.onClose = { [weak self] in self?.closePicker() }
@@ -171,6 +169,8 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
 
     /// ⌘J: open the jump list with keyboard focus, or close it (focus back to the input).
     func toggleJumpList() { transcript.toggleJumpListFromKeyboard() }
+    /// fn⌃ (and the mic button): start or stop dictation into the box.
+    func toggleVoice() { input.toggleVoice() }
 
     func focusInput() {
         if case .needsTrust = session.runState, activity.focusTrust() { return }   // space accepts; then the input
@@ -557,7 +557,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
             }
         } else { trustFocusGiven = false }
         input.working = session.isWorking
-        footer.update(session, branch: repo?.gitBranch, fontSize: max(10, size - 2))
+        footer.update(session, fontSize: max(10, size - 2))
         transcript.stateChanged()
 
         if let p = session.prompt {
@@ -681,7 +681,7 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
             "tasks": s.tasks.map { ["id": $0.id, "type": $0.type, "desc": $0.description, "status": $0.status,
                                      "ports": $0.ports, "output": $0.outputFile ?? ""] as [String: Any] },
             "footer": footer.snapshot, "activityText": activity.textShown,
-            "inputText": input.text, "queued": s.queuedTexts, "completion": input.completionTitles.prefix(8).map { $0 },
+            "inputText": input.text, "voice": input.debugVoice, "queued": s.queuedTexts, "completion": input.completionTitles.prefix(8).map { $0 },
             "historyStart": s.historyStart.map { Int($0) } ?? -1, "canLoadEarlier": s.canLoadEarlier,
             "transcript": transcript.debugState(), "logText": String(tasksPanel.logText.suffix(300)),
             "contextPopover": lastContextText, "effort": s.effort ?? "", "fastMode": s.fastModeState ?? "",
@@ -725,6 +725,20 @@ final class ChatViewController: NSViewController, ChatSessionObserver {
     func debugStopTask(_ index: Int) { if session.tasks.indices.contains(index) { session.stopTask(session.tasks[index].id) } }
     func debugScrollBenchmark() -> [String: Any] { transcript.debugScrollBenchmark() }
     func debugScroll(_ f: CGFloat) { transcript.debugScroll(toFraction: f) }
+    /// Dictate from an audio file instead of the mic (the whole path: socket, live text, final words).
+    func debugVoiceFile(_ path: String) {
+        debugVoiceAudio(path)
+        input.toggleVoice()
+    }
+
+    func debugVoiceDeviceChanged() { input.voice.debugDeviceChanged() }
+
+    /// The next dictation (however it's started) plays this file instead of the mic.
+    func debugVoiceAudio(_ path: String) {
+        guard let pcm = ChatVoice.pcm16k(from: path) else { session.addNotice("voice: can't read \(path)", error: true); return }
+        input.voice.debugAudio = pcm
+    }
+
     func debugJumpList(_ open: Bool) {
         open ? transcript.showJumpList() : transcript.hideJumpList()
         CATransaction.flush()     // commit now, so a dump in the same tick reads the first frame of the fade

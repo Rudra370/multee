@@ -25,8 +25,23 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     private let box = NSView()
     private let scroll = NSScrollView()
     let textView = ChatInputTextView()
-    private let placeholder = NSTextField(labelWithString: "Message Claude…   / commands · @ files · ! shell")
+    private static let placeholderText = "Message Claude…   / commands · @ files · ! shell"
+    private let placeholder = NSTextField(labelWithString: placeholderText)
     private let sendButton = PointerButton()
+    private let micButton = PointerButton()
+    /// Voice input (fn⌃ or the mic): the words land at the caret as they're heard and are sent only on ⏎.
+    let voice = ChatVoice()
+    var onVoiceError: ((String) -> Void)?
+    /// Where the spoken text sits in the box — replaced whole on each update (the service re-sends the
+    /// utterance so far). nil once the box moved on (sent, cleared, or an edit ran into it).
+    private var voiceSpan: NSRange?
+    private var voiceLead = ""              // a space in front when the caret followed a word
+    private var applyingVoice = false
+    private var voiceOriginal = ""          // what the spoken words replaced (the selection when it started)
+    /// While words are streaming in, the box has no undo: they are edited in outside it, so earlier undo steps
+    /// would point at the wrong characters. When it ends they're put back as one ordinary edit — one ⌘Z.
+    var dictating: Bool { voiceSpan != nil }
+    private var sendAfterVoice = false      // ⏎ while the last words are still coming: send when they land
     private var heightConstraint: NSLayoutConstraint!
     private let completion = ChatCompletionView()
     private var completionHeight: NSLayoutConstraint!
@@ -83,6 +98,17 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         sendButton.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(sendButton)
 
+        micButton.isBordered = false
+        micButton.bezelStyle = .inline
+        micButton.target = self
+        micButton.action = #selector(micTapped)
+        micButton.wantsLayer = true
+        micButton.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(micButton)
+        voice.onText = { [weak self] t in self?.voiceText(t) }
+        voice.onState = { [weak self] st in self?.voiceState(st) }
+        voice.onError = { [weak self] m in self?.onVoiceError?(m) }
+
         completion.isHidden = true
         completion.translatesAutoresizingMaskIntoConstraints = false
         completion.onPick = { [weak self] i in self?.acceptCompletion(i) }
@@ -103,7 +129,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
             scroll.topAnchor.constraint(equalTo: box.topAnchor, constant: 9),
             scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -9),
             scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
-            scroll.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -8),
+            scroll.trailingAnchor.constraint(equalTo: micButton.leadingAnchor, constant: -6),
             heightConstraint,
             placeholder.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
             placeholder.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 2),
@@ -111,9 +137,14 @@ final class ChatInputView: NSView, NSTextViewDelegate {
             sendButton.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -7),
             sendButton.widthAnchor.constraint(equalToConstant: 24),
             sendButton.heightAnchor.constraint(equalToConstant: 24),
+            micButton.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -2),
+            micButton.bottomAnchor.constraint(equalTo: sendButton.bottomAnchor),
+            micButton.widthAnchor.constraint(equalToConstant: 24),
+            micButton.heightAnchor.constraint(equalToConstant: 24),
         ])
         setFontSize(13)
         updateButton()
+        updateMic()
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
@@ -131,7 +162,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
 
     var text: String {
         get { textView.string }
-        set { textView.string = newValue; textChanged() }
+        set { dropVoiceSpan(); textView.string = newValue; textChanged() }
     }
 
     /// A queued message taken back to edit: its text goes above whatever is typed, its images with it —
@@ -146,6 +177,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
             }
             imgs = images.map { ChatAttachment(number: $0.number + base, data: $0.data, mediaType: $0.mediaType) }
         }
+        dropVoiceSpan()
         let draft = textView.string
         textView.string = draft.isEmpty ? t : t + "\n" + draft
         attachments += imgs
@@ -164,6 +196,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
 
     /// esc esc with something typed: throw the draft away, images and all — what the terminal UI does.
     func clear() {
+        dropVoiceSpan()
         textView.string = ""
         historyIndex = nil
         textChanged()           // releases the images whose markers just went with it
@@ -191,6 +224,8 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     }
 
     func submit() {
+        // Still listening (or the last words are on their way): stop, and send once they're in the box.
+        if voice.state != .idle { sendAfterVoice = true; voice.stop(); return }
         let raw = textView.string
         guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let images = attachments.filter { raw.contains($0.marker) }
@@ -200,6 +235,7 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         guard !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         history.append(t)
         historyIndex = nil
+        dropVoiceSpan()
         textView.string = ""
         attachments = []
         textChanged()
@@ -334,11 +370,11 @@ final class ChatInputView: NSView, NSTextViewDelegate {
     /// An edit that covers part of a marker covers the whole of it instead.
     func textView(_ view: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
         let markers = markerRanges()
-        guard !markers.isEmpty else { return true }
-        let whole = rounded(range, markers)
-        guard whole != range else { return true }
-        view.insertText(text ?? "", replacementRange: whole)
-        return false
+        let whole = markers.isEmpty ? range : rounded(range, markers)
+        // Grown to a whole marker: redo the edit over that range (which comes back through here).
+        guard whole == range else { view.insertText(text ?? "", replacementRange: whole); return false }
+        if !applyingVoice { userEdited(range, (text ?? "") as NSString) }
+        return true
     }
 
     private func textChanged() {
@@ -386,6 +422,8 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         case #selector(NSResponder.cancelOperation(_:)):
             if !completion.isHidden { hideCompletion(); return true }
             if queueSelection != nil { queueSelection = nil; return true }
+            // Dictating: esc ends it (the words stay) — it doesn't also stop Claude.
+            if voice.state == .connecting || voice.state == .recording { voice.stop(); return true }
             onEscape?(); return true
         case #selector(NSResponder.insertBacktab(_:)):
             onCycleMode?(); return true
@@ -431,11 +469,13 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         if dir > 0, s.substring(from: caret).contains("\n") { return false }
         if dir < 0 {
             guard textView.string.isEmpty || historyIndex != nil else { return false }
+            dropVoiceSpan()
             let i = max(0, (historyIndex ?? history.count) - 1)
             historyIndex = i
             textView.string = history[i]
         } else {
             guard let i = historyIndex else { return false }
+            dropVoiceSpan()
             if i + 1 < history.count { historyIndex = i + 1; textView.string = history[i + 1] }
             else { historyIndex = nil; textView.string = "" }
         }
@@ -443,6 +483,124 @@ final class ChatInputView: NSView, NSTextViewDelegate {
         tintForMode()
         resize(); updateButton()
         return true
+    }
+
+    // MARK: - Voice
+
+    func toggleVoice() {
+        if voice.state == .idle { focus() }
+        voice.toggle()
+    }
+
+    @objc private func micTapped() { toggleVoice() }
+
+    private func voiceState(_ state: ChatVoice.State) {
+        switch state {
+        case .connecting:
+            // The words go where the caret is, replacing a selection — like typing them.
+            let sel = textView.selectedRange()
+            let s = textView.string as NSString
+            let before = sel.location > 0 ? s.character(at: sel.location - 1) : 32
+            voiceLead = (before == 32 || before == 10 || before == 9) ? "" : " "
+            voiceSpan = NSRange(location: sel.location, length: sel.length)
+            voiceOriginal = s.substring(with: sel)
+            sendAfterVoice = false
+        case .idle:
+            commitVoice()
+            if sendAfterVoice { sendAfterVoice = false; submit() }
+        case .recording, .finishing: break
+        }
+        placeholder.stringValue = state == .idle ? Self.placeholderText : "Listening…   fn⌃ or the mic to stop"
+        updateMic()
+    }
+
+    private func voiceText(_ t: String) {
+        guard let span = voiceSpan, NSMaxRange(span) <= (textView.string as NSString).length else { return }
+        let new = t.isEmpty ? "" : voiceLead + t
+        let sel = textView.selectedRange()
+        applyingVoice = true
+        // With the box's typing attributes — a bare string gets the text system's default black 12 pt.
+        textView.textStorage?.replaceCharacters(in: span, with: NSAttributedString(string: new, attributes: textView.typingAttributes))
+        applyingVoice = false
+        let placed = NSRange(location: span.location, length: (new as NSString).length)
+        voiceSpan = placed
+        // The caret follows the words while it sits at their end; one you moved on (typed after them) keeps its place.
+        let caret = sel.location <= NSMaxRange(span) ? NSMaxRange(placed) : sel.location + placed.length - span.length
+        textView.setSelectedRange(NSRange(location: caret, length: sel.location <= NSMaxRange(span) ? 0 : sel.length))
+        textView.scrollRangeToVisible(textView.selectedRange())
+        textChanged()
+    }
+
+    /// Dictation over: swap the words back for what they replaced, then insert them the ordinary way, so they
+    /// are one undo step and the steps before them still line up.
+    private func commitVoice() {
+        guard let span = voiceSpan else { return }
+        voiceSpan = nil
+        let s = textView.string as NSString
+        guard NSMaxRange(span) <= s.length else { return }
+        let spoken = s.substring(with: span)
+        guard spoken != voiceOriginal else { return }
+        let sel = textView.selectedRange()
+        applyingVoice = true
+        textView.textStorage?.replaceCharacters(in: span, with: NSAttributedString(string: voiceOriginal, attributes: textView.typingAttributes))
+        // A programmatic edit, not typing (`insertText` would be merged into the typing before it).
+        textView.breakUndoCoalescing()
+        let range = NSRange(location: span.location, length: (voiceOriginal as NSString).length)
+        if textView.shouldChangeText(in: range, replacementString: spoken) {
+            textView.textStorage?.replaceCharacters(in: range, with: NSAttributedString(string: spoken, attributes: textView.typingAttributes))
+            textView.didChangeText()
+        }
+        applyingVoice = false
+        textView.setSelectedRange(sel)
+    }
+
+    /// Typing while listening means you're done talking: stop (the last words still land in their place). An
+    /// edit in front of the spoken text moves it; one that runs into it lets go of it.
+    private func userEdited(_ range: NSRange, _ text: NSString) {
+        guard let span = voiceSpan else { return }
+        if voice.state == .connecting || voice.state == .recording { voice.stop() }
+        if NSMaxRange(range) <= span.location {
+            voiceSpan = NSRange(location: span.location + text.length - range.length, length: span.length)
+        } else if range.location < NSMaxRange(span) {
+            voiceSpan = nil
+        }
+    }
+
+    private func dropVoiceSpan() {
+        voiceSpan = nil
+        sendAfterVoice = false
+        if voice.state == .connecting || voice.state == .recording { voice.stop() }
+    }
+
+    var debugVoice: [String: Any] {
+        ["state": voice.state.rawValue, "text": voice.text, "error": voice.lastError ?? "",
+         "span": voiceSpan.map { "\($0.location),\($0.length)" } ?? "", "mic": micButton.toolTip ?? "", "timeline": voice.timeline,
+         "canUndo": window?.undoManager?.canUndo ?? false, "undoName": window?.undoManager?.undoActionName ?? "-",
+         "groupLevel": window?.undoManager?.groupingLevel ?? -1]
+    }
+
+    private func updateMic() {
+        let st = voice.state
+        let on = st != .idle
+        micButton.image = NSImage(systemSymbolName: on ? "mic.fill" : "mic", accessibilityDescription: on ? "Stop dictation" : "Dictate")?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+        micButton.contentTintColor = switch st {
+        case .idle: NSColor(white: 0.5, alpha: 1)
+        case .connecting: ChatStyle.amber
+        case .recording: ChatStyle.red
+        case .finishing: ChatStyle.red.withAlphaComponent(0.55)
+        }
+        micButton.toolTip = on ? "Stop dictation (fn⌃)" : "Dictate (fn⌃)"
+        let layer = micButton.layer
+        if st == .recording, layer?.animation(forKey: "pulse") == nil {
+            let a = CABasicAnimation(keyPath: "opacity")
+            a.fromValue = 1; a.toValue = 0.35; a.duration = 0.7
+            a.autoreverses = true; a.repeatCount = .infinity
+            a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer?.add(a, forKey: "pulse")
+        } else if st != .recording {
+            layer?.removeAnimation(forKey: "pulse")
+        }
     }
 
     // MARK: - Completion
@@ -545,6 +703,9 @@ final class ChatInputView: NSView, NSTextViewDelegate {
 /// The input's text view: routes the special keys to `ChatInputView` before AppKit's defaults.
 final class ChatInputTextView: NSTextView {
     fileprivate weak var owner: ChatInputView?
+
+    /// None while dictation streams words in (see `ChatInputView.dictating`).
+    override var undoManager: UndoManager? { owner?.dictating == true ? nil : super.undoManager }
 
     override func doCommand(by selector: Selector) {
         if owner?.handle(selector) == true { return }

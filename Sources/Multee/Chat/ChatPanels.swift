@@ -885,8 +885,9 @@ final class ChatActivityBar: NSView {
 
 // MARK: - Footer (the status line)
 
-/// The terminal status line, native: permission mode (click / ⇧⇥ to cycle) on the left; folder · branch ·
-/// model ▾ · context % · 5h and 7d usage · background tasks · cost · Open in Terminal on the right.
+/// The terminal status line, native: permission mode (click / ⇧⇥ to cycle) on the left; model ▾ · context bar ·
+/// 5h and 7d usage · background tasks · cost · Remote Control · Open in Terminal on the right. (Folder and branch
+/// live in Multee's own bottom bar, and /resume replaced a resume button.)
 /// Items hide right-to-left by priority when the pane is narrow.
 final class ChatFooterView: NSView {
     var onCycleMode: (() -> Void)?
@@ -898,12 +899,9 @@ final class ChatFooterView: NSView {
     var onPickEffort: ((String) -> Void)?
     var onFastMode: ((Bool) -> Void)?
     var onOtherModel: (() -> Void)?
-    var onResume: (() -> Void)?
     var onRemote: ((Bool) -> Void)?             // turn Remote Control on / off
 
     private let modeButton = PointerButton()
-    private let folder = NSTextField(labelWithString: "")
-    private let branch = NSTextField(labelWithString: "")
     private let modelButton = PointerButton()
     private let ctxButton = PointerButton()
     private let fiveHour = NSTextField(labelWithString: "")
@@ -911,7 +909,6 @@ final class ChatFooterView: NSView {
     private let tasksButton = PointerButton()
     private let cost = NSTextField(labelWithString: "")
     private let terminalButton = HoverIconButton()
-    private let resumeButton = HoverIconButton()
     private let remoteButton = HoverIconButton()
     private let right = NSStackView()
     private var modeWidth: NSLayoutConstraint!
@@ -952,8 +949,7 @@ final class ChatFooterView: NSView {
         terminalButton.bezelStyle = .inline
         terminalButton.toolTip = "Continue this conversation in a terminal tab (Claude’s full terminal UI)"
         terminalButton.target = self; terminalButton.action = #selector(terminalTapped)
-        for (b, symbol, tip, sel) in [(resumeButton, "clock.arrow.circlepath", "Resume a past conversation in this chat (/resume)", #selector(resumeTapped)),
-                                      (remoteButton, "antenna.radiowaves.left.and.right", "Remote Control — continue this session from claude.ai or the Claude app", #selector(remoteTapped))] {
+        for (b, symbol, tip, sel) in [(remoteButton, "antenna.radiowaves.left.and.right", "Remote Control — continue this session from claude.ai or the Claude app", #selector(remoteTapped))] {
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?.withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
             b.isBordered = false
             b.bezelStyle = .inline
@@ -961,21 +957,21 @@ final class ChatFooterView: NSView {
             b.target = self; b.action = sel
             b.baseTint = NSColor(white: 0.55, alpha: 1)
         }
-        for l in [folder, branch, fiveHour, sevenDay, cost] {
+        for l in [fiveHour, sevenDay, cost] {
             l.lineBreakMode = .byTruncatingTail
             l.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         }
         for b in [modelButton, ctxButton, tasksButton] { b.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal) }
 
-        let items: [NSView] = [folder, branch, modelButton, ctxButton, fiveHour, sevenDay, tasksButton, cost, remoteButton, resumeButton, terminalButton]
+        let items: [NSView] = [modelButton, ctxButton, fiveHour, sevenDay, tasksButton, cost, remoteButton, terminalButton]
         items.forEach { right.addArrangedSubview($0) }
         right.orientation = .horizontal
         right.spacing = 12
         right.alignment = .centerY
         right.detachesHiddenViews = true
         // Narrow pane → drop the least important first.
-        let prio: [(NSView, Float)] = [(cost, 100), (folder, 200), (branch, 250), (sevenDay, 300), (fiveHour, 400),
-                                       (tasksButton, 700), (modelButton, 800), (ctxButton, 900), (resumeButton, 950),
+        let prio: [(NSView, Float)] = [(cost, 100), (sevenDay, 300), (fiveHour, 400),
+                                       (tasksButton, 700), (modelButton, 800), (ctxButton, 900),
                                        (remoteButton, 960), (terminalButton, 1000)]
         for (v, p) in prio { right.setVisibilityPriority(NSStackView.VisibilityPriority(p), for: v) }
         right.setClippingResistancePriority(.defaultLow, for: .horizontal)
@@ -1059,7 +1055,7 @@ final class ChatFooterView: NSView {
         return "\(max(1, s / 60))m"
     }
 
-    func update(_ s: ChatSession, branch br: String?, fontSize: CGFloat) {
+    func update(_ s: ChatSession, fontSize: CGFloat) {
         self.fontSize = fontSize
         models = s.models
         modes = s.modeCycle
@@ -1073,8 +1069,6 @@ final class ChatFooterView: NSView {
         let (mode, modeColor) = Self.modeLabel(s.permissionMode)
         set(modeButton, mode + "  (⇧⇥)", modeColor)
         modeWidth.constant = ceil(modeButton.attributedTitle.size().width) + 6
-        set(folder, (s.cwd as NSString).lastPathComponent, dim)
-        set(branch, br.map { "⎇ " + $0 } ?? "", dim)
         let modelName = s.model.map(ModelName.display) ?? "…"
         let effortShown = s.currentModelOption?.effortLevels.isEmpty == false ? s.effort : nil   // Haiku: no effort
         let extras = [effortShown, s.fastModeState == "on" ? "fast" : nil].compactMap { $0 }
@@ -1112,8 +1106,7 @@ final class ChatFooterView: NSView {
         remoteButton.baseTint = s.remoteURL != nil ? ChatStyle.green : NSColor(white: 0.55, alpha: 1)
         remoteButton.toolTip = s.remoteURL.map { "Remote Control is on — \($0)" }
             ?? "Remote Control — continue this session from claude.ai or the Claude app"
-        snapshot = ["mode": modeButton.title, "folder": folder.stringValue, "branch": branch.stringValue,
-                    "model": modelButton.title, "ctx": s.contextUsed > 0 ? "\(pct)%" : "—", "5h": fiveHour.stringValue,
+        snapshot = ["mode": modeButton.title, "model": modelButton.title, "ctx": s.contextUsed > 0 ? "\(pct)%" : "—", "5h": fiveHour.stringValue,
                     "7d": sevenDay.stringValue, "tasks": tasksButton.isHidden ? "" : tasksButton.title,
                     "cost": cost.stringValue, "remote": s.remoteURL ?? ""]
     }
@@ -1194,7 +1187,6 @@ final class ChatFooterView: NSView {
     @objc private func effortPicked(_ i: NSMenuItem) { if let v = i.representedObject as? String { onPickEffort?(v) } }
     @objc private func fastTapped() { onFastMode?(fastState != "on") }
     @objc private func otherModelTapped() { onOtherModel?() }
-    @objc private func resumeTapped() { onResume?() }
 
     @objc private func remoteTapped() {
         guard let url = remoteURL else { onRemote?(true); return }

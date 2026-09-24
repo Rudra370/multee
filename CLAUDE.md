@@ -73,7 +73,7 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
               "chatKey:esc|shiftTab|up|down|enter|tab|optEnter", "chatAllow", "chatAllowAlways", "chatDeny",
               "chatDenyMsg:text", "chatAnswer:label", "chatSubmitAnswers", "chatInterrupt", "chatMode:plan",
               "chatCycleMode", "chatModel:haiku", "chatTasks", "chatLog:0", "chatStopTask:0", "chatClearTasks",
-              "chatScroll:0.5", "chatToggleItem:-1", "chatLoadEarlier", "chatJumpList", "chatJumpTo:0", "chatFold:0", "chatFoldAll:0", "chatFoldRecord:0|/tmp/x.json", "cursorTrace:1", "chatContext", "chatRestart", "chatTrust",
+              "chatScroll:0.5", "chatToggleItem:-1", "chatLoadEarlier", "chatJumpList", "chatVoice:/tmp/x.aiff", "chatVoiceToggle", "chatVoiceDevice", "chordFnCtrl:/tmp/x.aiff", "chatJumpTo:0", "chatFold:0", "chatFoldAll:0", "chatFoldRecord:0|/tmp/x.json", "cursorTrace:1", "chatContext", "chatRestart", "chatTrust",
               "chatKill", "chatOpenInTerminal", "switchUI", "chatScrollBench:/tmp/x.json",
               "chatMarkdownSelfTest:/tmp/x.json", "dumpChat:/tmp/x.json", "chatResume", "chatResumePick:0",
               "chatRemote:on|off", "chatEffort:low", "chatModeTo:bypassPermissions", "chatCycleUI", "chatConfirm:ok",
@@ -276,6 +276,16 @@ The dev build reads `/tmp/multee-debug.json` on launch (release ignores it):
     rows made meanwhile); `dumpChat` → `transcript.rowCursorsOff`. Same fight **inside** a row: a button over the
     text (the fold ▾, code Copy) — NSTextView sets the I-beam from its own tracking area on every move
     (`_mouseInside:`, found with `cursorTrace`), so `ChatRowTextView.covered` skips it under the row's buttons.
+  - **Voice** (D43) speaks Claude Code's private `voice_stream` WebSocket. Test it with `chatVoice:<audio file>`
+    (any format; `say -o x.aiff "…"` makes one) — the file plays in place of the mic at speaking pace through the
+    real socket; `dumpChat` → `voice` has state, text and a `timeline` (connect/token/open/firstText seconds). With
+    the conversation engine the server re-sends the **whole** text so far and sends `TranscriptEndpoint` only at the
+    end — the CLI and we both append on endpoint and replace otherwise. Read the token with `/usr/bin/security`, not
+    `SecItemCopyMatching` (~3.7 s per call from the ad-hoc app). Lines appended to the `live` file while the app is
+    truncating it can be lost — space harness commands ~0.7 s apart. **Words edited in outside the text
+    system break undo** (earlier steps then point at the wrong characters — ⌘Z after typing + dictating deleted the
+    typing): `ChatInputTextView.undoManager` is nil while `dictating`, and `commitVoice` re-applies the words through
+    `shouldChangeText`/`didChangeText` as one step. `insertText` would instead join the open "Typing" group.
   - **A row's layer uses top-down y like its view even though the doc's `isGeometryFlipped` reads false** —
     trusting the flag slid the fold animation in from the wrong side. Check motion with `chatFoldRecord` (drawn
     positions ~120×/s from the presentation layer) rather than a screenshot, which only shows model values. The `shot` capture **exaggerates see-through

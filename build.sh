@@ -50,6 +50,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSMicrophoneUsageDescription</key><string>Multee listens while you dictate a message to Claude (fn⌃ or the mic in a chat).</string>
 </dict>
 </plist>
 PLIST

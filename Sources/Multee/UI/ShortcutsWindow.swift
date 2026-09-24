@@ -47,6 +47,7 @@ enum Shortcuts {
             Item(name: "Toggle Docker Panel", keys: "⌘D"),
             Item(name: "Toggle Files Panel", keys: "⌘B"),
             Item(name: "Jump to Message (chat)", keys: "⌘J"),
+            Item(name: "Dictate (chat)", keys: "fn⌃"),
             Item(name: "Increase Font Size", keys: "⌘+"),
             Item(name: "Decrease Font Size", keys: "⌘−"),
         ]),

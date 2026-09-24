@@ -577,6 +577,18 @@ at a tool boundary (mid-task steering) — the correction waits for the turn, or
 **Status:** built — three queued, the middle one taken back: the other two got a turn and an answer each; a queued
 message sent after an esc'd turn runs on its own.
 
+### D43 — Chat voice speaks Claude Code's private `voice_stream` protocol
+**Decision:** The chat's dictation streams the mic to `wss://api.anthropic.com/api/ws/speech_to_text/voice_stream`
+exactly as the terminal UI does (query, headers incl. `User-Agent: claude-cli/<installed version>`, KeepAlive /
+CloseStream, `TranscriptText`/`TranscriptEndpoint`), with the claude.ai token read from Claude Code's Keychain item.
+**Why:** The user wanted Claude's own transcription, not Apple's. `claude -p` has no voice, so there is no public
+route. Protocol read from the CLI's bundled JS (2.1.280) and proven with a standalone probe before building.
+**Costs, accepted:** a private endpoint can change with any Claude Code release (the terminal's voice keeps working
+then; ours breaks); we never refresh the token (that would race Claude's own copy) — an expired one asks you to use
+a Claude tab once. The token is read through `/usr/bin/security` (0.02 s) because the item trusts it; Multee's own
+`SecItemCopyMatching` took ~3.7 s every call on an ad-hoc-signed build.
+**Status:** built — file-fed harness runs transcribe exactly; real mic + fn⌃ need a human.
+
 ### D35 — Chat processes drop a parent Claude session's environment markers
 **Decision:** A chat's `claude` is launched without `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
 `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_EFFORT` and the other per-session markers.

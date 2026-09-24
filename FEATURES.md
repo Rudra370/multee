@@ -107,6 +107,15 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   to 35% down the view (0.35 s; a long way off it snaps to a screen short first; instant under Reduce Motion)
   and blinks its bubble blue twice over ~2 s. While it's open the transcript's text drops its I-beam (see CLAUDE.md). Shown from two messages
   up; covers the messages loaded so far (earlier history loads as you scroll up).
+- **Voice** — `ChatVoice`: **fn⌃** (press both, let go; dropped if another key joins, so fn⌃← still tiles) or
+  the mic left of send starts dictation, again stops it. The words stream into the box at the caret (replacing a
+  selection) as they're heard and are sent only on ⏎ — ⏎ while listening stops and sends once the last words
+  land; typing or esc stops listening (esc then doesn't also stop Claude). Stopped while still connecting, what
+  you'd said is sent once the connection opens; an input-device change (AirPods connecting) ends the dictation,
+  keeping the words. The box has no undo while words stream in; once they've landed they are one
+  ⌘Z. Mic: grey idle, amber connecting (~1.4 s, the audio meanwhile is kept), pulsing red
+  listening. Uses Claude Code's own speech-to-text (the `voice_stream` WebSocket, claude.ai login from the Keychain
+  via `/usr/bin/security`) — see D43. Errors land in the transcript as a red "Voice: …" line.
 - **Folding replies** — hovering one of your messages shows a ▾ in its bubble's top-right: it folds away
   everything Claude did in reply (text, tools, thinking) down to a "▸ Show Claude's reply" stub; ⌥-click folds
   or unfolds every reply at once, so a long chat reads as the list of what you asked. Folded rows stay in the
@@ -157,11 +166,11 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
   `/hooks`, `/login`…) explain themselves instead.
 - **Status line** (`ChatFooterView`) — permission mode (click or ⇧⇥: ask → accept edits → plan → auto (models
   that support it) → bypass; chats launch with `--allow-dangerously-skip-permissions`, and turning bypass on
-  asks once per install), folder, branch, model ▾ (the models, **effort** low…max for the picked model, fast
+  asks once per install), model ▾ (the models, **effort** low…max for the picked model, fast
   mode with its real availability, "Other model…"), live context meter — a bar going blue → yellow → red as it fills, exact % in the tooltip (click → Claude's own breakdown), 5h / 7d
   usage with reset countdowns (kept across launches), background tasks (shells, agents, ports), cost,
-  **Remote Control** (antenna; green while on — open/copy the session link, stop), **Resume** (clock), and
-  **Open in Terminal**. Model and effort picks are saved on the tab (`--model` / `--effort`).
+  **Remote Control** (antenna; green while on — open/copy the session link, stop), and **Open in Terminal**.
+  No folder, branch or resume button: Multee's bottom bar shows the first two, and `/resume` does the third. Model and effort picks are saved on the tab (`--model` / `--effort`).
 - **Compacting** — while Claude compacts (`/compact`, or on its own mid-reply) the activity line reads
   "Compacting conversation… · 12s · usually about 15s · esc to stop". No progress bar: print mode reports only the
   start and end of a compaction (the terminal UI's bar is a time curve, not measured progress). The "usually" hint
@@ -196,7 +205,7 @@ killed with the tab/session/app (SIGTERM — Claude then stops the background ta
 - **`/copy [n]`** — Claude's last (or n-th latest) reply to the clipboard. **`/export [file]`** — the whole
   conversation (unloaded history included) as Markdown, to `file` or via a save panel. **`/memory`** — pick
   project / user / local / auto memory; opens it in an editor tab (created if new).
-- **Resume** (`ChatResume`, `/resume` or the clock) — this folder's past conversations (title, age, size),
+- **Resume** (`ChatResume`, `/resume`) — this folder's past conversations (title, age, size),
   searchable; ⏎ switches this tab to the picked one with its history. **Remote Control** (`/remote-control`,
   `/rc`, `/remote-control off`) — print mode doesn't offer the command, so the chat drives Claude's
   `remote_control` control request; the session link shows as a clickable notice. `/effort <level>` and

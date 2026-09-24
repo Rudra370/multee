@@ -153,6 +153,21 @@ enum DebugAction {
         case "chatScroll":     chat?.debugScroll(CGFloat(Double(arg) ?? 0))   // 0 = top … 1 = bottom
         case "chatToggleItem": chat?.debugToggleItem(Int(arg) ?? -1)      // expand/collapse (negative = from the end)
         case "chatLoadEarlier": chat?.session.loadEarlier()
+        case "chatVoice":      chat?.debugVoiceFile(arg)                  // dictate from an audio file (any format) in place of the mic
+        case "chatVoiceToggle": chat?.toggleVoice()                       // the mic button / fn⌃ (real mic)
+        case "chatVoiceDevice": chat?.debugVoiceDeviceChanged()          // the input device changed mid-dictation
+        case "chordFnCtrl":    // fn⌃ pressed and released, as flagsChanged events through NSApp (needs Multee frontmost);
+                               // `:path` dictates that audio file instead of the mic
+            if !arg.isEmpty { chat?.debugVoiceAudio(arg) }
+            for mods: NSEvent.ModifierFlags in [[.function], [.function, .control], [.function], []] {
+                if let win = Self.harnessWindow,
+                   let ev = NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: mods,
+                                             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: win.windowNumber,
+                                             context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+                                             keyCode: mods.contains(.control) ? 59 : 63) {
+                    NSApp.sendEvent(ev)
+                }
+            }
         case "chatJumpList":   chat?.debugJumpList(arg != "0")            // open (or `:0` close) the jump rail's list
         case "chatJumpTo":     chat?.debugJump(Int(arg) ?? 0)             // scroll to the n-th message you sent
         case "chatFold":       chat?.debugFold(Int(arg) ?? 0, all: false) // fold/unfold the reply under the n-th message you sent

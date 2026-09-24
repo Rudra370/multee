@@ -21,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let model = AppModel()
     private var windowController: MainWindowController!
     private var keyMonitor: Any?
+    private var chordMonitor: Any?
+    private var fnCtrlArmed = false
     private var cancellables = Set<AnyCancellable>()
     private var settingsWC: SettingsWindowController?
     private let resourceMonitor = ResourceMonitor()
@@ -54,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         wireStatusRouting()
         refreshAllClaudeTitles()        // name restored Claude tabs that already have a saved conversation id
         installKeyMonitor()
+        installVoiceChord()
+        ChatVoice.loadCLIVersion()
 
         // New File / New Claude / New Terminal actions — shared by the menu, the ⌃⇧` monitor, and the harness.
         NewItemHook.newFile = { [weak self] in self?.model.activeSession?.newUntitled() }
@@ -346,6 +350,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             case "-", "_": self.model.settings.bumpFont(-1); return nil
             default: return event
             }
+        }
+    }
+
+    /// fn⌃ toggles chat dictation. A modifier-only chord has no key-down, so it is read from flagsChanged: armed
+    /// when exactly fn+⌃ are down, fired when both are up again — and dropped if another key or modifier joins
+    /// in between, so fn⌃← (window tiling) and friends keep working.
+    private func installVoiceChord() {
+        chordMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
+            guard let self else { return event }
+            if event.type == .keyDown { self.fnCtrlArmed = false; return event }
+            let mods = event.modifierFlags.intersection([.function, .control, .command, .option, .shift])
+            if mods == [.function, .control] {
+                self.fnCtrlArmed = true
+            } else if !mods.isSubset(of: [.function, .control]) {
+                self.fnCtrlArmed = false
+            } else if mods.isEmpty, self.fnCtrlArmed {
+                self.fnCtrlArmed = false
+                CenterViewController.current?.activeChat?.toggleVoice()
+            }
+            return event
         }
     }
 
