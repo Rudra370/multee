@@ -5,6 +5,22 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.25] - 2026-09-24
+
+### Added
+- **Suggested next message.** Like Claude Code in the terminal, after a reply the empty message box can show
+  Claude's guess at what you'll type next, greyed out. Press **Tab** to put it in the box, then edit or send.
+  Claude only suggests when the next step is obvious, so many replies won't have one.
+- **Preview images.** Click a picture — one you're about to send or one already in the chat — to open it in
+  Quick Look. The pointer turns into a magnifier over it.
+
+### Changed
+- **Pasted images show as thumbnails** above the message box instead of `[Image #1]` labels in your text. Hover
+  one for a × to remove it, or press backspace at the start of the box to remove the last one. You can now send
+  an image with no text.
+- **The background tasks list tidies itself.** Once it holds more than 10 tasks, the finished ones are cleared
+  automatically; running tasks always stay.
+
 ## [0.1.24] - 2026-09-24
 
 ### Added
