@@ -5,6 +5,20 @@ the in-app "What's new."** Writing one is *optional*: if you add a `## [version]
 tagging, those polished notes are used; if you skip it, the release auto-generates notes from the
 commits/PRs since the last tag. Newest first.
 
+## [0.1.24] - 2026-09-24
+
+### Added
+- **Talk to Claude.** Press **fn⌃** (or click the new mic beside the send button) and speak — your words appear
+  in the message box as you talk, using Claude Code's own speech-to-text. Press it again to stop, then edit
+  and send with ⏎ (or just press ⏎ while talking: it sends once your last words are in). Typing or esc also
+  stops listening, and one ⌘Z takes the spoken text back out. The first time, macOS asks for microphone access.
+- **Skills suggested mid-message.** Typing `/` after a space now offers your skills (like `/short`), not only
+  at the start of the box — handy for "explain this /short".
+
+### Changed
+- **A tidier chat footer.** The resume button, folder name and branch are gone — `/resume` does the first, and
+  Multee's bottom bar already shows the other two.
+
 ## [0.1.23] - 2026-09-24
 
 ### Added
